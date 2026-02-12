@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 220 20% 97%;
+  --foreground: 220 20% 10%;
+  --border: 220 10% 88%;
+  --primary: 220 70% 45%;
+  --primary-foreground: 0 0% 100%;
+  --muted: 220 10% 92%;
+  --muted-foreground: 220 10% 45%;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}

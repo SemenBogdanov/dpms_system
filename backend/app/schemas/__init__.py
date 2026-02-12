@@ -1,0 +1,1 @@
+# Схемы Pydantic для API
