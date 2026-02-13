@@ -1,132 +1,228 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import toast from 'react-hot-toast'
 import { api } from '@/api/client'
-import type { CatalogItem, CalculatorResponse } from '@/api/types'
+import type { CatalogItem, User, EstimateResponse } from '@/api/types'
+import type { CartRow } from '@/components/EstimateCart'
+import { CatalogPicker } from '@/components/CatalogPicker'
+import { EstimateCart } from '@/components/EstimateCart'
 
 export function CalculatorPage() {
+  const navigate = useNavigate()
   const [catalog, setCatalog] = useState<CatalogItem[]>([])
-  const [selected, setSelected] = useState<Record<string, number>>({})
-  const [result, setResult] = useState<CalculatorResponse | null>(null)
+  const [teamleads, setTeamleads] = useState<User[]>([])
+  const [cart, setCart] = useState<CartRow[]>([])
   const [complexityMult, setComplexityMult] = useState(1)
   const [urgencyMult, setUrgencyMult] = useState(1)
-  const [loading, setLoading] = useState(true)
+  const [estimateResult, setEstimateResult] = useState<EstimateResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [createModalOpen, setCreateModalOpen] = useState(false)
+  const [createTitle, setCreateTitle] = useState('')
+  const [createDescription, setCreateDescription] = useState('')
+  const [createPriority, setCreatePriority] = useState('medium')
+  const [createEstimatorId, setCreateEstimatorId] = useState('')
+  const [creating, setCreating] = useState(false)
 
   useEffect(() => {
-    api.get<CatalogItem[]>('/api/catalog').then(setCatalog).finally(() => setLoading(false))
+    api.get<CatalogItem[]>('/api/catalog').then(setCatalog).catch(() => setCatalog([]))
+    api.get<User[]>('/api/users?role=teamlead').then(setTeamleads).catch(() => setTeamleads([]))
   }, [])
 
-  const toggle = (id: string, qty: number) => {
-    setSelected((prev) => {
-      const next = { ...prev }
-      if (qty <= 0) delete next[id]
-      else next[id] = qty
-      return next
+  useEffect(() => {
+    if (teamleads.length > 0 && !createEstimatorId) setCreateEstimatorId(teamleads[0].id)
+  }, [teamleads, createEstimatorId])
+
+  const addToCart = (item: CatalogItem) => {
+    setCart((prev) => {
+      const i = prev.findIndex((r) => r.catalog.id === item.id)
+      if (i >= 0) {
+        const next = [...prev]
+        next[i] = { ...next[i], quantity: Math.min(50, next[i].quantity + 1) }
+        return next
+      }
+      return [...prev, { catalog: item, quantity: 1 }]
     })
-    setResult(null)
+    setEstimateResult(null)
   }
 
-  /** Формат Q: целое без десятичных, иначе один знак после запятой */
-  const formatQ = (n: number) =>
-    Number.isInteger(n) ? String(n) : Number(n).toFixed(1)
-
-  const handleEstimate = async () => {
-    const items = Object.entries(selected)
-      .filter(([, q]) => q > 0)
-      .map(([catalog_id, quantity]) => ({ catalog_id, quantity }))
-    if (items.length === 0) return
-    const res = await api.post<CalculatorResponse>('/api/calculator/estimate', {
-      items,
-      complexity_multiplier: complexityMult,
-      urgency_multiplier: urgencyMult,
-    })
-    setResult(res)
+  const setQuantity = (catalogId: string, quantity: number) => {
+    setCart((prev) =>
+      prev.map((r) =>
+        r.catalog.id === catalogId ? { ...r, quantity } : r
+      )
+    )
+    setEstimateResult(null)
   }
 
-  if (loading) return <div className="text-slate-500">Загрузка каталога...</div>
+  const removeFromCart = (catalogId: string) => {
+    setCart((prev) => prev.filter((r) => r.catalog.id !== catalogId))
+    setEstimateResult(null)
+  }
+
+  const handleCalculate = async () => {
+    if (cart.length === 0) return
+    setLoading(true)
+    try {
+      const res = await api.post<EstimateResponse>('/api/calculator/estimate', {
+        items: cart.map((r) => ({ catalog_id: r.catalog.id, quantity: r.quantity })),
+        complexity_multiplier: complexityMult,
+        urgency_multiplier: urgencyMult,
+      })
+      setEstimateResult(res)
+      toast.success('Расчёт выполнен')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка расчёта')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const openCreateModal = () => {
+    setCreateTitle('')
+    setCreateDescription('')
+    setCreatePriority('medium')
+    setCreateEstimatorId(teamleads[0]?.id ?? '')
+    setCreateModalOpen(true)
+  }
+
+  const handleCreateTask = async () => {
+    if (!createTitle.trim() || createTitle.length < 5) {
+      toast.error('Название задачи не менее 5 символов')
+      return
+    }
+    if (cart.length === 0) return
+    setCreating(true)
+    try {
+      const task = await api.post<{ id: string; title: string; estimated_q: number }>(
+        '/api/calculator/create-task',
+        {
+          title: createTitle.trim(),
+          description: createDescription.trim(),
+          priority: createPriority,
+          estimator_id: createEstimatorId,
+          items: cart.map((r) => ({ catalog_id: r.catalog.id, quantity: r.quantity })),
+          complexity_multiplier: complexityMult,
+          urgency_multiplier: urgencyMult,
+        }
+      )
+      toast.success(`Задача создана, ${task.estimated_q} Q, в очереди`)
+      setCreateModalOpen(false)
+      navigate('/queue')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка создания задачи')
+    } finally {
+      setCreating(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold text-slate-900">Калькулятор оценки</h1>
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="font-medium text-slate-800">Позиции каталога</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Выберите операции и количество. Затем нажмите «Рассчитать».
-          </p>
-          <div className="mt-4 space-y-2 max-h-96 overflow-y-auto">
-            {catalog.map((item) => (
-              <div
-                key={item.id}
-                className="flex items-center justify-between rounded-lg border border-slate-100 p-2"
-              >
-                <span className="text-sm">{item.name}</span>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={0}
-                    value={selected[item.id] ?? 0}
-                    onChange={(e) => toggle(item.id, e.target.valueAsNumber || 0)}
-                    className="w-14 rounded border border-slate-300 px-2 py-1 text-sm"
-                  />
-                  <span className="text-xs text-slate-400">{formatQ(Number(item.base_cost_q))} Q</span>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 flex gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              Коэф. сложности:
-              <input
-                type="number"
-                min={0.5}
-                max={3}
-                step={0.5}
-                value={complexityMult}
-                onChange={(e) => setComplexityMult(Number(e.target.value))}
-                className="w-20 rounded border border-slate-300 px-2 py-1"
-              />
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              Срочность:
-              <input
-                type="number"
-                min={1}
-                max={2}
-                step={0.5}
-                value={urgencyMult}
-                onChange={(e) => setUrgencyMult(Number(e.target.value))}
-                className="w-20 rounded border border-slate-300 px-2 py-1"
-              />
-            </label>
-          </div>
-          <button
-            type="button"
-            onClick={handleEstimate}
-            className="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
-          >
-            Рассчитать
-          </button>
+          <CatalogPicker catalog={catalog} onAdd={addToCart} />
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="font-medium text-slate-800">Результат</h2>
-          {result ? (
-            <div className="mt-4">
-              <p className="text-2xl font-semibold text-slate-900">
-                Итого: {formatQ(Number(result.total_q))} Q
-              </p>
-              <p className="text-sm text-slate-500">Минимальная лига: {result.min_league}</p>
-              <ul className="mt-4 space-y-1 text-sm">
-                {result.breakdown.map((b) => (
-                  <li key={b.catalog_id}>
-                    {b.name} × {b.quantity} = {formatQ(Number(b.subtotal_q))} Q
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : (
-            <p className="mt-4 text-slate-500">Выберите позиции и нажмите «Рассчитать».</p>
-          )}
+          <EstimateCart
+            rows={cart}
+            complexityMult={complexityMult}
+            urgencyMult={urgencyMult}
+            onQuantity={setQuantity}
+            onRemove={removeFromCart}
+            onComplexity={setComplexityMult}
+            onUrgency={setUrgencyMult}
+            onCalculate={handleCalculate}
+            onCreateTask={openCreateModal}
+            calculated={!!estimateResult}
+            loading={loading}
+          />
         </div>
       </div>
+
+      {createModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          onKeyDown={(e) => e.key === 'Escape' && setCreateModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-slate-900">
+              Создать задачу и отправить в очередь
+            </h3>
+            <div className="mt-4 space-y-3">
+              <label className="block text-sm font-medium text-slate-700">
+                Название задачи *
+              </label>
+              <input
+                type="text"
+                value={createTitle}
+                onChange={(e) => setCreateTitle(e.target.value)}
+                placeholder="Не менее 5 символов"
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                minLength={5}
+                maxLength={500}
+              />
+              <label className="block text-sm font-medium text-slate-700">
+                Описание
+              </label>
+              <textarea
+                value={createDescription}
+                onChange={(e) => setCreateDescription(e.target.value)}
+                rows={3}
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              />
+              <label className="block text-sm font-medium text-slate-700">
+                Приоритет
+              </label>
+              <select
+                value={createPriority}
+                onChange={(e) => setCreatePriority(e.target.value)}
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="low">Низкий</option>
+                <option value="medium">Средний</option>
+                <option value="high">Высокий</option>
+                <option value="critical">Критичный</option>
+              </select>
+              <label className="block text-sm font-medium text-slate-700">
+                Оценщик (тимлид)
+              </label>
+              <select
+                value={createEstimatorId}
+                onChange={(e) => setCreateEstimatorId(e.target.value)}
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              >
+                {teamleads.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCreateModalOpen(false)}
+                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateTask}
+                disabled={creating || createTitle.trim().length < 5}
+                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                {creating ? '...' : 'Создать и отправить в очередь'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

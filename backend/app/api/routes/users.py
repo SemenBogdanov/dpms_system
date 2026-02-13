@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
-from app.models.user import User, League
+from app.models.user import User, League, UserRole
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 from app.schemas.dashboard import UserProgress
 from app.schemas.transaction import QTransactionRead
@@ -19,14 +19,17 @@ router = APIRouter()
 async def list_users(
     league: League | None = Query(None),
     is_active: bool | None = Query(None),
+    role: UserRole | None = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Список сотрудников с фильтрами по лиге и is_active."""
+    """Список сотрудников с фильтрами по лиге, is_active и роли."""
     stmt = select(User).order_by(User.full_name)
     if league is not None:
         stmt = stmt.where(User.league == league)
     if is_active is not None:
         stmt = stmt.where(User.is_active == is_active)
+    if role is not None:
+        stmt = stmt.where(User.role == role)
     result = await db.execute(stmt)
     return list(result.scalars().all())
 

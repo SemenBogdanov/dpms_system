@@ -86,6 +86,8 @@ class Task(Base):
         nullable=True,
     )
     estimation_details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    result_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    rejection_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -1,15 +1,23 @@
 import type { Task } from '@/api/types'
+import { Check } from 'lucide-react'
 import { QBadge } from './QBadge'
+import { PriorityBadge } from './PriorityBadge'
 import { cn } from '@/lib/utils'
 
 interface TaskCardProps {
   task: Task
   onPull?: (taskId: string) => void
   onSubmitReview?: (taskId: string) => void
-  onValidate?: (taskId: string, approved: boolean) => void
+  onValidate?: (taskId: string, approved: boolean, comment?: string) => void
+  /** Открыть модалку «Вернуть» с полем «Причина возврата»; сабмит вызовет onValidate(taskId, false, comment) */
+  onRejectClick?: (task: Task) => void
   showActions?: boolean
   pullingTaskId?: string | null
   busyTaskId?: string | null
+  /** Для блокировки самовалидации: кнопки Принять/Вернуть disabled если task.assignee_id === currentUserId */
+  currentUserId?: string | null
+  /** Имя валидатора для карточки DONE */
+  validatorName?: string
   className?: string
 }
 
@@ -23,24 +31,38 @@ const statusLabels: Record<string, string> = {
   cancelled: 'Отменена',
 }
 
+function daysSince(dateStr: string | null): number | null {
+  if (!dateStr) return null
+  const d = new Date(dateStr)
+  const now = new Date()
+  return Math.floor((now.getTime() - d.getTime()) / (24 * 60 * 60 * 1000))
+}
+
 export function TaskCard({
   task,
   onPull,
   onSubmitReview,
   onValidate,
+  onRejectClick,
   showActions,
   pullingTaskId,
   busyTaskId,
+  currentUserId,
+  validatorName,
   className,
 }: TaskCardProps) {
   const inQueue = task.status === 'in_queue'
   const inProgress = task.status === 'in_progress'
   const inReview = task.status === 'review'
+  const isDone = task.status === 'done'
   const canPull = showActions && inQueue && onPull
   const canSubmit = showActions && inProgress && onSubmitReview
   const canValidate = showActions && inReview && onValidate
+  const isSelfTask = currentUserId && task.assignee_id === currentUserId
   const isPulling = pullingTaskId === task.id
   const isBusy = busyTaskId === task.id
+  const validateDisabled = Boolean(isBusy || isSelfTask)
+  const days = daysSince(task.started_at)
 
   return (
     <div
@@ -57,12 +79,28 @@ export function TaskCard({
           )}
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <QBadge q={task.estimated_q} />
+            <PriorityBadge priority={task.priority} />
             <span className="text-xs text-slate-400">
               {statusLabels[task.status] ?? task.status}
             </span>
-            <span className="text-xs text-slate-400">· {task.priority}</span>
-            <span className="text-xs text-slate-400">Лига {task.min_league}</span>
+            <span className="text-xs text-slate-400">· {task.complexity}</span>
+            {days != null && (
+              <span className="text-xs text-slate-400">· {days} д. в работе</span>
+            )}
           </div>
+          {inReview && task.rejection_comment && (
+            <p className="mt-2 text-sm text-red-600">{task.rejection_comment}</p>
+          )}
+          {inReview && !task.rejection_comment && (
+            <p className="mt-2 text-sm text-slate-500">⏳ Ожидает проверки</p>
+          )}
+          {isDone && (
+            <p className="mt-2 flex items-center gap-1 text-sm text-emerald-700">
+              <Check className="h-4 w-4" />
+              +{task.estimated_q} Q
+              {validatorName && ` · ${validatorName}`}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
           {canPull && (
@@ -82,7 +120,7 @@ export function TaskCard({
               disabled={isBusy}
               className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             >
-              {isBusy ? '...' : 'Сдать на проверку'}
+              {isBusy ? '...' : 'Сдать'}
             </button>
           )}
           {canValidate && onValidate && (
@@ -90,18 +128,20 @@ export function TaskCard({
               <button
                 type="button"
                 onClick={() => onValidate(task.id, true)}
-                disabled={isBusy}
+                disabled={validateDisabled}
+                title={isSelfTask ? 'Нельзя валидировать свою задачу' : undefined}
                 className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
               >
-                {isBusy ? '...' : 'Принять'}
+                {isBusy ? '...' : '✓ Принять'}
               </button>
               <button
                 type="button"
-                onClick={() => onValidate(task.id, false)}
-                disabled={isBusy}
+                onClick={() => (onRejectClick ? onRejectClick(task) : onValidate(task.id, false))}
+                disabled={validateDisabled}
+                title={isSelfTask ? 'Нельзя валидировать свою задачу' : undefined}
                 className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
               >
-                Вернуть
+                ✗ Вернуть
               </button>
             </>
           )}

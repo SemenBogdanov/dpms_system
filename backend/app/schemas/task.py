@@ -43,6 +43,8 @@ class TaskRead(TaskBase):
     estimator_id: UUID
     validator_id: UUID | None = None
     estimation_details: dict | None = None
+    result_url: str | None = None
+    rejection_comment: str | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
     validated_at: datetime | None = None

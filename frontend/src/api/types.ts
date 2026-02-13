@@ -58,11 +58,30 @@ export interface Task {
   estimator_id: string
   validator_id: string | null
   estimation_details: Record<string, unknown> | null
+  result_url: string | null
+  rejection_comment: string | null
   started_at: string | null
   completed_at: string | null
   validated_at: string | null
   created_at: string
   updated_at: string
+}
+
+/** Задача в очереди с флагами can_pull, locked */
+export interface QueueTaskResponse {
+  id: string
+  title: string
+  description: string | null
+  task_type: string
+  complexity: string
+  estimated_q: number
+  priority: string
+  min_league: string
+  created_at: string
+  estimator_name: string | null
+  can_pull: boolean
+  locked: boolean
+  lock_reason: string | null
 }
 
 export interface CapacityGauge {
@@ -96,16 +115,37 @@ export interface TeamSummary {
   total_load: number
 }
 
-export interface CalculatorBreakdownItem {
+/** Позиция в запросе калькулятора */
+export interface CalcItemInput {
+  catalog_id: string
+  quantity: number
+}
+
+export interface EstimateBreakdownItem {
   catalog_id: string
   name: string
+  category: string
+  complexity: string
   base_cost_q: number
   quantity: number
   subtotal_q: number
 }
 
-export interface CalculatorResponse {
+export interface EstimateResponse {
   total_q: number
-  breakdown: CalculatorBreakdownItem[]
-  min_league: League
+  min_league: string
+  complexity_multiplier: number
+  urgency_multiplier: number
+  breakdown: EstimateBreakdownItem[]
+}
+
+/** Запрос создания задачи из калькулятора */
+export interface CreateTaskFromCalcRequest {
+  title: string
+  description: string
+  priority: string
+  estimator_id: string
+  items: CalcItemInput[]
+  complexity_multiplier: number
+  urgency_multiplier: number
 }
