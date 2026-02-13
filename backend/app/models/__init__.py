@@ -11,6 +11,7 @@ from app.models.user import User
 from app.models.catalog import CatalogItem
 from app.models.task import Task
 from app.models.transaction import QTransaction
+from app.models.shop import ShopItem, Purchase, PeriodSnapshot
 
 
 __all__ = [
@@ -19,4 +20,7 @@ __all__ = [
     "CatalogItem",
     "Task",
     "QTransaction",
+    "ShopItem",
+    "Purchase",
+    "PeriodSnapshot",
 ]

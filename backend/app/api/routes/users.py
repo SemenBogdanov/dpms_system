@@ -101,12 +101,24 @@ async def get_user_progress_route(
 @router.get("/{user_id}/transactions", response_model=list[QTransactionRead])
 async def get_user_transactions(
     user_id: UUID,
+    wallet_type: str | None = Query(None, description="main | karma"),
+    direction: str | None = Query(None, description="credit | debit"),
     db: AsyncSession = Depends(get_db),
 ):
-    """История начислений пользователя."""
-    from app.models.transaction import QTransaction
+    """История операций пользователя. Фильтры: wallet_type, direction (credit=приход, debit=расход)."""
+    from app.models.transaction import QTransaction, WalletType
 
-    result = await db.execute(
-        select(QTransaction).where(QTransaction.user_id == user_id).order_by(QTransaction.created_at.desc())
-    )
+    stmt = select(QTransaction).where(QTransaction.user_id == user_id)
+    if wallet_type is not None:
+        try:
+            wt = WalletType(wallet_type)
+            stmt = stmt.where(QTransaction.wallet_type == wt)
+        except ValueError:
+            pass
+    if direction == "credit":
+        stmt = stmt.where(QTransaction.amount > 0)
+    elif direction == "debit":
+        stmt = stmt.where(QTransaction.amount < 0)
+    stmt = stmt.order_by(QTransaction.created_at.desc())
+    result = await db.execute(stmt)
     return list(result.scalars().all())

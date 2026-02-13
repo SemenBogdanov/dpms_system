@@ -4,9 +4,6 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.models.user import League
-
-
 class CapacityGauge(BaseModel):
     """Метрика «Стакан»: загрузка vs ёмкость."""
     capacity: Decimal  # сумма mpw активных пользователей
@@ -25,18 +22,30 @@ class UserProgress(BaseModel):
 
 class TeamMemberSummary(BaseModel):
     """Сводка по одному сотруднику для дашборда."""
-    user_id: UUID
+    id: UUID
     full_name: str
-    league: League
-    earned: Decimal
-    target: Decimal
+    league: str
+    mpw: int
+    earned: float
     percent: float
-    karma: Decimal
+    karma: float
+    in_progress_q: float
+    is_at_risk: bool
 
 
 class TeamSummary(BaseModel):
     """Сводка по команде (группировка по лигам)."""
     by_league: dict[str, list[TeamMemberSummary]]
-    capacity: Decimal
-    total_earned: Decimal
-    total_load: Decimal
+    total_capacity: float
+    total_load: float
+    total_earned: float
+    utilization: float
+
+
+class PeriodStats(BaseModel):
+    """Агрегаты текущего месяца для дашборда руководителя."""
+    period: str  # 'YYYY-MM'
+    tasks_created: int
+    tasks_completed: int
+    total_q_earned: float
+    avg_completion_time_hours: float | None

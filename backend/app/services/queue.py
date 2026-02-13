@@ -12,10 +12,9 @@ from app.schemas.queue import QueueTaskResponse
 from app.services.wallet import credit_q
 
 _LEAGUE_ORDER = {League.C: 0, League.B: 1, League.A: 2}
-_PRIORITY_ORDER = {"critical": 3, "high": 2, "medium": 1, "low": 0}
 
 
-async def get_available_tasks(db: AsyncSession, user_id) -> list[QueueTaskResponse]:
+async def get_available_tasks(db: AsyncSession, user_id: UUID) -> list[QueueTaskResponse]:
     """
     Все задачи in_queue. Для каждой: can_pull, locked, lock_reason, estimator_name.
     Задачи с min_league > user.league возвращаются с locked=True.
@@ -91,7 +90,7 @@ async def get_available_tasks(db: AsyncSession, user_id) -> list[QueueTaskRespon
     return out
 
 
-async def pull_task(db: AsyncSession, user_id, task_id) -> Task:
+async def pull_task(db: AsyncSession, user_id: UUID, task_id: UUID) -> Task:
     """Взять задачу. Атомарная блокировка SELECT FOR UPDATE."""
     user_result = await db.execute(select(User).where(User.id == user_id))
     user = user_result.scalar_one_or_none()
@@ -127,8 +126,8 @@ async def pull_task(db: AsyncSession, user_id, task_id) -> Task:
 
 async def submit_for_review(
     db: AsyncSession,
-    user_id,
-    task_id,
+    user_id: UUID,
+    task_id: UUID,
     result_url: str | None = None,
     comment: str | None = None,
 ) -> Task:
@@ -152,8 +151,8 @@ async def submit_for_review(
 
 async def validate_task(
     db: AsyncSession,
-    validator_id,
-    task_id,
+    validator_id: UUID,
+    task_id: UUID,
     approved: bool,
     comment: str | None = None,
 ) -> Task:

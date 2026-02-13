@@ -11,6 +11,7 @@ from app.models.user import User, League, UserRole
 from app.services.wallet import credit_q
 from app.models.catalog import CatalogItem, CatalogCategory, Complexity
 from app.models.task import Task, TaskStatus, TaskType, TaskPriority
+from app.models.shop import ShopItem
 
 
 # --- Пользователи (5 штук) ---
@@ -147,6 +148,39 @@ async def ensure_tasks(session: AsyncSession, users_by_email: dict[str, User]) -
             )
 
 
+async def ensure_shop_items(session: AsyncSession) -> None:
+    """Добавить товары магазина, если ещё нет."""
+    result = await session.execute(select(ShopItem).limit(1))
+    if result.scalar_one_or_none():
+        return
+    shop_items = [
+        ShopItem(
+            name="Remote Day",
+            description="Работа из дома на 1 день",
+            cost_q=Decimal("20.0"),
+            icon="🏠",
+            max_per_month=2,
+        ),
+        ShopItem(
+            name="Day Off",
+            description="Дополнительный выходной",
+            cost_q=Decimal("50.0"),
+            icon="🏖️",
+            max_per_month=1,
+        ),
+        ShopItem(
+            name="Veto Card",
+            description="Право отклонить одну назначенную задачу",
+            cost_q=Decimal("10.0"),
+            icon="🛡️",
+            max_per_month=3,
+        ),
+    ]
+    for item in shop_items:
+        session.add(item)
+        await session.flush()
+
+
 async def run_seed() -> None:
     """Главная функция seed."""
     async with AsyncSessionLocal() as session:
@@ -154,6 +188,7 @@ async def run_seed() -> None:
             users = await ensure_users(session)
             await ensure_catalog(session)
             await ensure_tasks(session, users)
+            await ensure_shop_items(session)
             await session.commit()
             print("Seed выполнен успешно.")
         except Exception as e:

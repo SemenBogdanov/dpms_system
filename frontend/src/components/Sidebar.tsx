@@ -7,6 +7,7 @@ import {
   User,
   Users,
   BookOpen,
+  ShoppingBag,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -16,6 +17,7 @@ const nav = [
   { to: '/my-tasks', label: 'Мои задачи', icon: ClipboardList },
   { to: '/calculator', label: 'Калькулятор', icon: Calculator },
   { to: '/profile', label: 'Профиль', icon: User },
+  { to: '/shop', label: 'Магазин', icon: ShoppingBag },
   { to: '/admin/users', label: 'Сотрудники', icon: Users },
   { to: '/catalog', label: 'Справочник', icon: BookOpen },
 ]

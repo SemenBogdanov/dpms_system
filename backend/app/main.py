@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.api.routes import users, catalog, calculator, tasks, queue, dashboard
+from app.api.routes import users, catalog, calculator, tasks, queue, dashboard, shop, admin
 
 
 @asynccontextmanager
@@ -36,6 +36,8 @@ app.include_router(calculator.router, prefix="/api/calculator", tags=["calculato
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(queue.router, prefix="/api/queue", tags=["queue"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
+app.include_router(shop.router, prefix="/api/shop", tags=["shop"])
+app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 
 
 @app.get("/health")

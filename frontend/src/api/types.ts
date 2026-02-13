@@ -99,20 +99,80 @@ export interface UserProgress {
 }
 
 export interface TeamMemberSummary {
-  user_id: string
+  id: string
   full_name: string
-  league: League
+  league: string
+  mpw: number
   earned: number
-  target: number
   percent: number
   karma: number
+  in_progress_q: number
+  is_at_risk: boolean
 }
 
 export interface TeamSummary {
   by_league: Record<string, TeamMemberSummary[]>
-  capacity: number
-  total_earned: number
+  total_capacity: number
   total_load: number
+  total_earned: number
+  utilization: number
+}
+
+export interface PeriodStats {
+  period: string
+  tasks_created: number
+  tasks_completed: number
+  total_q_earned: number
+  avg_completion_time_hours: number | null
+}
+
+export interface ShopItem {
+  id: string
+  name: string
+  description: string
+  cost_q: number
+  category: string
+  icon: string
+  is_active: boolean
+  max_per_month: number
+  created_at: string
+}
+
+export interface Purchase {
+  id: string
+  user_id: string
+  shop_item_id: string
+  cost_q: number
+  status: string
+  created_at: string
+  approved_at: string | null
+  approved_by: string | null
+  item_name: string | null
+}
+
+export interface RolloverResponse {
+  period: string
+  users_processed: number
+  total_main_reset: number
+  total_karma_burned: number
+}
+
+export interface PeriodHistoryItem {
+  period: string
+  closed_at: string | null
+  users_count: number
+  total_main_reset: number
+  total_karma_burned: number
+}
+
+export interface QTransactionRead {
+  id: string
+  user_id: string
+  amount: number
+  wallet_type: 'main' | 'karma'
+  reason: string
+  task_id: string | null
+  created_at: string
 }
 
 /** Позиция в запросе калькулятора */
