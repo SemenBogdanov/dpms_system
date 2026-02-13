@@ -75,6 +75,7 @@ export function MyTasksPage() {
     if (!currentUserId) return
     api.get<Task[]>(`/api/tasks?assignee_id=${currentUserId}`).then(setTasks)
     loadReviewTasks()
+    api.get<User[]>('/api/users').then(setUsers)
   }, [currentUserId, loadReviewTasks])
 
   const handleSubmitReview = (taskId: string) => {

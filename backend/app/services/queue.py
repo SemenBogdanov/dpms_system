@@ -1,5 +1,6 @@
 """Очередь: список с can_pull/locked, pull (FOR UPDATE), submit, validate."""
 from datetime import datetime, timezone
+from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
@@ -43,6 +44,14 @@ async def get_available_tasks(db: AsyncSession, user_id) -> list[QueueTaskRespon
     user_league_order = _LEAGUE_ORDER.get(user.league, 0)
     can_pull_by_wip = wip_count < user.wip_limit
 
+    estimator_ids = {t.estimator_id for t in tasks if t.estimator_id}
+    estimator_map: dict[UUID, str] = {}
+    if estimator_ids:
+        est_result = await db.execute(
+            select(User.id, User.full_name).where(User.id.in_(estimator_ids))
+        )
+        estimator_map = {row.id: row.full_name for row in est_result.all()}
+
     out: list[QueueTaskResponse] = []
     for task in tasks:
         task_league_order = _LEAGUE_ORDER.get(task.min_league, 0)
@@ -60,11 +69,7 @@ async def get_available_tasks(db: AsyncSession, user_id) -> list[QueueTaskRespon
             locked = False
             lock_reason = None
 
-        estimator_name = None
-        if task.estimator_id:
-            u = await db.get(User, task.estimator_id)
-            if u:
-                estimator_name = u.full_name
+        estimator_name = estimator_map.get(task.estimator_id) if task.estimator_id else None
 
         out.append(
             QueueTaskResponse(
