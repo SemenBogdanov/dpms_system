@@ -1,11 +1,15 @@
-"""API админки: закрытие периода, история периодов."""
-from fastapi import APIRouter, Depends
+"""API админки: закрытие периода, история периодов, оценка лиг."""
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, Query
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.schemas.admin import RolloverRequest, RolloverResponse, PeriodSnapshotResponse
+from app.schemas.leagues import LeagueEvaluation, LeagueChange, ApplyLeagueChangesRequest
 from app.services.admin import rollover_period, get_period_history, get_period_details
+from app.services.leagues import evaluate_league_change, apply_league_changes
 
 router = APIRouter()
 
@@ -33,3 +37,29 @@ async def period_history_detail(
 ):
     """Детали периода: снимки по каждому сотруднику."""
     return await get_period_details(db, period)
+
+
+@router.get("/league-evaluation", response_model=list[LeagueEvaluation])
+async def league_evaluation_route(
+    user_id: UUID | None = Query(None, description="Один пользователь или все"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Список всех пользователей с оценкой смены лиги. Опционально user_id — только один."""
+    from sqlalchemy import select
+    from app.models.user import User
+
+    if user_id:
+        ev = await evaluate_league_change(db, user_id)
+        return [ev] if ev.full_name else []
+    result = await db.execute(select(User).where(User.is_active.is_(True)))
+    users = result.scalars().all()
+    return [await evaluate_league_change(db, u.id) for u in users]
+
+
+@router.post("/apply-league-changes", response_model=list[LeagueChange])
+async def apply_league_changes_route(
+    body: ApplyLeagueChangesRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Применить изменения лиг. Только admin."""
+    return await apply_league_changes(db, body.admin_id)

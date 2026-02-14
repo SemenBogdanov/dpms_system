@@ -1,5 +1,6 @@
-"""Метрики: Стакан, План/Факт, сводка по команде."""
-from datetime import datetime, timezone
+"""Метрики: Стакан, План/Факт, сводка по команде, burn-down."""
+import calendar
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -7,8 +8,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.task import Task, TaskStatus
+from app.models.transaction import QTransaction, WalletType
 from app.models.user import User
 from app.schemas.dashboard import (
+    BurndownData,
+    BurndownPoint,
     CapacityGauge,
     TeamMemberSummary,
     TeamSummary,
@@ -215,4 +219,93 @@ async def get_period_stats(db: AsyncSession) -> PeriodStats:
         avg_completion_time_hours=round(avg_completion_time_hours, 1)
         if avg_completion_time_hours is not None
         else None,
+    )
+
+
+def _working_days_in_month(year: int, month: int) -> int:
+    """Количество рабочих дней (пн–пт) в месяце."""
+    count = 0
+    for day in range(1, calendar.monthrange(year, month)[1] + 1):
+        if date(year, month, day).weekday() < 5:  # 0-4 = пн-пт
+            count += 1
+    return count
+
+
+def _working_day_index(year: int, month: int, day: int) -> int:
+    """Порядковый номер рабочего дня в месяце (1-based)."""
+    idx = 0
+    for d in range(1, day + 1):
+        if date(year, month, d).weekday() < 5:
+            idx += 1
+    return idx
+
+
+async def get_burndown_data(db: AsyncSession) -> BurndownData:
+    """
+    Данные для графика burn-down текущего месяца.
+    Для каждого дня: ideal (линейный план), actual (накопительный итог по main, amount>0).
+    Рабочие дни = пн–пт. Будущие даты: actual=None.
+    """
+    now = datetime.now(timezone.utc)
+    period = now.strftime("%Y-%m")
+    year, month = now.year, now.month
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    _, last_day = calendar.monthrange(year, month)
+    month_end = now.replace(day=last_day, hour=23, minute=59, second=59, microsecond=999999)
+
+    cap_result = await db.execute(
+        select(func.coalesce(func.sum(User.mpw), 0)).where(User.is_active.is_(True))
+    )
+    total_capacity = float(cap_result.scalar() or 0)
+    working_days = _working_days_in_month(year, month)
+    if working_days == 0:
+        return BurndownData(period=period, total_capacity=total_capacity, working_days=0, points=[])
+
+    # Ежедневные суммы: date -> sum(amount) за этот день (main, amount > 0)
+    daily_stmt = (
+        select(
+            func.date_trunc("day", QTransaction.created_at).label("d"),
+            func.coalesce(func.sum(QTransaction.amount), 0).label("total"),
+        )
+        .where(
+            QTransaction.wallet_type == WalletType.main,
+            QTransaction.amount > 0,
+            QTransaction.created_at >= month_start,
+            QTransaction.created_at <= month_end,
+        )
+        .group_by(func.date_trunc("day", QTransaction.created_at))
+    )
+    daily_result = await db.execute(daily_stmt)
+    daily_totals = {}
+    for row in daily_result.all():
+        dt = row.d
+        if hasattr(dt, "date"):
+            d = dt.date()
+        else:
+            d = date(dt.year, dt.month, dt.day) if hasattr(dt, "year") else date.today()
+        daily_totals[d] = float(row.total)
+
+    today = now.date()
+    points: list[BurndownPoint] = []
+    cumulative_actual = 0.0
+
+    for day in range(1, last_day + 1):
+        d = date(year, month, day)
+        day_str = d.strftime("%Y-%m-%d")
+        work_idx = _working_day_index(year, month, day)
+        ideal = round(total_capacity / working_days * work_idx, 1) if working_days else 0.0
+
+        if d <= today:
+            cumulative_actual += daily_totals.get(d, 0.0)
+            actual = round(cumulative_actual, 1)
+        else:
+            actual = None
+
+        points.append(BurndownPoint(day=day_str, ideal=ideal, actual=actual))
+
+    return BurndownData(
+        period=period,
+        total_capacity=round(total_capacity, 1),
+        working_days=working_days,
+        points=points,
     )

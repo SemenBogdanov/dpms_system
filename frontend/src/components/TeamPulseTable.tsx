@@ -44,13 +44,13 @@ export function TeamPulseTable({ members }: TeamPulseTableProps) {
                 <LeagueBadge league={m.league as 'C' | 'B' | 'A'} />
               </td>
               <td className="px-4 py-2 text-slate-600">{m.mpw}</td>
-              <td className="px-4 py-2 text-slate-600">{m.earned.toFixed(1)}</td>
+              <td className="px-4 py-2 text-slate-600">{Number(m.earned).toFixed(1)}</td>
               <td className="px-4 py-2 w-24">
                 <ProgressBar percent={m.percent} variant="risk" />
-                <span className="text-xs text-slate-500">{m.percent.toFixed(0)}%</span>
+                <span className="text-xs text-slate-500">{Number(m.percent).toFixed(0)}%</span>
               </td>
-              <td className="px-4 py-2 text-slate-600">{m.karma.toFixed(1)}</td>
-              <td className="px-4 py-2 text-slate-600">{m.in_progress_q.toFixed(1)}</td>
+              <td className="px-4 py-2 text-slate-600">{Number(m.karma).toFixed(1)}</td>
+              <td className="px-4 py-2 text-slate-600">{Number(m.in_progress_q).toFixed(1)}</td>
               <td className="px-4 py-2">
                 {m.is_at_risk && <span title="Отстаёт от темпа">⚠️</span>}
                 {!m.is_at_risk && m.percent >= 100 && <span>✅</span>}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/client'
-import type { User, PeriodHistoryItem } from '@/api/types'
+import type { User, PeriodHistoryItem, LeagueEvaluation, LeagueChange } from '@/api/types'
 import toast from 'react-hot-toast'
 
 const MONTHS = [
@@ -17,6 +17,9 @@ export function AdminUsersPage() {
   const [rolloverInput, setRolloverInput] = useState('')
   const [rolloverAdminId, setRolloverAdminId] = useState('')
   const [rolloverBusy, setRolloverBusy] = useState(false)
+  const [leagueEvaluations, setLeagueEvaluations] = useState<LeagueEvaluation[]>([])
+  const [leagueEvalLoading, setLeagueEvalLoading] = useState(false)
+  const [applyLeagueBusy, setApplyLeagueBusy] = useState(false)
 
   const loadUsers = useCallback(() => {
     api.get<User[]>('/api/users')
@@ -47,6 +50,38 @@ export function AdminUsersPage() {
     if (!window.confirm('Вы уверены? Это обнулит wallet_main всех сотрудников и спишет 50% кармы. Действие необратимо.')) return
     setRolloverConfirm(true)
     setRolloverInput('')
+  }
+
+  const loadLeagueEvaluation = useCallback(() => {
+    setLeagueEvalLoading(true)
+    api
+      .get<LeagueEvaluation[]>('/api/admin/league-evaluation')
+      .then(setLeagueEvaluations)
+      .catch((e) => {
+        toast.error(e instanceof Error ? e.message : 'Ошибка оценки лиг')
+        setLeagueEvaluations([])
+      })
+      .finally(() => setLeagueEvalLoading(false))
+  }, [])
+
+  const handleApplyLeagueChanges = () => {
+    const eligibleCount = leagueEvaluations.filter((e) => e.eligible && e.suggested_league !== e.current_league).length
+    if (eligibleCount === 0) return
+    if (!window.confirm(`Будут изменены лиги ${eligibleCount} сотрудников. Подтвердить?`)) return
+    if (!selectedAdminId) {
+      toast.error('Выберите администратора')
+      return
+    }
+    setApplyLeagueBusy(true)
+    api
+      .post<LeagueChange[]>('/api/admin/apply-league-changes', { admin_id: selectedAdminId })
+      .then((changes) => {
+        toast.success(`Изменено лиг: ${changes.length}. ${changes.map((c) => `${c.full_name}: ${c.old_league} → ${c.new_league}`).join('; ')}`)
+        loadUsers()
+        loadLeagueEvaluation()
+      })
+      .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка применения'))
+      .finally(() => setApplyLeagueBusy(false))
   }
 
   const handleRolloverSubmit = () => {
@@ -153,14 +188,71 @@ export function AdminUsersPage() {
                     {h.closed_at ? new Date(h.closed_at).toLocaleString('ru') : '—'}
                   </td>
                   <td className="px-4 py-2">{h.users_count}</td>
-                  <td className="px-4 py-2">{h.total_main_reset.toFixed(1)}</td>
-                  <td className="px-4 py-2">{h.total_karma_burned.toFixed(1)}</td>
+                  <td className="px-4 py-2">{Number(h.total_main_reset).toFixed(1)}</td>
+                  <td className="px-4 py-2">{Number(h.total_karma_burned).toFixed(1)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           {periodHistory.length === 0 && <p className="p-4 text-slate-500 text-center">Нет закрытых периодов</p>}
         </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h2 className="font-medium text-slate-800">Оценка лиг</h2>
+        <p className="mt-1 text-sm text-slate-600">Повышение/понижение лиг по снимкам периодов</p>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={loadLeagueEvaluation}
+            disabled={leagueEvalLoading}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {leagueEvalLoading ? '...' : 'Рассчитать изменения лиг'}
+          </button>
+          {leagueEvaluations.some((e) => e.eligible && e.suggested_league !== e.current_league) && (
+            <button
+              type="button"
+              onClick={handleApplyLeagueChanges}
+              disabled={applyLeagueBusy}
+              className="rounded-lg border border-amber-400 bg-amber-100 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-200 disabled:opacity-50"
+            >
+              {applyLeagueBusy ? '...' : 'Применить изменения'}
+            </button>
+          )}
+        </div>
+        {leagueEvaluations.length > 0 && (
+          <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50">
+                  <th className="px-4 py-2 text-left font-medium text-slate-600">ФИО</th>
+                  <th className="px-4 py-2 text-left font-medium text-slate-600">Текущая</th>
+                  <th className="px-4 py-2 text-left font-medium text-slate-600">Предложена</th>
+                  <th className="px-4 py-2 text-left font-medium text-slate-600">Причина</th>
+                  <th className="px-4 py-2 text-left font-medium text-slate-600">Статус</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leagueEvaluations.map((ev) => {
+                  const hasChange = ev.eligible && ev.suggested_league !== ev.current_league
+                  return (
+                    <tr
+                      key={ev.user_id}
+                      className={hasChange ? 'bg-amber-50' : 'bg-white'}
+                    >
+                      <td className="px-4 py-2 text-slate-900">{ev.full_name}</td>
+                      <td className="px-4 py-2">{ev.current_league}</td>
+                      <td className="px-4 py-2">{ev.suggested_league}</td>
+                      <td className="px-4 py-2 text-slate-600">{ev.reason}</td>
+                      <td className="px-4 py-2">{hasChange ? 'Рекомендовано' : 'Без изменений'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       {rolloverConfirm && (

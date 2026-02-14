@@ -12,7 +12,7 @@ class QTransactionRead(BaseModel):
     """Чтение записи транзакции (только чтение, запись через сервис)."""
     id: UUID
     user_id: UUID
-    amount: Decimal
+    amount: float
     wallet_type: WalletType
     reason: str
     task_id: UUID | None = None

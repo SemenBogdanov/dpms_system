@@ -25,8 +25,13 @@ class CatalogItemCreate(CatalogItemBase):
 
 
 class CatalogItemUpdate(BaseModel):
-    """Обновление позиции (base_cost_q и др.)."""
-    base_cost_q: float | None = Field(None, ge=0)
+    """Обновление позиции (частично)."""
+    name: str | None = Field(None, max_length=255)
+    category: CatalogCategory | None = None
+    complexity: Complexity | None = None
+    base_cost_q: float | None = Field(None, gt=0)
+    min_league: League | None = None
+    description: str | None = None
     is_active: bool | None = None
 
 

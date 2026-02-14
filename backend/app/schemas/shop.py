@@ -11,7 +11,7 @@ class ShopItemResponse(BaseModel):
     id: UUID
     name: str
     description: str
-    cost_q: Decimal
+    cost_q: float
     category: str
     icon: str
     is_active: bool
@@ -32,7 +32,7 @@ class PurchaseResponse(BaseModel):
     id: UUID
     user_id: UUID
     shop_item_id: UUID
-    cost_q: Decimal
+    cost_q: float
     status: str
     created_at: datetime
     approved_at: datetime | None

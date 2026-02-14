@@ -14,10 +14,10 @@ class CapacityGauge(BaseModel):
 
 class UserProgress(BaseModel):
     """Прогресс пользователя: earned vs target."""
-    earned: Decimal
-    target: Decimal
+    earned: float
+    target: float
     percent: float
-    karma: Decimal
+    karma: float
 
 
 class TeamMemberSummary(BaseModel):
@@ -49,3 +49,18 @@ class PeriodStats(BaseModel):
     tasks_completed: int
     total_q_earned: float
     avg_completion_time_hours: float | None
+
+
+class BurndownPoint(BaseModel):
+    """Одна точка графика burn-down."""
+    day: str  # "YYYY-MM-DD"
+    ideal: float
+    actual: float | None = None
+
+
+class BurndownData(BaseModel):
+    """Данные для графика burn-down текущего месяца."""
+    period: str
+    total_capacity: float
+    working_days: int
+    points: list[BurndownPoint]

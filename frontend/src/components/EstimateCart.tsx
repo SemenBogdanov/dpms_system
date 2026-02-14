@@ -34,7 +34,7 @@ interface EstimateCartProps {
 }
 
 function formatQ(n: number) {
-  return Number.isInteger(n) ? String(n) : n.toFixed(1)
+  return Number.isInteger(n) ? String(n) : Number(n).toFixed(1)
 }
 
 export function EstimateCart({

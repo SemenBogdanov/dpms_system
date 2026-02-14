@@ -8,12 +8,14 @@ import { ProfilePage } from '@/pages/ProfilePage'
 import { ShopPage } from '@/pages/ShopPage'
 import { AdminUsersPage } from '@/pages/AdminUsersPage'
 import { CatalogPage } from '@/pages/CatalogPage'
+import { CalibrationPage } from '@/pages/CalibrationPage'
 
 function App() {
   return (
     <Routes>
       <Route path="/" element={<Layout />}>
         <Route index element={<DashboardPage />} />
+        <Route path="calibration" element={<CalibrationPage />} />
         <Route path="queue" element={<QueuePage />} />
         <Route path="my-tasks" element={<MyTasksPage />} />
         <Route path="calculator" element={<CalculatorPage />} />

@@ -5,28 +5,34 @@ import type {
   TeamSummary,
   PeriodStats,
   TeamMemberSummary,
+  BurndownData,
 } from '@/api/types'
 import { GlassGauge } from '@/components/GlassGauge'
 import { MetricCard } from '@/components/MetricCard'
 import { TeamPulseTable } from '@/components/TeamPulseTable'
+import { BurndownChart } from '@/components/BurndownChart'
+import { exportTeamCSV } from '@/lib/csv'
 
 export function DashboardPage() {
   const [capacity, setCapacity] = useState<CapacityGauge | null>(null)
   const [team, setTeam] = useState<TeamSummary | null>(null)
   const [periodStats, setPeriodStats] = useState<PeriodStats | null>(null)
+  const [burndown, setBurndown] = useState<BurndownData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
-      const [cap, sum, period] = await Promise.all([
+      const [cap, sum, period, bd] = await Promise.all([
         api.get<CapacityGauge>('/api/dashboard/capacity'),
         api.get<TeamSummary>('/api/dashboard/team-summary'),
         api.get<PeriodStats>('/api/dashboard/period-stats'),
+        api.get<BurndownData>('/api/dashboard/burndown'),
       ])
       setCapacity(cap)
       setTeam(sum)
       setPeriodStats(period)
+      setBurndown(bd)
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка загрузки')
@@ -59,23 +65,34 @@ export function DashboardPage() {
 
   const avgTimeDays =
     periodStats?.avg_completion_time_hours != null
-      ? (periodStats.avg_completion_time_hours / 24).toFixed(1)
+      ? Number(periodStats.avg_completion_time_hours / 24).toFixed(1)
       : '—'
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold text-slate-900">Дашборд руководителя</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-slate-900">Дашборд руководителя</h1>
+        {team && (
+          <button
+            type="button"
+            onClick={() => exportTeamCSV(team)}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            📊 Экспорт CSV
+          </button>
+        )}
+      </div>
 
       {/* Строка 1 — 4 карточки метрик */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
           title="Ёмкость команды"
-          value={`${capVal.toFixed(0)} Q`}
+          value={`${Number(capVal).toFixed(0)} Q`}
         />
         <MetricCard
           title="Текущая нагрузка"
-          value={`${loadVal.toFixed(0)} Q`}
-          subtitle={`${util.toFixed(0)}%`}
+          value={`${Number(loadVal).toFixed(0)} Q`}
+          subtitle={`${Number(util).toFixed(0)}%`}
         />
         <MetricCard
           title="Задач завершено"
@@ -101,7 +118,7 @@ export function DashboardPage() {
             />
           )}
           <p className="text-sm text-slate-600">
-            Ёмкость: {capVal.toFixed(0)} Q · Нагрузка: {loadVal.toFixed(0)} Q · Утилизация: {util.toFixed(1)}%
+            Ёмкость: {Number(capVal).toFixed(0)} Q · Нагрузка: {Number(loadVal).toFixed(0)} Q · Утилизация: {Number(util).toFixed(1)}%
           </p>
         </div>
         <div>
@@ -110,6 +127,14 @@ export function DashboardPage() {
         </div>
       </div>
 
+      {/* Burn-down */}
+      {burndown && burndown.points.length > 0 && (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-3 font-medium text-slate-800">Burn-down: План vs Факт</h2>
+          <BurndownChart data={burndown} />
+        </div>
+      )}
+
       {/* Строка 3 — По лигам */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {['A', 'B', 'C'].map((league) => {
@@ -117,7 +142,7 @@ export function DashboardPage() {
           const count = list.length
           const avg =
             count > 0
-              ? (list.reduce((s, m) => s + m.percent, 0) / count).toFixed(0)
+              ? Number(list.reduce((s, m) => s + m.percent, 0) / count).toFixed(0)
               : '—'
           return (
             <MetricCard

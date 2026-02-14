@@ -100,7 +100,7 @@ export function ShopPage() {
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         {karmaBalance > 0 ? (
           <p className="text-xl font-semibold text-slate-900">
-            Ваш баланс кармы: ⭐ {karmaBalance.toFixed(1)} Q
+            Ваш баланс кармы: ⭐ {Number(karmaBalance).toFixed(1)} Q
           </p>
         ) : (
           <p className="text-slate-600">Нет средств для покупок</p>
@@ -142,7 +142,7 @@ export function ShopPage() {
                     {new Date(p.created_at).toLocaleString('ru')}
                   </td>
                   <td className="px-4 py-2">{p.item_name ?? p.shop_item_id}</td>
-                  <td className="px-4 py-2">{p.cost_q.toFixed(1)} Q</td>
+                  <td className="px-4 py-2">{Number(p.cost_q).toFixed(1)} Q</td>
                   <td className="px-4 py-2">{statusIcon(p.status)} {p.status}</td>
                 </tr>
               ))}

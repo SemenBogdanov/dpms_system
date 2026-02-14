@@ -126,6 +126,57 @@ export interface PeriodStats {
   avg_completion_time_hours: number | null
 }
 
+export interface BurndownPoint {
+  day: string
+  ideal: number
+  actual: number | null
+}
+
+export interface BurndownData {
+  period: string
+  total_capacity: number
+  working_days: number
+  points: BurndownPoint[]
+}
+
+export interface CalibrationItem {
+  catalog_item_id: string
+  name: string
+  category: string
+  complexity: string
+  base_cost_q: number
+  tasks_count: number
+  avg_estimated_q: number
+  avg_actual_hours: number | null
+  deviation_percent: number | null
+  recommendation: string
+}
+
+export interface CalibrationReport {
+  period: string
+  items: CalibrationItem[]
+  total_tasks_analyzed: number
+  overall_accuracy_percent: number
+}
+
+export interface LeagueEvaluation {
+  user_id: string
+  full_name: string
+  current_league: string
+  suggested_league: string
+  reason: string
+  eligible: boolean
+  history: Array<{ period: string; percent: number }>
+}
+
+export interface LeagueChange {
+  user_id: string
+  full_name: string
+  old_league: string
+  new_league: string
+  reason: string
+}
+
 export interface ShopItem {
   id: string
   name: string

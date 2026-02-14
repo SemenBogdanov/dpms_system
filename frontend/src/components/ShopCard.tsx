@@ -20,7 +20,7 @@ export function ShopCard({
   const canBuy = item.is_active && karmaBalance >= item.cost_q && purchasedThisMonth < item.max_per_month
   const limitReached = purchasedThisMonth >= item.max_per_month
   const notEnoughKarma = karmaBalance < item.cost_q
-  const needMore = notEnoughKarma ? (item.cost_q - karmaBalance).toFixed(1) : null
+  const needMore = notEnoughKarma ? Number(item.cost_q - karmaBalance).toFixed(1) : null
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm flex flex-col">

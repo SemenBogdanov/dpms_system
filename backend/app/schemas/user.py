@@ -35,8 +35,8 @@ class UserUpdate(BaseModel):
 class UserRead(UserBase):
     """Чтение пользователя."""
     id: UUID
-    wallet_main: Decimal = Decimal("0")
-    wallet_karma: Decimal = Decimal("0")
+    wallet_main: float = 0
+    wallet_karma: float = 0
     created_at: datetime
     updated_at: datetime
 

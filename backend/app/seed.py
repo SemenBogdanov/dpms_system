@@ -1,13 +1,15 @@
 """Наполнение БД тестовыми данными. Запуск: python -m app.seed."""
 import asyncio
+import random
 from decimal import Decimal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.models.user import User, League, UserRole
+from app.models.transaction import QTransaction, WalletType
 from app.services.wallet import credit_q
 from app.models.catalog import CatalogItem, CatalogCategory, Complexity
 from app.models.task import Task, TaskStatus, TaskType, TaskPriority
@@ -86,8 +88,12 @@ async def ensure_catalog(session: AsyncSession) -> list[CatalogItem]:
     return items
 
 
-async def ensure_tasks(session: AsyncSession, users_by_email: dict[str, User]) -> None:
-    """Создать 10 задач в разных статусах. Орловская — 3 завершённые на 25Q, Петров — 1 на 5Q."""
+async def ensure_tasks(
+    session: AsyncSession,
+    users_by_email: dict[str, User],
+    catalog_items: list[CatalogItem],
+) -> None:
+    """Создать 10 задач в разных статусах. Минимум 5 done с реалистичными датами и estimation_details для калибровки."""
     result = await session.execute(select(Task).limit(1))
     if result.scalar_one_or_none():
         return
@@ -98,14 +104,28 @@ async def ensure_tasks(session: AsyncSession, users_by_email: dict[str, User]) -
     ivan = users_by_email["petrov@example.com"]
     admin = users_by_email["admin@example.com"]
     now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # Для done-задач: completed_at в текущем месяце, started_at = completed_at - (4..24)h, validated_at = completed_at + 1h
+    def make_done_timestamps():
+        day_offset = random.randint(1, min(10, (now - month_start).days or 1))
+        completed = month_start + timedelta(days=day_offset, hours=random.randint(10, 18))
+        started = completed - timedelta(hours=random.randint(4, 24))
+        validated = completed + timedelta(hours=1)
+        return started, completed, validated
+
+    # Каталог для breakdown (берём первые несколько позиций)
+    cat_ids = [str(c.id) for c in catalog_items[:5]]
 
     tasks_data = [
-        # Орловская: 3 завершённые (done) на 25Q суммарно — например 10+8+7
+        # Орловская: 3 завершённые (done)
         {"title": "Дашборд продаж Q1", "status": TaskStatus.done, "estimated_q": Decimal("10"), "assignee": maria, "estimator": admin, "validator": anna},
         {"title": "ETL загрузка логов", "status": TaskStatus.done, "estimated_q": Decimal("8"), "assignee": maria, "estimator": admin, "validator": anna},
         {"title": "Виджеты KPI для отчёта", "status": TaskStatus.done, "estimated_q": Decimal("7"), "assignee": maria, "estimator": admin, "validator": anna},
-        # Петров: 1 завершённая на 5Q
+        # Петров: 1 завершённая
         {"title": "Простая таблица выгрузки", "status": TaskStatus.done, "estimated_q": Decimal("5"), "assignee": ivan, "estimator": admin, "validator": anna},
+        # Завьялова: 1 завершённая (итого 5 done для калибровки)
+        {"title": "Pivot отчёт по клиентам", "status": TaskStatus.done, "estimated_q": Decimal("5"), "assignee": ekaterina, "estimator": admin, "validator": anna},
         # В очереди
         {"title": "Line Chart по регионам", "status": TaskStatus.in_queue, "estimated_q": Decimal("3"), "assignee": None, "estimator": admin, "validator": None},
         {"title": "ФЛК справочников", "status": TaskStatus.in_queue, "estimated_q": Decimal("3"), "assignee": None, "estimator": admin, "validator": None},
@@ -119,10 +139,20 @@ async def ensure_tasks(session: AsyncSession, users_by_email: dict[str, User]) -
     ]
 
     for t in tasks_data:
+        is_done = t["status"] == TaskStatus.done and t["assignee"]
+        if is_done:
+            started_at, completed_at, validated_at = make_done_timestamps()
+            est_q = float(t["estimated_q"])
+            breakdown = [{"catalog_id": cat_ids[i % len(cat_ids)], "subtotal_q": round(est_q, 1)} for i in range(1)]
+            estimation_details = {"breakdown": breakdown}
+        else:
+            created_at = started_at = completed_at = validated_at = now
+            estimation_details = None
+
         task = Task(
             title=t["title"],
             description="Описание задачи.",
-            task_type=TaskType.widget if "Chart" in t["title"] or "таблиц" in t["title"] or "KPI" in t["title"] else TaskType.etl if "ETL" in t["title"] or "ФЛК" in t["title"] else TaskType.docs,
+            task_type=TaskType.widget if "Chart" in t["title"] or "таблиц" in t["title"] or "KPI" in t["title"] or "Pivot" in t["title"] else TaskType.etl if "ETL" in t["title"] or "ФЛК" in t["title"] else TaskType.docs,
             complexity=Complexity.M,
             estimated_q=t["estimated_q"],
             priority=TaskPriority.medium,
@@ -131,24 +161,46 @@ async def ensure_tasks(session: AsyncSession, users_by_email: dict[str, User]) -
             assignee_id=t["assignee"].id if t["assignee"] else None,
             estimator_id=t["estimator"].id,
             validator_id=t["validator"].id if t["validator"] else None,
-            started_at=now if t["status"] in (TaskStatus.in_progress, TaskStatus.review, TaskStatus.done) and t["assignee"] else None,
-            completed_at=now if t["status"] in (TaskStatus.review, TaskStatus.done) and t["assignee"] else None,
-            validated_at=now if t["status"] == TaskStatus.done and t["validator"] else None,
+            estimation_details=estimation_details,
+            started_at=started_at if t["status"] in (TaskStatus.in_progress, TaskStatus.review, TaskStatus.done) and t["assignee"] else None,
+            completed_at=completed_at if t["status"] in (TaskStatus.review, TaskStatus.done) and t["assignee"] else None,
+            validated_at=validated_at if t["status"] == TaskStatus.done and t["validator"] else None,
         )
         session.add(task)
         await session.flush()
-        # Начислить Q за завершённые задачи (балансы для дашборда)
-        if t["status"] == TaskStatus.done and t["assignee"]:
+        if is_done and t["assignee"]:
             await credit_q(
                 session,
                 t["assignee"].id,
                 t["estimated_q"],
-                reason=f"Task #{task.id} completion (seed)",
+                reason=f"Задача #{task.id} принята",
                 task_id=task.id,
             )
 
 
-async def ensure_shop_items(session: AsyncSession) -> None:
+async def ensure_burndown_transactions(session: AsyncSession, users_by_email: dict[str, User]) -> None:
+    """Транзакции за текущий месяц по дням для графика burn-down (main, amount > 0)."""
+    result = await session.execute(
+        select(QTransaction.id).where(QTransaction.reason == "Burn-down seed").limit(1)
+    )
+    if result.scalar_one_or_none():
+        return
+    now = datetime.now(timezone.utc)
+    user = list(users_by_email.values())[0]
+    amounts = [Decimal("5.0"), Decimal("8.0"), Decimal("3.5"), Decimal("12.0"), Decimal("6.0")]
+    days = [1, 3, 5, 8, 10]
+    for day, amount in zip(days, amounts):
+        created = now.replace(day=min(day, 28), hour=10, minute=0, second=0, microsecond=0)
+        if created > now:
+            continue
+        t = QTransaction(
+            user_id=user.id,
+            amount=amount,
+            wallet_type=WalletType.main,
+            reason="Burn-down seed",
+        )
+        t.created_at = created
+        session.add(t)
     """Добавить товары магазина, если ещё нет."""
     result = await session.execute(select(ShopItem).limit(1))
     if result.scalar_one_or_none():
@@ -186,9 +238,10 @@ async def run_seed() -> None:
     async with AsyncSessionLocal() as session:
         try:
             users = await ensure_users(session)
-            await ensure_catalog(session)
-            await ensure_tasks(session, users)
+            catalog = await ensure_catalog(session)
+            await ensure_tasks(session, users, catalog)
             await ensure_shop_items(session)
+            await ensure_burndown_transactions(session, users)
             await session.commit()
             print("Seed выполнен успешно.")
         except Exception as e:

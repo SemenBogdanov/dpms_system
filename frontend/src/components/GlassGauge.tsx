@@ -28,7 +28,7 @@ export function GlassGauge({ load, capacity, utilization, status, className }: G
         <div className="flex-1">
           <p className="text-sm font-medium text-slate-700">Загрузка / Ёмкость</p>
           <p className="mt-1 text-2xl font-semibold text-slate-900">
-            {load.toFixed(1)} / {capacity.toFixed(1)} Q
+            {Number(load).toFixed(1)} / {Number(capacity).toFixed(1)} Q
           </p>
           <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-slate-100">
             <div
@@ -36,7 +36,7 @@ export function GlassGauge({ load, capacity, utilization, status, className }: G
               style={{ width: `${percent}%` }}
             />
           </div>
-          <p className="mt-1 text-xs text-slate-500">Утилизация: {utilization.toFixed(1)}%</p>
+          <p className="mt-1 text-xs text-slate-500">Утилизация: {Number(utilization).toFixed(1)}%</p>
         </div>
         <span
           className={cn(

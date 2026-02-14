@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '@/api/client'
-import type { User, UserProgress, Task, QTransactionRead } from '@/api/types'
+import type { User, UserProgress, Task, QTransactionRead, LeagueEvaluation } from '@/api/types'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { cn } from '@/lib/utils'
 
@@ -23,6 +23,7 @@ export function ProfilePage() {
   const [transLimit, setTransLimit] = useState(PAGE_SIZE)
   const [walletFilter, setWalletFilter] = useState<'all' | 'main' | 'karma'>('all')
   const [directionFilter, setDirectionFilter] = useState<'all' | 'credit' | 'debit'>('all')
+  const [leagueEval, setLeagueEval] = useState<LeagueEvaluation | null>(null)
 
   useEffect(() => {
     api.get<User[]>('/api/users').then((list) => {
@@ -47,7 +48,7 @@ export function ProfilePage() {
     setProfileError(null)
     setProfileLoading(true)
     try {
-      const [u, p, tasks, trans] = await Promise.all([
+      const [u, p, tasks, trans, leagueRes] = await Promise.all([
         api.get<User>(`/api/users/${currentId}`),
         api.get<UserProgress>(`/api/users/${currentId}/progress`),
         api.get<Task[]>(`/api/tasks?assignee_id=${currentId}&status=done`),
@@ -55,16 +56,19 @@ export function ProfilePage() {
           ...(walletFilter !== 'all' && { wallet_type: walletFilter }),
           ...(directionFilter !== 'all' && { direction: directionFilter }),
         }),
+        api.get<LeagueEvaluation[]>(`/api/admin/league-evaluation`, { user_id: currentId }),
       ])
       setUser(u)
       setProgress(p)
       setDoneTasks(tasks)
       setTransactions(trans)
+      setLeagueEval(leagueRes[0] ?? null)
     } catch (e) {
       setUser(null)
       setProgress(null)
       setDoneTasks([])
       setTransactions([])
+      setLeagueEval(null)
       setProfileError(e instanceof Error ? e.message : 'Ошибка загрузки профиля')
     } finally {
       setProfileLoading(false)
@@ -122,13 +126,29 @@ export function ProfilePage() {
               <div>
                 <h2 className="text-xl font-semibold text-slate-900">{user.full_name}</h2>
                 <p className="text-sm text-slate-500">{user.role}</p>
+                {leagueEval && (
+                  <div className="mt-2 text-sm text-slate-600">
+                    <p>
+                      {user.league === 'A'
+                        ? 'Максимальная лига'
+                        : `Следующая лига: ${leagueEval.suggested_league}`}
+                    </p>
+                    {leagueEval.history.length > 0 && (
+                      <p>
+                        Выполнение{' '}
+                        {user.league === 'B' ? '95%+' : '90%+'} —{' '}
+                        {leagueEval.history.filter((h) => h.percent >= (user.league === 'B' ? 95 : 90)).length} из 3 месяцев
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
             <div className="flex flex-col gap-4 min-w-[240px]">
               <div>
                 <p className="text-sm font-medium text-slate-700">Main Wallet</p>
                 <p className="text-sm text-slate-600">
-                  {user.wallet_main.toFixed(1)} / {user.mpw} Q
+                  {Number(user.wallet_main).toFixed(1)} / {user.mpw} Q
                 </p>
                 <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-200">
                   <div
@@ -141,7 +161,7 @@ export function ProfilePage() {
               </div>
               <div>
                 <p className="text-sm font-medium text-slate-700">Karma Wallet</p>
-                <p className="text-lg font-semibold text-slate-900">⭐ {user.wallet_karma.toFixed(1)} Q</p>
+                <p className="text-lg font-semibold text-slate-900">⭐ {Number(user.wallet_karma).toFixed(1)} Q</p>
                 <p className="text-xs text-slate-500">Свободные средства</p>
               </div>
             </div>
@@ -156,12 +176,12 @@ export function ProfilePage() {
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-sm font-medium text-slate-600">Среднее время</p>
               <p className="text-2xl font-semibold text-slate-900">
-                {avgCompletionHours != null ? `${(avgCompletionHours / 24).toFixed(1)} д.` : '—'}
+                {avgCompletionHours != null ? `${Number(avgCompletionHours / 24).toFixed(1)} д.` : '—'}
               </p>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-sm font-medium text-slate-600">Текущий месяц (%)</p>
-              <p className="text-2xl font-semibold text-slate-900">{progress?.percent.toFixed(0) ?? '—'}%</p>
+              <p className="text-2xl font-semibold text-slate-900">{progress?.percent != null ? `${Number(progress.percent).toFixed(0)}%` : '—'}</p>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <p className="text-sm font-medium text-slate-600">Лучший месяц</p>
@@ -214,7 +234,7 @@ export function ProfilePage() {
                           tx.amount >= 0 ? 'text-emerald-600' : 'text-red-600'
                         )}
                       >
-                        {tx.amount >= 0 ? '+' : ''}{tx.amount.toFixed(1)}
+                        {tx.amount >= 0 ? '+' : ''}{Number(tx.amount).toFixed(1)}
                       </td>
                       <td className="px-4 py-2 text-slate-600">{tx.wallet_type}</td>
                       <td className="px-4 py-2 text-slate-600">{tx.reason}</td>
