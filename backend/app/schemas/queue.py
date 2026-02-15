@@ -5,6 +5,9 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 
+# user_id в body опционален (deprecated): берётся из JWT
+
+
 class QueueTaskResponse(BaseModel):
     """Задача в очереди с флагами доступности."""
     id: UUID
@@ -26,22 +29,22 @@ class QueueTaskResponse(BaseModel):
 
 
 class PullRequest(BaseModel):
-    """Взять задачу из очереди."""
-    user_id: UUID
+    """Взять задачу из очереди. user_id опционален (из JWT)."""
+    user_id: UUID | None = None
     task_id: UUID
 
 
 class SubmitRequest(BaseModel):
-    """Сдать задачу на проверку."""
-    user_id: UUID
+    """Сдать задачу на проверку. user_id опционален (из JWT)."""
+    user_id: UUID | None = None
     task_id: UUID
     result_url: str | None = None
     comment: str | None = None
 
 
 class ValidateRequest(BaseModel):
-    """Принять или отклонить задачу."""
-    validator_id: UUID
+    """Принять или отклонить задачу. validator_id опционален (из JWT)."""
+    validator_id: UUID | None = None
     task_id: UUID
     approved: bool
     comment: str | None = None

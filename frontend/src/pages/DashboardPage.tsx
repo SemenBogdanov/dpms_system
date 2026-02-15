@@ -11,6 +11,7 @@ import { GlassGauge } from '@/components/GlassGauge'
 import { MetricCard } from '@/components/MetricCard'
 import { TeamPulseTable } from '@/components/TeamPulseTable'
 import { BurndownChart } from '@/components/BurndownChart'
+import { SkeletonCard } from '@/components/Skeleton'
 import { exportTeamCSV } from '@/lib/csv'
 
 export function DashboardPage() {
@@ -50,7 +51,18 @@ export function DashboardPage() {
     return () => clearInterval(t)
   }, [load])
 
-  if (loading) return <div className="text-slate-500">Загрузка...</div>
+  if (loading) {
+    return (
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {[1, 2, 3, 4].map((i) => (
+          <SkeletonCard key={i} />
+        ))}
+        <div className="sm:col-span-2 lg:col-span-4">
+          <SkeletonCard />
+        </div>
+      </div>
+    )
+  }
   if (error) return <div className="text-red-600">{error}</div>
 
   const loadVal = Number(capacity?.load ?? 0)

@@ -1,11 +1,12 @@
-"""API задач."""
+"""API задач. Все эндпоинты защищены JWT."""
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_db, get_current_user
+from app.models.user import User
 from app.models.task import Task, TaskStatus
 from app.schemas.task import TaskCreate, TaskRead, TaskUpdate
 
@@ -17,6 +18,7 @@ async def list_tasks(
     status: TaskStatus | None = Query(None),
     assignee_id: UUID | None = Query(None),
     task_type: str | None = Query(None),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Список задач с фильтрами."""
@@ -39,6 +41,7 @@ async def list_tasks(
 @router.get("/{task_id}", response_model=TaskRead)
 async def get_task(
     task_id: UUID,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Детали задачи."""
@@ -52,6 +55,7 @@ async def get_task(
 @router.post("", response_model=TaskRead)
 async def create_task(
     body: TaskCreate,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Создать задачу (с оценкой или без)."""
@@ -77,6 +81,7 @@ async def create_task(
 async def update_task(
     task_id: UUID,
     body: TaskUpdate,
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Обновить описание/приоритет задачи."""

@@ -12,6 +12,7 @@ from app.models.catalog import CatalogItem
 from app.models.task import Task
 from app.models.transaction import QTransaction
 from app.models.shop import ShopItem, Purchase, PeriodSnapshot
+from app.models.notification import Notification
 
 
 __all__ = [
@@ -23,4 +24,5 @@ __all__ = [
     "ShopItem",
     "Purchase",
     "PeriodSnapshot",
+    "Notification",
 ]

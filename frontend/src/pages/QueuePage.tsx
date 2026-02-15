@@ -3,12 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { Lock } from 'lucide-react'
 import { api } from '@/api/client'
-import type { QueueTaskResponse, User, Task } from '@/api/types'
+import type { QueueTaskResponse, Task } from '@/api/types'
+import { useAuth } from '@/contexts/AuthContext'
 import { PriorityBadge } from '@/components/PriorityBadge'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { QBadge } from '@/components/QBadge'
-
-const FALLBACK_USER_ID = ''
+import { SkeletonTable } from '@/components/Skeleton'
 
 const complexityStyles: Record<string, string> = {
   S: 'bg-slate-100 text-slate-700',
@@ -19,9 +19,8 @@ const complexityStyles: Record<string, string> = {
 
 export function QueuePage() {
   const navigate = useNavigate()
+  const { user: currentUser } = useAuth()
   const [tasks, setTasks] = useState<QueueTaskResponse[]>([])
-  const [users, setUsers] = useState<User[]>([])
-  const [currentUserId, setCurrentUserId] = useState(FALLBACK_USER_ID)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [pullingId, setPullingId] = useState<string | null>(null)
@@ -29,44 +28,29 @@ export function QueuePage() {
   const [myTasks, setMyTasks] = useState<Task[]>([])
 
   useEffect(() => {
+    if (!currentUser) return
     let cancelled = false
     api
-      .get<User[]>('/api/users')
-      .then((list) => {
-        if (!cancelled) {
-          setUsers(list)
-          if (list.length && !currentUserId) setCurrentUserId(list[0].id)
-        }
-      })
+      .get<QueueTaskResponse[]>('/api/queue')
+      .then((list) => !cancelled && setTasks(list))
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : 'Ошибка'))
       .finally(() => !cancelled && setLoading(false))
     return () => { cancelled = true }
-  }, [])
+  }, [currentUser])
 
   useEffect(() => {
-    if (!currentUserId) return
-    let cancelled = false
+    if (!currentUser) return
     api
-      .get<QueueTaskResponse[]>(`/api/queue?user_id=${currentUserId}`)
-      .then((list) => !cancelled && setTasks(list))
-      .catch(() => !cancelled && setTasks([]))
-    return () => { cancelled = true }
-  }, [currentUserId])
-
-  useEffect(() => {
-    if (!currentUserId) return
-    api
-      .get<Task[]>(`/api/tasks?assignee_id=${currentUserId}`)
+      .get<Task[]>(`/api/tasks?assignee_id=${currentUser.id}`)
       .then(setMyTasks)
       .catch(() => setMyTasks([]))
-  }, [currentUserId])
+  }, [currentUser])
 
   const doPull = async () => {
-    if (!confirmPull || !currentUserId) return
+    if (!confirmPull || !currentUser) return
     setPullingId(confirmPull.id)
     try {
       await api.post('/api/queue/pull', {
-        user_id: currentUserId,
         task_id: confirmPull.id,
       })
       toast.success('Задача взята!')
@@ -76,44 +60,27 @@ export function QueuePage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось взять задачу')
       setConfirmPull(null)
-      api.get<QueueTaskResponse[]>(`/api/queue?user_id=${currentUserId}`).then(setTasks)
+      api.get<QueueTaskResponse[]>('/api/queue').then(setTasks)
     } finally {
       setPullingId(null)
     }
   }
 
-  const currentUser = users.find((u) => u.id === currentUserId)
   const wipCount = myTasks.filter((t) => t.status === 'in_progress').length
 
-  if (loading) return <div className="text-slate-500">Загрузка...</div>
+  if (loading) return <SkeletonTable rows={8} />
   if (error) return <div className="text-red-600">{error}</div>
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold text-slate-900">Глобальная очередь</h1>
-        <div className="flex items-center gap-4">
-          {currentUser && (
-            <div className="text-sm text-slate-600">
-              Лига {currentUser.league} · WIP: {wipCount} из {currentUser.wip_limit} ·{' '}
-              {currentUser.wallet_main}/{currentUser.mpw} Q
-            </div>
-          )}
-          {users.length > 0 && (
-            <select
-              value={currentUserId}
-              onChange={(e) => setCurrentUserId(e.target.value)}
-              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-            >
-              <option value="">— Выберите —</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.full_name} (Лига {u.league})
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
+        {currentUser && (
+          <div className="text-sm text-slate-600">
+            Лига {currentUser.league} · WIP: {wipCount} из {currentUser.wip_limit} ·{' '}
+            {Number(currentUser.wallet_main).toFixed(1)}/{currentUser.mpw} Q
+          </div>
+        )}
       </div>
 
       {tasks.length === 0 ? (

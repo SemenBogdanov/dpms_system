@@ -1,62 +1,36 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/client'
 import type { Task, User } from '@/api/types'
+import { useAuth } from '@/contexts/AuthContext'
 import { TaskCard } from '@/components/TaskCard'
 import toast from 'react-hot-toast'
 
-const FALLBACK_USER_ID = ''
-
 export function MyTasksPage() {
+  const { user: currentUser } = useAuth()
   const [tasks, setTasks] = useState<Task[]>([])
   const [reviewTasks, setReviewTasks] = useState<Task[]>([])
   const [users, setUsers] = useState<User[]>([])
-  const [currentUserId, setCurrentUserId] = useState(FALLBACK_USER_ID)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null)
 
-  // Модалка «Сдать на проверку»
   const [submitTaskId, setSubmitTaskId] = useState<string | null>(null)
   const [submitResultUrl, setSubmitResultUrl] = useState('')
   const [submitComment, setSubmitComment] = useState('')
 
-  // Модалка «Вернуть» (причина обязательна)
   const [rejectTask, setRejectTask] = useState<Task | null>(null)
   const [rejectComment, setRejectComment] = useState('')
 
   useEffect(() => {
-    let cancelled = false
-    async function load() {
-      try {
-        const list = await api.get<User[]>('/api/users')
-        if (!cancelled) {
-          setUsers(list)
-          if (list.length && !currentUserId) setCurrentUserId(list[0].id)
-        }
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Ошибка')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    load()
-    return () => { cancelled = true }
+    api.get<User[]>('/api/users').then(setUsers).catch(() => setUsers([])).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
-    if (!currentUserId) return
+    if (!currentUser) return
     let cancelled = false
-    async function loadTasks() {
-      try {
-        const list = await api.get<Task[]>(`/api/tasks?assignee_id=${currentUserId}`)
-        if (!cancelled) setTasks(list)
-      } catch {
-        if (!cancelled) setTasks([])
-      }
-    }
-    loadTasks()
+    api.get<Task[]>(`/api/tasks?assignee_id=${currentUser.id}`).then((list) => !cancelled && setTasks(list)).catch(() => !cancelled && setTasks([]))
     return () => { cancelled = true }
-  }, [currentUserId])
+  }, [currentUser])
 
   const loadReviewTasks = useCallback(async () => {
     try {
@@ -72,11 +46,11 @@ export function MyTasksPage() {
   }, [loadReviewTasks])
 
   const refreshTasks = useCallback(() => {
-    if (!currentUserId) return
-    api.get<Task[]>(`/api/tasks?assignee_id=${currentUserId}`).then(setTasks)
+    if (!currentUser) return
+    api.get<Task[]>(`/api/tasks?assignee_id=${currentUser.id}`).then(setTasks)
     loadReviewTasks()
     api.get<User[]>('/api/users').then(setUsers)
-  }, [currentUserId, loadReviewTasks])
+  }, [currentUser, loadReviewTasks])
 
   const handleSubmitReview = (taskId: string) => {
     setSubmitTaskId(taskId)
@@ -85,11 +59,10 @@ export function MyTasksPage() {
   }
 
   const handleSubmitModalOk = async () => {
-    if (!currentUserId || !submitTaskId) return
+    if (!currentUser || !submitTaskId) return
     setBusyTaskId(submitTaskId)
     try {
       await api.post('/api/queue/submit', {
-        user_id: currentUserId,
         task_id: submitTaskId,
         result_url: submitResultUrl || undefined,
         comment: submitComment || undefined,
@@ -105,11 +78,10 @@ export function MyTasksPage() {
   }
 
   const handleValidate = async (taskId: string, approved: boolean, comment?: string) => {
-    if (!currentUserId) return
+    if (!currentUser) return
     setBusyTaskId(taskId)
     try {
       await api.post('/api/queue/validate', {
-        validator_id: currentUserId,
         task_id: taskId,
         approved,
         comment: comment || undefined,
@@ -139,7 +111,6 @@ export function MyTasksPage() {
     handleValidate(rejectTask.id, false, rejectComment.trim())
   }
 
-  const currentUser = users.find((u) => u.id === currentUserId)
   const isTeamleadOrAdmin =
     currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
   const validatorNames: Record<string, string> = {}
@@ -155,7 +126,7 @@ export function MyTasksPage() {
   const done = tasks.filter((t) => t.status === 'done')
 
   const progressPercent = currentUser
-    ? (currentUser.mpw > 0 ? (currentUser.wallet_main / currentUser.mpw) * 100 : 0)
+    ? (currentUser.mpw > 0 ? (Number(currentUser.wallet_main) / currentUser.mpw) * 100 : 0)
     : 0
   const progressColor =
     progressPercent < 50 ? 'bg-red-500' : progressPercent < 80 ? 'bg-yellow-500' : 'bg-emerald-500'
@@ -164,19 +135,6 @@ export function MyTasksPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-slate-900">Мои задачи</h1>
-        {users.length > 0 && (
-          <select
-            value={currentUserId}
-            onChange={(e) => setCurrentUserId(e.target.value)}
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-          >
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.full_name}
-              </option>
-            ))}
-          </select>
-        )}
       </div>
 
       {currentUser && (
@@ -226,7 +184,7 @@ export function MyTasksPage() {
               <TaskCard
                 key={t.id}
                 task={t}
-                currentUserId={currentUserId}
+                currentUserId={currentUser?.id ?? ''}
                 validatorName={validatorNames[t.validator_id ?? '']}
               />
             ))}
@@ -264,7 +222,7 @@ export function MyTasksPage() {
                 onValidate={handleValidate}
                 onRejectClick={handleRejectClick}
                 busyTaskId={busyTaskId}
-                currentUserId={currentUserId}
+                currentUserId={currentUser?.id ?? ''}
                 validatorName={validatorNames[t.validator_id ?? '']}
               />
             ))}

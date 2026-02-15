@@ -1,11 +1,12 @@
-"""API каталога операций."""
+"""API каталога операций. GET — публичный; POST/PATCH/DELETE — admin/teamlead."""
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_db, require_role
+from app.models.user import User
 from app.models.catalog import CatalogItem, CatalogCategory, Complexity
 from app.schemas.catalog import CatalogItemCreate, CatalogItemRead, CatalogItemUpdate
 
@@ -37,6 +38,7 @@ async def list_catalog(
 @router.post("", response_model=CatalogItemRead)
 async def create_catalog_item(
     body: CatalogItemCreate,
+    user: User = Depends(require_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Добавить позицию в каталог."""
@@ -72,6 +74,7 @@ async def get_catalog_item(
 async def update_catalog_item(
     item_id: UUID,
     body: CatalogItemUpdate,
+    user: User = Depends(require_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Обновить позицию (частично)."""
@@ -101,6 +104,7 @@ async def update_catalog_item(
 @router.delete("/{item_id}", response_model=CatalogItemRead)
 async def deactivate_catalog_item(
     item_id: UUID,
+    user: User = Depends(require_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Деактивировать позицию (is_active=false), не удаляя из БД."""

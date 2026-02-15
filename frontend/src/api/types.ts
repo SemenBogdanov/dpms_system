@@ -177,6 +177,57 @@ export interface LeagueChange {
   reason: string
 }
 
+export interface NotificationRead {
+  id: string
+  user_id: string
+  type: string
+  title: string
+  message: string
+  is_read: boolean
+  link: string | null
+  created_at: string
+}
+
+export interface PerformerSummary {
+  full_name: string
+  league: string
+  percent: number
+  tasks_completed: number
+}
+
+export interface TasksOverview {
+  total_created: number
+  total_completed: number
+  avg_time_hours: number | null
+  by_category: Record<string, number>
+}
+
+export interface ShopActivity {
+  total_purchases: number
+  total_karma_spent: number
+  popular_items: Array<{ shop_item_id?: string; name?: string; count?: number }>
+}
+
+export interface CalibrationSummary {
+  accurate_count: number
+  overestimated_count: number
+  underestimated_count: number
+}
+
+export interface PeriodReport {
+  period: string
+  generated_at: string
+  team_members: PerformerSummary[]
+  top_performers: PerformerSummary[]
+  underperformers: PerformerSummary[]
+  tasks_overview: TasksOverview
+  shop_activity: ShopActivity
+  calibration_summary: CalibrationSummary
+  total_capacity: number
+  total_earned: number
+  utilization_percent: number
+}
+
 export interface ShopItem {
   id: string
   name: string

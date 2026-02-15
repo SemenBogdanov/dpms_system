@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_db, get_current_user
 from app.models.user import User, League, UserRole
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 from app.schemas.dashboard import UserProgress
@@ -103,9 +103,14 @@ async def get_user_transactions(
     user_id: UUID,
     wallet_type: str | None = Query(None, description="main | karma"),
     direction: str | None = Query(None, description="credit | debit"),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """История операций пользователя. Фильтры: wallet_type, direction (credit=приход, debit=расход)."""
+    """История операций. Свои — всегда; чужие — только admin/teamlead."""
+    from app.api.deps import get_current_user
+
+    if current_user.id != user_id and current_user.role.value not in ("admin", "teamlead"):
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
     from app.models.transaction import QTransaction, WalletType
 
     stmt = select(QTransaction).where(QTransaction.user_id == user_id)

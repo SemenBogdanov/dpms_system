@@ -37,6 +37,19 @@ function formatQ(n: number) {
   return Number.isInteger(n) ? String(n) : Number(n).toFixed(1)
 }
 
+const CATEGORY_LABEL: Record<string, string> = {
+  widget: 'Виджеты',
+  etl: 'ETL',
+  api: 'API',
+  docs: 'Документация',
+}
+const CATEGORY_BADGE_CLASS: Record<string, string> = {
+  widget: 'bg-blue-100 text-blue-800',
+  etl: 'bg-amber-100 text-amber-800',
+  api: 'bg-emerald-100 text-emerald-800',
+  docs: 'bg-slate-100 text-slate-700',
+}
+
 export function EstimateCart({
   rows,
   complexityMult,
@@ -53,6 +66,11 @@ export function EstimateCart({
 }: EstimateCartProps) {
   const sumRaw = rows.reduce((s, r) => s + r.catalog.base_cost_q * r.quantity, 0)
   const totalQ = Math.round(sumRaw * complexityMult * urgencyMult * 10) / 10
+  const byCategory = rows.reduce<Record<string, number>>((acc, r) => {
+    const cat = r.catalog.category || 'widget'
+    acc[cat] = (acc[cat] ?? 0) + Number(r.catalog.base_cost_q) * r.quantity
+    return acc
+  }, {})
   const maxLeague = rows.length
     ? rows.reduce((max, r) => {
         const order = { C: 0, B: 1, A: 2 }
@@ -86,7 +104,17 @@ export function EstimateCart({
               <tbody>
                 {rows.map(({ catalog, quantity }) => (
                   <tr key={catalog.id} className="border-t border-slate-100">
-                    <td className="px-2 py-1.5 truncate">{catalog.name}</td>
+                    <td className="px-2 py-1.5">
+                      <span className="truncate">{catalog.name}</span>
+                      <span
+                        className={cn(
+                          'ml-1 inline rounded px-1.5 py-0.5 text-xs',
+                          CATEGORY_BADGE_CLASS[catalog.category] ?? 'bg-slate-100 text-slate-600'
+                        )}
+                      >
+                        {CATEGORY_LABEL[catalog.category] ?? catalog.category}
+                      </span>
+                    </td>
                     <td className="px-2 py-1.5 text-right">
                       {formatQ(catalog.base_cost_q)}
                     </td>
@@ -151,9 +179,14 @@ export function EstimateCart({
             </select>
           </div>
           <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <p className="text-sm text-slate-600">
-              Сумма без множителей: {formatQ(sumRaw)} Q
-            </p>
+            {Object.keys(byCategory).length > 0 && (
+              <p className="text-sm text-slate-600">
+                {Object.entries(byCategory)
+                  .map(([cat, q]) => `${CATEGORY_LABEL[cat] ?? cat}: ${formatQ(q)} Q`)
+                  .join(', ')}{' '}
+                → Итого: {formatQ(sumRaw)} Q
+              </p>
+            )}
             <p className="text-sm text-slate-600">
               Множители: ×{complexityMult} × ×{urgencyMult}
             </p>

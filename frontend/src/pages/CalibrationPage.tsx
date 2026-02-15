@@ -1,18 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/client'
-import type { CalibrationReport, User } from '@/api/types'
+import type { CalibrationReport } from '@/api/types'
+import { useAuth } from '@/contexts/AuthContext'
 import { MetricCard } from '@/components/MetricCard'
 import { cn } from '@/lib/utils'
 
 export function CalibrationPage() {
+  const { user: currentUser } = useAuth()
   const [report, setReport] = useState<CalibrationReport | null>(null)
-  const [users, setUsers] = useState<User[]>([])
-  const [currentUserId, setCurrentUserId] = useState('')
   const [period, setPeriod] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const currentUser = users.find((u) => u.id === currentUserId)
   const canView =
     currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
 
@@ -29,16 +28,6 @@ export function CalibrationPage() {
   }, [canView, period])
 
   useEffect(() => {
-    api
-      .get<User[]>('/api/users')
-      .then((list) => {
-        setUsers(list)
-        if (list.length && !currentUserId) setCurrentUserId(list[0].id)
-      })
-      .catch(() => setUsers([]))
-  }, [])
-
-  useEffect(() => {
     setLoading(true)
     load()
   }, [load])
@@ -52,26 +41,13 @@ export function CalibrationPage() {
         ? 'text-amber-600'
         : 'text-red-600'
 
-  if (!canView && users.length > 0) {
+  if (!canView) {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl font-semibold text-slate-900">Калибровка</h1>
         <p className="text-slate-600">
           Доступ разрешён только тимлидам и администраторам.
         </p>
-        {users.length > 0 && (
-          <select
-            value={currentUserId}
-            onChange={(e) => setCurrentUserId(e.target.value)}
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-          >
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.full_name}
-              </option>
-            ))}
-          </select>
-        )}
       </div>
     )
   }
@@ -86,19 +62,6 @@ export function CalibrationPage() {
         <h1 className="text-2xl font-semibold text-slate-900">
           Калибровка нормативов
         </h1>
-        {users.length > 0 && (
-          <select
-            value={currentUserId}
-            onChange={(e) => setCurrentUserId(e.target.value)}
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-          >
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.full_name}
-              </option>
-            ))}
-          </select>
-        )}
       </div>
 
       {report && (

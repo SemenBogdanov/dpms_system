@@ -89,6 +89,19 @@ async def purchase_item(
     db.add(purchase)
     await db.flush()
     await db.refresh(purchase)
+    # Уведомление тимлидам о новой покупке
+    teamleads_result = await db.execute(
+        select(User.id).where(User.role.in_([UserRole.teamlead, UserRole.admin]))
+    )
+    for (tid,) in teamleads_result.all():
+        from app.services.notifications import create_notification
+        await create_notification(
+            db, tid,
+            "purchase_pending",
+            "Новая покупка",
+            message=f"{user.full_name} купил «{item.name}»",
+            link="/admin/users",
+        )
     return purchase
 
 
@@ -150,4 +163,16 @@ async def approve_purchase(
     purchase.approved_by = approved_by
     await db.flush()
     await db.refresh(purchase)
+    from app.services.notifications import create_notification
+    item_result = await db.execute(select(ShopItem).where(ShopItem.id == purchase.shop_item_id))
+    item = item_result.scalar_one_or_none()
+    item_name = item.name if item else "Товар"
+    await create_notification(
+        db,
+        purchase.user_id,
+        "purchase_approved",
+        "Покупка подтверждена",
+        message=f"«{item_name}» одобрена",
+        link="/shop",
+    )
     return purchase

@@ -8,9 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
+from app.core.security import get_password_hash
 from app.models.user import User, League, UserRole
 from app.models.transaction import QTransaction, WalletType
+from app.models.notification import Notification
 from app.services.wallet import credit_q
+from app.services.notifications import create_notification
 from app.models.catalog import CatalogItem, CatalogCategory, Complexity
 from app.models.task import Task, TaskStatus, TaskType, TaskPriority
 from app.models.shop import ShopItem
@@ -45,6 +48,20 @@ CATALOG = [
     ("etl", "Сложный SQL (JOIN 3+, оконные функции)", "L", Decimal("6.0"), "Сложный SQL", League.A),
     ("etl", "ФЛК (Форматно-логический контроль)", "M", Decimal("3.0"), "ФЛК", League.B),
     ("etl", "Wiki-документация", "S", Decimal("2.0"), "Документация в Wiki", League.C),
+    # ETL/API/Docs (Phase 5)
+    ("etl", "NiFi Flow: Simple (1-3 processors)", "S", Decimal("3.0"), "NiFi Flow 1-3 процессора", League.C),
+    ("etl", "NiFi Flow: Medium (4-8 processors)", "M", Decimal("6.0"), "NiFi Flow 4-8 процессоров", League.C),
+    ("etl", "NiFi Flow: Complex (9+ processors)", "L", Decimal("12.0"), "NiFi Flow 9+ процессоров", League.B),
+    ("etl", "Dremio View: Simple Join", "S", Decimal("2.0"), "Dremio View простой join", League.C),
+    ("etl", "Dremio View: Multi-source + Transform", "M", Decimal("5.0"), "Dremio View несколько источников", League.B),
+    ("etl", "Dremio View: Complex Analytics", "L", Decimal("10.0"), "Dremio View сложная аналитика", League.A),
+    ("etl", "PostgreSQL Migration Script", "M", Decimal("4.0"), "Скрипт миграции PostgreSQL", League.C),
+    ("etl", "Data Quality Check", "S", Decimal("2.5"), "Проверка качества данных", League.C),
+    ("api", "API Endpoint: REST GET", "S", Decimal("3.0"), "REST GET эндпоинт", League.C),
+    ("api", "API Endpoint: REST POST + Validation", "M", Decimal("5.0"), "REST POST с валидацией", League.B),
+    ("api", "API Integration: External Service", "L", Decimal("8.0"), "Интеграция с внешним сервисом", League.B),
+    ("docs", "Documentation: Technical Spec", "M", Decimal("4.0"), "Техническая спецификация", League.C),
+    ("docs", "Documentation: User Guide", "S", Decimal("2.0"), "Руководство пользователя", League.C),
 ]
 
 
@@ -53,12 +70,17 @@ async def ensure_users(session: AsyncSession) -> dict[str, User]:
     result = await session.execute(select(User).where(User.email == "admin@example.com"))
     if result.scalar_one_or_none():
         result = await session.execute(select(User))
-        users = {u.email: u for u in result.scalars().all()}
-        return users
+        users_list = result.scalars().all()
+        for u in users_list:
+            if u.password_hash is None:
+                u.password_hash = get_password_hash("demo123")
+                session.add(u)
+        return {u.email: u for u in users_list}
 
     users_by_email = {}
     for u in USERS:
         user = User(**u)
+        user.password_hash = get_password_hash("demo123")
         session.add(user)
         await session.flush()
         users_by_email[user.email] = user
@@ -201,6 +223,9 @@ async def ensure_burndown_transactions(session: AsyncSession, users_by_email: di
         )
         t.created_at = created
         session.add(t)
+
+
+async def ensure_shop_items(session: AsyncSession) -> None:
     """Добавить товары магазина, если ещё нет."""
     result = await session.execute(select(ShopItem).limit(1))
     if result.scalar_one_or_none():
@@ -233,6 +258,28 @@ async def ensure_burndown_transactions(session: AsyncSession, users_by_email: di
         await session.flush()
 
 
+async def ensure_demo_notifications(session: AsyncSession, users_by_email: dict[str, User]) -> None:
+    """Несколько демо-уведомлений для первого пользователя."""
+    result = await session.execute(select(Notification).limit(1))
+    if result.scalar_one_or_none():
+        return
+    first_user = list(users_by_email.values())[0]
+    await create_notification(
+        session, first_user.id,
+        "task_validated",
+        "Задача принята",
+        "«Дашборд продаж Q1» валидирована. +10.0 Q",
+        "/my-tasks",
+    )
+    await create_notification(
+        session, first_user.id,
+        "rollover",
+        "Период закрыт",
+        "Период 2026-01 завершён. Main обнулён.",
+        "/profile",
+    )
+
+
 async def run_seed() -> None:
     """Главная функция seed."""
     async with AsyncSessionLocal() as session:
@@ -242,6 +289,7 @@ async def run_seed() -> None:
             await ensure_tasks(session, users, catalog)
             await ensure_shop_items(session)
             await ensure_burndown_transactions(session, users)
+            await ensure_demo_notifications(session, users)
             await session.commit()
             print("Seed выполнен успешно.")
         except Exception as e:

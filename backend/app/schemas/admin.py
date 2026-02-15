@@ -7,8 +7,8 @@ from pydantic import BaseModel
 
 
 class RolloverRequest(BaseModel):
-    """Запрос на закрытие периода (только admin)."""
-    admin_id: UUID
+    """Запрос на закрытие периода (только admin). admin_id опционален (из JWT)."""
+    admin_id: UUID | None = None
 
 
 class RolloverResponse(BaseModel):

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/client'
 import type { User, PeriodHistoryItem, LeagueEvaluation, LeagueChange } from '@/api/types'
+import { useAuth } from '@/contexts/AuthContext'
 import toast from 'react-hot-toast'
 
 const MONTHS = [
@@ -9,13 +10,13 @@ const MONTHS = [
 ]
 
 export function AdminUsersPage() {
+  const { user: currentUser } = useAuth()
   const [users, setUsers] = useState<User[]>([])
   const [periodHistory, setPeriodHistory] = useState<PeriodHistoryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [rolloverConfirm, setRolloverConfirm] = useState(false)
   const [rolloverInput, setRolloverInput] = useState('')
-  const [rolloverAdminId, setRolloverAdminId] = useState('')
   const [rolloverBusy, setRolloverBusy] = useState(false)
   const [leagueEvaluations, setLeagueEvaluations] = useState<LeagueEvaluation[]>([])
   const [leagueEvalLoading, setLeagueEvalLoading] = useState(false)
@@ -42,9 +43,7 @@ export function AdminUsersPage() {
 
   const now = new Date()
   const currentPeriodLabel = `${MONTHS[now.getMonth()]} ${now.getFullYear()}`
-
-  const admins = users.filter((u) => u.role === 'admin')
-  const selectedAdminId = rolloverAdminId || admins[0]?.id || ''
+  const selectedAdminId = currentUser?.id ?? ''
 
   const handleRolloverClick = () => {
     if (!window.confirm('Вы уверены? Это обнулит wallet_main всех сотрудников и спишет 50% кармы. Действие необратимо.')) return
@@ -69,7 +68,7 @@ export function AdminUsersPage() {
     if (eligibleCount === 0) return
     if (!window.confirm(`Будут изменены лиги ${eligibleCount} сотрудников. Подтвердить?`)) return
     if (!selectedAdminId) {
-      toast.error('Выберите администратора')
+      toast.error('Требуется авторизация')
       return
     }
     setApplyLeagueBusy(true)
@@ -90,7 +89,7 @@ export function AdminUsersPage() {
       return
     }
     if (!selectedAdminId) {
-      toast.error('Выберите администратора')
+      toast.error('Требуется авторизация')
       return
     }
     setRolloverBusy(true)
@@ -148,17 +147,8 @@ export function AdminUsersPage() {
       <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
         <h2 className="font-medium text-amber-800">Управление периодом</h2>
         <p className="mt-1 text-sm text-slate-600">Текущий период: {currentPeriodLabel}</p>
-        {admins.length > 0 && (
+        {currentUser?.role === 'admin' && (
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <select
-              value={selectedAdminId}
-              onChange={(e) => setRolloverAdminId(e.target.value)}
-              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-            >
-              {admins.map((a) => (
-                <option key={a.id} value={a.id}>{a.full_name}</option>
-              ))}
-            </select>
             <button
               type="button"
               onClick={handleRolloverClick}

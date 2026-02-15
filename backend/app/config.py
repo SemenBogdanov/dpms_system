@@ -19,5 +19,9 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
 
+    # JWT
+    DPMS_SECRET_KEY: str = "dev-secret-key-change-me"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 часов
+
 
 settings = Settings()

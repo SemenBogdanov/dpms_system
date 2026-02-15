@@ -22,6 +22,7 @@ export function CalculatorPage() {
   const [createPriority, setCreatePriority] = useState('medium')
   const [createEstimatorId, setCreateEstimatorId] = useState('')
   const [creating, setCreating] = useState(false)
+  const [categoryTab, setCategoryTab] = useState<'all' | 'widget' | 'etl' | 'api' | 'docs'>('all')
 
   useEffect(() => {
     api.get<CatalogItem[]>('/api/catalog').then(setCatalog).catch(() => setCatalog([]))
@@ -115,12 +116,41 @@ export function CalculatorPage() {
     }
   }
 
+  const filteredCatalog =
+    categoryTab === 'all'
+      ? catalog
+      : catalog.filter((item) => item.category === categoryTab)
+
+  const tabs: Array<{ key: typeof categoryTab; label: string }> = [
+    { key: 'all', label: 'Все' },
+    { key: 'widget', label: 'Виджеты' },
+    { key: 'etl', label: 'ETL' },
+    { key: 'api', label: 'API' },
+    { key: 'docs', label: 'Документация' },
+  ]
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold text-slate-900">Калькулятор оценки</h1>
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <CatalogPicker catalog={catalog} onAdd={addToCart} />
+          <div className="mb-3 flex flex-wrap gap-1 border-b border-slate-200 pb-2">
+            {tabs.map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setCategoryTab(key)}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                  categoryTab === key
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <CatalogPicker catalog={filteredCatalog} onAdd={addToCart} />
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <EstimateCart

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/client'
-import type { CatalogItem, User } from '@/api/types'
+import type { CatalogItem } from '@/api/types'
+import { useAuth } from '@/contexts/AuthContext'
 import { QBadge } from '@/components/QBadge'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { CatalogModal, type CreateEditPayload } from '@/components/CatalogModal'
@@ -8,9 +9,8 @@ import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
 
 export function CatalogPage() {
+  const { user: currentUser } = useAuth()
   const [items, setItems] = useState<CatalogItem[]>([])
-  const [users, setUsers] = useState<User[]>([])
-  const [currentUserId, setCurrentUserId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error] = useState<string | null>(null)
 
@@ -36,22 +36,11 @@ export function CatalogPage() {
   }, [categoryFilter, complexityFilter, activeFilter, search])
 
   useEffect(() => {
-    api
-      .get<User[]>('/api/users')
-      .then((list) => {
-        setUsers(list)
-        if (list.length && !currentUserId) setCurrentUserId(list[0].id)
-      })
-      .catch(() => setUsers([]))
-  }, [])
-
-  useEffect(() => {
     setLoading(true)
     loadItems()
     setLoading(false)
   }, [loadItems])
 
-  const currentUser = users.find((u) => u.id === currentUserId)
   const canEdit =
     currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
 
@@ -117,19 +106,6 @@ export function CatalogPage() {
         <h1 className="text-2xl font-semibold text-slate-900">
           Каталог операций
         </h1>
-        {users.length > 0 && (
-          <select
-            value={currentUserId}
-            onChange={(e) => setCurrentUserId(e.target.value)}
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-          >
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.full_name}
-              </option>
-            ))}
-          </select>
-        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-3">

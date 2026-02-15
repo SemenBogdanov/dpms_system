@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '@/api/client'
 import type { User, UserProgress, Task, QTransactionRead, LeagueEvaluation } from '@/api/types'
+import { useAuth } from '@/contexts/AuthContext'
 import { LeagueBadge } from '@/components/LeagueBadge'
+import { SkeletonCard } from '@/components/Skeleton'
 import { cn } from '@/lib/utils'
 
 const PAGE_SIZE = 20
@@ -10,11 +12,11 @@ const PAGE_SIZE = 20
 export function ProfilePage() {
   const [searchParams] = useSearchParams()
   const urlUserId = searchParams.get('user_id') ?? ''
+  const { user: currentUser } = useAuth()
+  const currentId = urlUserId || currentUser?.id || ''
 
   const [user, setUser] = useState<User | null>(null)
   const [progress, setProgress] = useState<UserProgress | null>(null)
-  const [users, setUsers] = useState<User[]>([])
-  const [currentId, setCurrentId] = useState(urlUserId || '')
   const [loading, setLoading] = useState(true)
   const [profileError, setProfileError] = useState<string | null>(null)
   const [profileLoading, setProfileLoading] = useState(false)
@@ -24,17 +26,6 @@ export function ProfilePage() {
   const [walletFilter, setWalletFilter] = useState<'all' | 'main' | 'karma'>('all')
   const [directionFilter, setDirectionFilter] = useState<'all' | 'credit' | 'debit'>('all')
   const [leagueEval, setLeagueEval] = useState<LeagueEvaluation | null>(null)
-
-  useEffect(() => {
-    api.get<User[]>('/api/users').then((list) => {
-      setUsers(list)
-      if (list.length && !currentId) setCurrentId(list[0].id)
-    }).catch(() => setUsers([])).finally(() => setLoading(false))
-  }, [])
-
-  useEffect(() => {
-    if (urlUserId) setCurrentId(urlUserId)
-  }, [urlUserId])
 
   const loadProfile = useCallback(async () => {
     if (!currentId) {
@@ -48,7 +39,7 @@ export function ProfilePage() {
     setProfileError(null)
     setProfileLoading(true)
     try {
-      const [u, p, tasks, trans, leagueRes] = await Promise.all([
+      const promises: [Promise<User>, Promise<UserProgress>, Promise<Task[]>, Promise<QTransactionRead[]>] = [
         api.get<User>(`/api/users/${currentId}`),
         api.get<UserProgress>(`/api/users/${currentId}/progress`),
         api.get<Task[]>(`/api/tasks?assignee_id=${currentId}&status=done`),
@@ -56,13 +47,19 @@ export function ProfilePage() {
           ...(walletFilter !== 'all' && { wallet_type: walletFilter }),
           ...(directionFilter !== 'all' && { direction: directionFilter }),
         }),
-        api.get<LeagueEvaluation[]>(`/api/admin/league-evaluation`, { user_id: currentId }),
-      ])
+      ]
+      const [u, p, tasks, trans] = await Promise.all(promises)
       setUser(u)
       setProgress(p)
       setDoneTasks(tasks)
       setTransactions(trans)
-      setLeagueEval(leagueRes[0] ?? null)
+      if (currentUser?.role === 'admin' || currentUser?.role === 'teamlead') {
+        api.get<LeagueEvaluation[]>('/api/admin/league-evaluation', { user_id: currentId })
+          .then((r) => setLeagueEval(r[0] ?? null))
+          .catch(() => setLeagueEval(null))
+      } else {
+        setLeagueEval(null)
+      }
     } catch (e) {
       setUser(null)
       setProgress(null)
@@ -73,13 +70,14 @@ export function ProfilePage() {
     } finally {
       setProfileLoading(false)
     }
-  }, [currentId, walletFilter, directionFilter])
+  }, [currentId, walletFilter, directionFilter, currentUser?.role])
 
   useEffect(() => {
     loadProfile()
   }, [loadProfile])
 
-  if (loading) return <div className="text-slate-500">Загрузка...</div>
+  if (!currentId) return <SkeletonCard />
+  if (loading && !user) return <SkeletonCard />
 
   const progressPercent = progress ? progress.percent : 0
   const progressColor =
@@ -101,17 +99,6 @@ export function ProfilePage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-slate-900">Профиль</h1>
-        {users.length > 0 && (
-          <select
-            value={currentId}
-            onChange={(e) => setCurrentId(e.target.value)}
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-          >
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>{u.full_name}</option>
-            ))}
-          </select>
-        )}
       </div>
 
       {profileError && <div className="text-red-600">{profileError}</div>}

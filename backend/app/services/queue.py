@@ -185,6 +185,16 @@ async def validate_task(
         task.completed_at = None
         task.rejection_comment = comment.strip()
         await db.flush()
+        if task.assignee_id:
+            from app.services.notifications import create_notification
+            await create_notification(
+                db,
+                task.assignee_id,
+                "task_rejected",
+                "Задача отклонена",
+                message=f"«{task.title}» отклонена: {comment.strip()}",
+                link="/my-tasks",
+            )
         return task
 
     task.status = TaskStatus.done
@@ -198,6 +208,15 @@ async def validate_task(
             task.estimated_q,
             reason=f"Задача #{task.id} принята",
             task_id=task.id,
+        )
+        from app.services.notifications import create_notification
+        await create_notification(
+            db,
+            task.assignee_id,
+            "task_validated",
+            "Задача принята",
+            message=f"«{task.title}» валидирована. +{float(task.estimated_q)} Q",
+            link="/my-tasks",
         )
     await db.flush()
     return task

@@ -22,8 +22,8 @@ class ShopItemResponse(BaseModel):
 
 
 class PurchaseRequest(BaseModel):
-    """Запрос на покупку."""
-    user_id: UUID
+    """Запрос на покупку. user_id опционален (из JWT)."""
+    user_id: UUID | None = None
     shop_item_id: UUID
 
 
@@ -43,6 +43,6 @@ class PurchaseResponse(BaseModel):
 
 
 class ApprovePurchaseRequest(BaseModel):
-    """Подтверждение покупки тимлидом/админом."""
+    """Подтверждение покупки тимлидом/админом. approved_by опционален (из JWT)."""
     purchase_id: UUID
-    approved_by: UUID
+    approved_by: UUID | None = None

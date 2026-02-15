@@ -154,4 +154,13 @@ async def apply_league_changes(db: AsyncSession, admin_id: UUID) -> list[LeagueC
                 reason=ev.reason,
             )
         )
+        from app.services.notifications import create_notification
+        await create_notification(
+            db,
+            user.id,
+            "league_change",
+            "Изменение лиги",
+            message=f"Ваша лига изменена: {old_league.value} → {ev.suggested_league}",
+            link="/profile",
+        )
     return changes

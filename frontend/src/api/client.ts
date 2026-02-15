@@ -1,7 +1,9 @@
 /**
  * API-клиент: базовый URL и fetch-обёртка.
- * Если VITE_API_URL не задан, используем текущий origin (работает с proxy в dev).
+ * Authorization: Bearer добавляется из localStorage. При 401 — logout и redirect на /login.
  */
+import { getToken, clearToken } from '@/lib/auth'
+
 const API_BASE =
   import.meta.env.VITE_API_URL ||
   (typeof window !== 'undefined' ? window.location.origin : '')
@@ -11,13 +13,23 @@ async function request<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const url = path.startsWith('http') ? path : `${API_BASE}${path}`
+  const token = getToken()
   const res = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
       ...options.headers,
     },
   })
+  if (res.status === 401) {
+    clearToken()
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      window.location.href = '/login'
+    }
+    const err = await res.json().catch(() => ({ detail: 'Требуется авторизация' }))
+    throw new Error(err.detail || 'Требуется авторизация')
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(err.detail || String(err))

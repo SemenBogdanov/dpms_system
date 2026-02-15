@@ -1,9 +1,10 @@
-"""API дашборда: Стакан, сводка по команде, план/факт, периодическая статистика."""
+"""API дашборда: Стакан, сводка по команде, план/факт, периодическая статистика. calibration — admin/teamlead."""
 from fastapi import APIRouter, Depends, Query
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_db, require_role
+from app.models.user import User
 from app.schemas.dashboard import CapacityGauge, TeamSummary, PeriodStats, BurndownData
 from app.schemas.calibration import CalibrationReport
 from app.services.analytics import (
@@ -60,7 +61,8 @@ async def burndown(
 @router.get("/calibration", response_model=CalibrationReport)
 async def calibration(
     period: str | None = Query(None, description="YYYY-MM или all"),
+    user: User = Depends(require_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Калибровочный отчёт: сравнение оценки и факта по операциям."""
+    """Калибровочный отчёт: сравнение оценки и факта по операциям. Только admin/teamlead."""
     return await get_calibration_report(db, period=period)

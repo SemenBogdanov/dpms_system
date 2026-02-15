@@ -116,6 +116,16 @@ async def rollover_period(db: AsyncSession, admin_id: UUID) -> dict:
             )
             total_karma_burned += burned
 
+    from app.services.notifications import create_notification
+    for user in users:
+        await create_notification(
+            db,
+            user.id,
+            "rollover",
+            "Период закрыт",
+            message=f"Период {period} завершён. Main обнулён.",
+            link="/profile",
+        )
     await db.flush()
     return {
         "period": period,

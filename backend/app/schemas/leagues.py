@@ -5,8 +5,8 @@ from pydantic import BaseModel
 
 
 class ApplyLeagueChangesRequest(BaseModel):
-    """Запрос на применение изменений лиг (только admin)."""
-    admin_id: UUID
+    """Запрос на применение изменений лиг (только admin). admin_id опционален (из JWT)."""
+    admin_id: UUID | None = None
 
 
 class LeagueEvaluation(BaseModel):
