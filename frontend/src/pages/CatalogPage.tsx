@@ -7,19 +7,18 @@ import { CatalogModal, type CreateEditPayload } from '@/components/CatalogModal'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
 
-type CatalogCategory = 'widget' | 'etl' | 'api' | 'docs'
-type Complexity = 'S' | 'M' | 'L' | 'XL'
-
 export function CatalogPage() {
   const [items, setItems] = useState<CatalogItem[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [currentUserId, setCurrentUserId] = useState('')
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error] = useState<string | null>(null)
+
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [complexityFilter, setComplexityFilter] = useState<string>('all')
   const [activeFilter, setActiveFilter] = useState<string>('active')
   const [search, setSearch] = useState('')
+
   const [modalItem, setModalItem] = useState<CatalogItem | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
 
@@ -30,14 +29,20 @@ export function CatalogPage() {
     if (activeFilter === 'active') params.is_active = 'true'
     else if (activeFilter === 'inactive') params.is_active = 'false'
     if (search.trim()) params.search = search.trim()
-    api.get<CatalogItem[]>('/api/catalog', params).then(setItems).catch(() => setItems([]))
+    api
+      .get<CatalogItem[]>('/api/catalog', params)
+      .then(setItems)
+      .catch(() => setItems([]))
   }, [categoryFilter, complexityFilter, activeFilter, search])
 
   useEffect(() => {
-    api.get<User[]>('/api/users').then((list) => {
-      setUsers(list)
-      if (list.length && !currentUserId) setCurrentUserId(list[0].id)
-    }).catch(() => setUsers([]))
+    api
+      .get<User[]>('/api/users')
+      .then((list) => {
+        setUsers(list)
+        if (list.length && !currentUserId) setCurrentUserId(list[0].id)
+      })
+      .catch(() => setUsers([]))
   }, [])
 
   useEffect(() => {
@@ -47,7 +52,8 @@ export function CatalogPage() {
   }, [loadItems])
 
   const currentUser = users.find((u) => u.id === currentUserId)
-  const canEdit = currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
+  const canEdit =
+    currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
 
   const handleCreate = () => {
     setModalItem(null)
@@ -101,13 +107,16 @@ export function CatalogPage() {
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
   }
 
-  if (loading && items.length === 0) return <div className="text-slate-500">Загрузка...</div>
+  if (loading && items.length === 0)
+    return <div className="text-slate-500">Загрузка...</div>
   if (error) return <div className="text-red-600">{error}</div>
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold text-slate-900">Каталог операций</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">
+          Каталог операций
+        </h1>
         {users.length > 0 && (
           <select
             value={currentUserId}
@@ -115,7 +124,9 @@ export function CatalogPage() {
             className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
           >
             {users.map((u) => (
-              <option key={u.id} value={u.id}>{u.full_name}</option>
+              <option key={u.id} value={u.id}>
+                {u.full_name}
+              </option>
             ))}
           </select>
         )}
@@ -133,6 +144,7 @@ export function CatalogPage() {
           <option value="api">api</option>
           <option value="docs">docs</option>
         </select>
+
         <select
           value={complexityFilter}
           onChange={(e) => setComplexityFilter(e.target.value)}
@@ -144,6 +156,7 @@ export function CatalogPage() {
           <option value="L">L</option>
           <option value="XL">XL</option>
         </select>
+
         <select
           value={activeFilter}
           onChange={(e) => setActiveFilter(e.target.value)}
@@ -153,6 +166,7 @@ export function CatalogPage() {
           <option value="active">Активные</option>
           <option value="inactive">Неактивные</option>
         </select>
+
         <input
           type="text"
           placeholder="Поиск по названию"
@@ -160,6 +174,7 @@ export function CatalogPage() {
           onChange={(e) => setSearch(e.target.value)}
           className="rounded-md border border-slate-300 px-3 py-2 text-sm"
         />
+
         {canEdit && (
           <button
             type="button"
@@ -175,14 +190,28 @@ export function CatalogPage() {
         <table className="min-w-full divide-y divide-slate-200">
           <thead className="bg-slate-50">
             <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Название</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Категория</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Сложность</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Стоимость (Q)</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Мин. лига</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Статус</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
+                Название
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
+                Категория
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
+                Сложность
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
+                Стоимость (Q)
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
+                Мин. лига
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
+                Статус
+              </th>
               {canEdit && (
-                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Действия</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
+                  Действия
+                </th>
               )}
             </tr>
           </thead>
@@ -195,8 +224,12 @@ export function CatalogPage() {
                   !item.is_active && 'bg-slate-100 opacity-75'
                 )}
               >
-                <td className="px-4 py-3 text-sm font-medium text-slate-900">{item.name}</td>
-                <td className="px-4 py-3 text-sm text-slate-600">{item.category}</td>
+                <td className="px-4 py-3 text-sm font-medium text-slate-900">
+                  {item.name}
+                </td>
+                <td className="px-4 py-3 text-sm text-slate-600">
+                  {item.category}
+                </td>
                 <td className="px-4 py-3 text-sm">{item.complexity}</td>
                 <td className="px-4 py-3">
                   <QBadge q={item.base_cost_q} />
@@ -204,7 +237,9 @@ export function CatalogPage() {
                 <td className="px-4 py-3">
                   <LeagueBadge league={item.min_league} />
                 </td>
-                <td className="px-4 py-3 text-sm">{item.is_active ? 'Активна' : 'Неактивна'}</td>
+                <td className="px-4 py-3 text-sm">
+                  {item.is_active ? 'Активна' : 'Неактивна'}
+                </td>
                 {canEdit && (
                   <td className="px-4 py-3 flex gap-2">
                     <button

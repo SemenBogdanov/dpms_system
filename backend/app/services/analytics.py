@@ -262,9 +262,11 @@ async def get_burndown_data(db: AsyncSession) -> BurndownData:
         return BurndownData(period=period, total_capacity=total_capacity, working_days=0, points=[])
 
     # Ежедневные суммы: date -> sum(amount) за этот день (main, amount > 0)
+
+    day_col = func.date_trunc("day", QTransaction.created_at)
     daily_stmt = (
         select(
-            func.date_trunc("day", QTransaction.created_at).label("d"),
+            day_col.label("d"),
             func.coalesce(func.sum(QTransaction.amount), 0).label("total"),
         )
         .where(
@@ -273,7 +275,7 @@ async def get_burndown_data(db: AsyncSession) -> BurndownData:
             QTransaction.created_at >= month_start,
             QTransaction.created_at <= month_end,
         )
-        .group_by(func.date_trunc("day", QTransaction.created_at))
+        .group_by(day_col)
     )
     daily_result = await db.execute(daily_stmt)
     daily_totals = {}

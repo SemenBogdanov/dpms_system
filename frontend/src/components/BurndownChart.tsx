@@ -27,7 +27,10 @@ export function BurndownChart({ data }: BurndownChartProps) {
   return (
     <div className="w-full" style={{ height: 300 }}>
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
+        <LineChart
+          data={chartData}
+          margin={{ top: 8, right: 8, left: 8, bottom: 8 }}
+        >
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
           <XAxis
             dataKey="day"
@@ -37,24 +40,34 @@ export function BurndownChart({ data }: BurndownChartProps) {
               return pt?.fullDay?.slice(5) ?? v
             }}
           />
-          <YAxis tick={{ fontSize: 12 }} label={{ value: 'Q', angle: 0, position: 'insideLeft' }} />
+          <YAxis
+            tick={{ fontSize: 12 }}
+            label={{ value: 'Q', angle: 0, position: 'insideLeft' }}
+          />
           <Tooltip
-            formatter={(value: number) => [value != null ? Number(value).toFixed(1) : '—', '']}
+            formatter={(value: number) => [
+              value != null ? Number(value).toFixed(1) : '—',
+              '',
+            ]}
             labelFormatter={(_, payload) => {
               const p = payload?.[0]?.payload
               return p?.fullDay ?? ''
             }}
-            content={({ active, payload, label }) => {
+            content={({ active, payload }) => {
               if (!active || !payload?.length) return null
               const p = payload[0].payload
               return (
                 <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-md">
-                  <p className="text-sm font-medium text-slate-700">День: {p?.fullDay}</p>
-                  <p className="text-xs text-slate-500">
-                    Идеал: {p?.ideal != null ? Number(p.ideal).toFixed(1) : '—'} Q
+                  <p className="text-sm font-medium text-slate-700">
+                    День: {p?.fullDay}
                   </p>
                   <p className="text-xs text-slate-500">
-                    Факт: {p?.actual != null ? Number(p.actual).toFixed(1) : '—'} Q
+                    Идеал:{' '}
+                    {p?.ideal != null ? Number(p.ideal).toFixed(1) : '—'} Q
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    Факт:{' '}
+                    {p?.actual != null ? Number(p.actual).toFixed(1) : '—'} Q
                   </p>
                 </div>
               )
@@ -76,12 +89,14 @@ export function BurndownChart({ data }: BurndownChartProps) {
             name="Факт"
             stroke="#10b981"
             strokeWidth={2}
-            dot={(props) => {
-              const { cx, cy, payload } = props
-              if (payload.actual == null) return null
+            dot={(props: any) => {
+              const { cx, cy, payload, key } = props
+              if (payload.actual == null)
+                return <circle key={key} cx={0} cy={0} r={0} fill="none" />
               const behind = payload.actual < payload.ideal
               return (
                 <circle
+                  key={key}
                   cx={cx}
                   cy={cy}
                   r={3}
