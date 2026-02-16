@@ -6,14 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, require_role
 from app.models.user import User
 from app.schemas.dashboard import CapacityGauge, TeamSummary, PeriodStats, BurndownData
-from app.schemas.calibration import CalibrationReport
+from app.schemas.calibration import CalibrationReport, TeamleadAccuracy
 from app.services.analytics import (
     get_capacity_gauge,
     get_team_summary,
     get_period_stats,
     get_burndown_data,
 )
-from app.services.calibration import get_calibration_report
+from app.services.calibration import get_calibration_report, get_teamlead_accuracy
 
 router = APIRouter()
 
@@ -66,3 +66,12 @@ async def calibration(
 ):
     """Калибровочный отчёт: сравнение оценки и факта по операциям. Только admin/teamlead."""
     return await get_calibration_report(db, period=period)
+
+
+@router.get("/teamlead-accuracy", response_model=list[TeamleadAccuracy])
+async def teamlead_accuracy(
+    user: User = Depends(require_role("admin", "teamlead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Точность оценок тимлидов. Только admin/teamlead."""
+    return await get_teamlead_accuracy(db)

@@ -23,6 +23,7 @@ class QueueTaskResponse(BaseModel):
     can_pull: bool
     locked: bool
     lock_reason: str | None
+    is_proactive: bool = False
 
     class Config:
         from_attributes = True

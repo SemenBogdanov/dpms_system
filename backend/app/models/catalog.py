@@ -18,6 +18,7 @@ class CatalogCategory(str, enum.Enum):
     etl = "etl"
     api = "api"
     docs = "docs"
+    proactive = "proactive"
 
 
 class Complexity(str, enum.Enum):

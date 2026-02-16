@@ -28,6 +28,7 @@ interface EstimateCartProps {
   onUrgency: (v: number) => void
   onCalculate: () => void
   onCreateTask: () => void
+  onDownloadCalculation?: () => void
   calculated: boolean
   loading?: boolean
   className?: string
@@ -42,12 +43,14 @@ const CATEGORY_LABEL: Record<string, string> = {
   etl: 'ETL',
   api: 'API',
   docs: 'Документация',
+  proactive: 'Проактивные',
 }
 const CATEGORY_BADGE_CLASS: Record<string, string> = {
   widget: 'bg-blue-100 text-blue-800',
   etl: 'bg-amber-100 text-amber-800',
   api: 'bg-emerald-100 text-emerald-800',
   docs: 'bg-slate-100 text-slate-700',
+  proactive: 'bg-violet-100 text-violet-800',
 }
 
 export function EstimateCart({
@@ -60,6 +63,7 @@ export function EstimateCart({
   onUrgency,
   onCalculate,
   onCreateTask,
+  onDownloadCalculation,
   calculated,
   loading,
   className,
@@ -214,6 +218,15 @@ export function EstimateCart({
             >
               Создать задачу
             </button>
+            {calculated && onDownloadCalculation && (
+              <button
+                type="button"
+                onClick={onDownloadCalculation}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                💾 Скачать расчёт
+              </button>
+            )}
           </div>
         </>
       )}

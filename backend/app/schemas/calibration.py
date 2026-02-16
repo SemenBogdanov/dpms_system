@@ -22,3 +22,15 @@ class CalibrationReport(BaseModel):
     items: list[CalibrationItem]
     total_tasks_analyzed: int
     overall_accuracy_percent: float
+
+
+class TeamleadAccuracy(BaseModel):
+    """Точность оценок тимлида."""
+    user_id: str
+    full_name: str
+    tasks_evaluated: int
+    accuracy_percent: float
+    bias: str  # "neutral" | "overestimates" | "underestimates"
+    bias_percent: float
+    trend: str  # "improving" | "stable" | "declining"
+    trend_delta: float

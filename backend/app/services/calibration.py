@@ -1,6 +1,7 @@
 """
 Калибровочный отчёт: сравнение оценки (estimated_q) и реального времени выполнения.
 На основе estimation_details.breakdown и завершённых задач.
+Точность тимлидов: по задачам, где validator_id = teamlead.
 """
 from datetime import datetime, timezone
 
@@ -9,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.catalog import CatalogItem
 from app.models.task import Task, TaskStatus
-from app.schemas.calibration import CalibrationItem, CalibrationReport
+from app.models.user import User, UserRole
+from app.schemas.calibration import CalibrationItem, CalibrationReport, TeamleadAccuracy
 
 
 def _task_actual_hours(task: Task) -> float | None:
@@ -157,3 +159,120 @@ async def get_calibration_report(
         total_tasks_analyzed=tasks_analyzed,
         overall_accuracy_percent=round(overall_accuracy, 1),
     )
+
+
+async def get_teamlead_accuracy(db: AsyncSession) -> list[TeamleadAccuracy]:
+    """
+    Точность оценок тимлидов. Используем validator_id как прокси оценщика.
+    Для каждого teamlead/admin: задачи с validator_id = user, завершённые.
+    Точность = 1 - sum(|estimated - proportional_actual|) / sum(estimated).
+    proportional_actual в Q = actual_hours / avg_hours_per_q (глобальное ср. часов на 1 Q).
+    """
+    teamleads_result = await db.execute(
+        select(User.id, User.full_name).where(User.role.in_([UserRole.teamlead, UserRole.admin]))
+    )
+    teamleads = list(teamleads_result.all())
+    if not teamleads:
+        return []
+
+    now = datetime.now(timezone.utc)
+    this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if now.month == 1:
+        last_month_start = this_month_start.replace(year=now.year - 1, month=12)
+    else:
+        last_month_start = this_month_start.replace(month=now.month - 1)
+
+    all_done = await db.execute(
+        select(Task)
+        .where(
+            Task.status == TaskStatus.done,
+            Task.validator_id.is_not(None),
+            Task.started_at.is_not(None),
+            Task.completed_at.is_not(None),
+        )
+    )
+    all_tasks = list(all_done.scalars().all())
+
+    total_q = sum(float(t.estimated_q) for t in all_tasks)
+    total_hours = sum(_task_actual_hours(t) or 0 for t in all_tasks)
+    avg_hours_per_q = total_hours / total_q if total_q > 0 else 0.0
+
+    out: list[TeamleadAccuracy] = []
+    for uid, full_name in teamleads:
+        my_tasks = [t for t in all_tasks if t.validator_id == uid]
+        if not my_tasks:
+            out.append(
+                TeamleadAccuracy(
+                    user_id=str(uid),
+                    full_name=full_name,
+                    tasks_evaluated=0,
+                    accuracy_percent=0.0,
+                    bias="neutral",
+                    bias_percent=0.0,
+                    trend="stable",
+                    trend_delta=0.0,
+                )
+            )
+            continue
+        sum_estimated = sum(float(t.estimated_q) for t in my_tasks)
+        sum_abs_error = 0.0
+        sum_diff = 0.0
+        for t in my_tasks:
+            ah = _task_actual_hours(t)
+            if ah is None:
+                continue
+            eq = float(t.estimated_q)
+            proportional_q = ah / avg_hours_per_q if avg_hours_per_q > 0 else 0
+            sum_abs_error += abs(eq - proportional_q)
+            sum_diff += eq - proportional_q
+        accuracy = (1 - sum_abs_error / sum_estimated) * 100 if sum_estimated > 0 else 0.0
+        accuracy = max(0.0, min(100.0, accuracy))
+        bias_pct = (sum_diff / sum_estimated * 100) if sum_estimated > 0 else 0.0
+        if bias_pct > 5:
+            bias = "overestimates"
+        elif bias_pct < -5:
+            bias = "underestimates"
+        else:
+            bias = "neutral"
+
+        this_month_tasks = [t for t in my_tasks if t.completed_at and t.completed_at >= this_month_start]
+        last_month_tasks = [t for t in my_tasks if t.completed_at and last_month_start <= t.completed_at < this_month_start]
+        acc_this = 0.0
+        if this_month_tasks:
+            s = sum(float(t.estimated_q) for t in this_month_tasks)
+            err = sum(
+                abs(float(t.estimated_q) - (_task_actual_hours(t) or 0) / avg_hours_per_q)
+                for t in this_month_tasks
+                if avg_hours_per_q > 0
+            )
+            acc_this = (1 - err / s * 100) if s > 0 else 0
+        acc_last = 0.0
+        if last_month_tasks:
+            s = sum(float(t.estimated_q) for t in last_month_tasks)
+            err = sum(
+                abs(float(t.estimated_q) - (_task_actual_hours(t) or 0) / avg_hours_per_q)
+                for t in last_month_tasks
+                if avg_hours_per_q > 0
+            )
+            acc_last = (1 - err / s * 100) if s > 0 else 0
+        trend_delta = acc_this - acc_last
+        if trend_delta > 2:
+            trend = "improving"
+        elif trend_delta < -2:
+            trend = "declining"
+        else:
+            trend = "stable"
+
+        out.append(
+            TeamleadAccuracy(
+                user_id=str(uid),
+                full_name=full_name,
+                tasks_evaluated=len(my_tasks),
+                accuracy_percent=round(accuracy, 1),
+                bias=bias,
+                bias_percent=round(bias_pct, 1),
+                trend=trend,
+                trend_delta=round(trend_delta, 1),
+            )
+        )
+    return out

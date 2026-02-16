@@ -4,7 +4,7 @@
 
 export type League = 'C' | 'B' | 'A'
 export type UserRole = 'executor' | 'teamlead' | 'admin'
-export type CatalogCategory = 'widget' | 'etl' | 'api' | 'docs'
+export type CatalogCategory = 'widget' | 'etl' | 'api' | 'docs' | 'proactive'
 export type Complexity = 'S' | 'M' | 'L' | 'XL'
 export type TaskType = 'widget' | 'etl' | 'api' | 'docs'
 export type TaskStatus =
@@ -82,6 +82,7 @@ export interface QueueTaskResponse {
   can_pull: boolean
   locked: boolean
   lock_reason: string | null
+  is_proactive?: boolean
 }
 
 export interface CapacityGauge {
@@ -159,6 +160,17 @@ export interface CalibrationReport {
   overall_accuracy_percent: number
 }
 
+export interface TeamleadAccuracy {
+  user_id: string
+  full_name: string
+  tasks_evaluated: number
+  accuracy_percent: number
+  bias: 'neutral' | 'overestimates' | 'underestimates'
+  bias_percent: number
+  trend: 'improving' | 'stable' | 'declining'
+  trend_delta: number
+}
+
 export interface LeagueEvaluation {
   user_id: string
   full_name: string
@@ -167,6 +179,33 @@ export interface LeagueEvaluation {
   reason: string
   eligible: boolean
   history: Array<{ period: string; percent: number }>
+}
+
+export interface CriteriaPeriod {
+  period: string
+  value: number | null
+  met: boolean
+  current?: boolean
+}
+
+export interface LeagueCriterion {
+  name: string
+  description: string
+  required: number
+  completed: number
+  met: boolean
+  progress_percent: number
+  details: CriteriaPeriod[]
+}
+
+export interface LeagueProgress {
+  user_id: string
+  current_league: string
+  next_league: string | null
+  at_max: boolean
+  criteria: LeagueCriterion[]
+  overall_progress: number
+  message: string
 }
 
 export interface LeagueChange {
@@ -228,6 +267,26 @@ export interface PeriodReport {
   utilization_percent: number
 }
 
+export interface TaskExportRow {
+  title: string
+  category: string
+  complexity: string
+  estimated_q: number
+  assignee_name: string
+  started_at: string | null
+  completed_at: string | null
+  duration_hours: number | null
+  validator_name: string | null
+  status: string
+}
+
+export interface TasksExport {
+  period: string
+  rows: TaskExportRow[]
+  total_tasks: number
+  total_q: number
+}
+
 export interface ShopItem {
   id: string
   name: string
@@ -237,6 +296,7 @@ export interface ShopItem {
   icon: string
   is_active: boolean
   max_per_month: number
+  requires_approval?: boolean
   created_at: string
 }
 

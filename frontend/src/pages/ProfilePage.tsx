@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '@/api/client'
-import type { User, UserProgress, Task, QTransactionRead, LeagueEvaluation } from '@/api/types'
+import type { User, UserProgress, Task, QTransactionRead, LeagueEvaluation, LeagueProgress } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { LeagueBadge } from '@/components/LeagueBadge'
+import { LeagueProgressCard } from '@/components/LeagueProgressCard'
 import { SkeletonCard } from '@/components/Skeleton'
 import { cn } from '@/lib/utils'
 
@@ -17,7 +18,7 @@ export function ProfilePage() {
 
   const [user, setUser] = useState<User | null>(null)
   const [progress, setProgress] = useState<UserProgress | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading] = useState(true)
   const [profileError, setProfileError] = useState<string | null>(null)
   const [profileLoading, setProfileLoading] = useState(false)
   const [doneTasks, setDoneTasks] = useState<Task[]>([])
@@ -26,6 +27,9 @@ export function ProfilePage() {
   const [walletFilter, setWalletFilter] = useState<'all' | 'main' | 'karma'>('all')
   const [directionFilter, setDirectionFilter] = useState<'all' | 'credit' | 'debit'>('all')
   const [leagueEval, setLeagueEval] = useState<LeagueEvaluation | null>(null)
+  const [leagueProgress, setLeagueProgress] = useState<LeagueProgress | null>(null)
+  const [leagueProgressLoading, setLeagueProgressLoading] = useState(false)
+  const [leagueProgressError, setLeagueProgressError] = useState<string | null>(null)
 
   const loadProfile = useCallback(async () => {
     if (!currentId) {
@@ -60,12 +64,21 @@ export function ProfilePage() {
       } else {
         setLeagueEval(null)
       }
+      setLeagueProgress(null)
+      setLeagueProgressError(null)
+      setLeagueProgressLoading(true)
+      api
+        .get<LeagueProgress>(`/api/users/${currentId}/league-progress`)
+        .then(setLeagueProgress)
+        .catch((e) => setLeagueProgressError(e instanceof Error ? e.message : 'Ошибка загрузки'))
+        .finally(() => setLeagueProgressLoading(false))
     } catch (e) {
       setUser(null)
       setProgress(null)
       setDoneTasks([])
       setTransactions([])
       setLeagueEval(null)
+      setLeagueProgress(null)
       setProfileError(e instanceof Error ? e.message : 'Ошибка загрузки профиля')
     } finally {
       setProfileLoading(false)
@@ -113,22 +126,6 @@ export function ProfilePage() {
               <div>
                 <h2 className="text-xl font-semibold text-slate-900">{user.full_name}</h2>
                 <p className="text-sm text-slate-500">{user.role}</p>
-                {leagueEval && (
-                  <div className="mt-2 text-sm text-slate-600">
-                    <p>
-                      {user.league === 'A'
-                        ? 'Максимальная лига'
-                        : `Следующая лига: ${leagueEval.suggested_league}`}
-                    </p>
-                    {leagueEval.history.length > 0 && (
-                      <p>
-                        Выполнение{' '}
-                        {user.league === 'B' ? '95%+' : '90%+'} —{' '}
-                        {leagueEval.history.filter((h) => h.percent >= (user.league === 'B' ? 95 : 90)).length} из 3 месяцев
-                      </p>
-                    )}
-                  </div>
-                )}
               </div>
             </div>
             <div className="flex flex-col gap-4 min-w-[240px]">
@@ -153,6 +150,12 @@ export function ProfilePage() {
               </div>
             </div>
           </div>
+
+          <LeagueProgressCard
+            data={leagueProgress}
+            loading={leagueProgressLoading}
+            error={leagueProgressError}
+          />
 
           {/* Статистика — 4 карточки */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

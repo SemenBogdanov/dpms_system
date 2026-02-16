@@ -1,14 +1,15 @@
 """API задач. Все эндпоинты защищены JWT."""
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_current_user
+from app.api.deps import get_db, get_current_user, require_role
 from app.models.user import User
 from app.models.task import Task, TaskStatus
-from app.schemas.task import TaskCreate, TaskRead, TaskUpdate
+from app.schemas.task import TaskCreate, TaskRead, TaskUpdate, TaskExportRow, TasksExport
 
 router = APIRouter()
 
@@ -36,6 +37,74 @@ async def list_tasks(
             pass
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+@router.get("/export", response_model=TasksExport)
+async def export_tasks(
+    period: str = Query(..., description="YYYY-MM"),
+    assignee_id: UUID | None = Query(None),
+    category: str | None = Query(None, description="task_type: widget, etl, api, docs"),
+    user: User = Depends(require_role("admin", "teamlead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Экспорт завершённых задач за период (admin/teamlead)."""
+    try:
+        year, month = int(period[:4]), int(period[5:7])
+        start = datetime(year, month, 1, tzinfo=timezone.utc)
+        if month == 12:
+            end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            end = datetime(year, month + 1, 1, tzinfo=timezone.utc)
+    except (ValueError, IndexError):
+        raise HTTPException(status_code=400, detail="Некорректный период (ожидается YYYY-MM)")
+    stmt = (
+        select(Task)
+        .where(Task.completed_at >= start, Task.completed_at < end)
+        .order_by(Task.completed_at)
+    )
+    if assignee_id is not None:
+        stmt = stmt.where(Task.assignee_id == assignee_id)
+    if category is not None:
+        from app.models.task import TaskType
+        try:
+            stmt = stmt.where(Task.task_type == TaskType(category))
+        except ValueError:
+            pass
+    result = await db.execute(stmt)
+    tasks = list(result.scalars().all())
+    user_ids = set()
+    for t in tasks:
+        if t.assignee_id:
+            user_ids.add(t.assignee_id)
+        if t.validator_id:
+            user_ids.add(t.validator_id)
+    users_map: dict[UUID, str] = {}
+    if user_ids:
+        u_res = await db.execute(select(User.id, User.full_name).where(User.id.in_(user_ids)))
+        users_map = {row.id: row.full_name for row in u_res.all()}
+    rows: list[TaskExportRow] = []
+    total_q = 0.0
+    for t in tasks:
+        duration_hours = None
+        if t.started_at and t.completed_at:
+            delta = t.completed_at - t.started_at
+            duration_hours = round(delta.total_seconds() / 3600, 1)
+        rows.append(
+            TaskExportRow(
+                title=t.title,
+                category=t.task_type.value,
+                complexity=t.complexity.value,
+                estimated_q=float(t.estimated_q),
+                assignee_name=users_map.get(t.assignee_id) if t.assignee_id else "",
+                started_at=t.started_at.isoformat() if t.started_at else None,
+                completed_at=t.completed_at.isoformat() if t.completed_at else None,
+                duration_hours=duration_hours,
+                validator_name=users_map.get(t.validator_id) if t.validator_id else None,
+                status=t.status.value,
+            )
+        )
+        total_q += float(t.estimated_q)
+    return TasksExport(period=period, rows=rows, total_tasks=len(rows), total_q=round(total_q, 1))
 
 
 @router.get("/{task_id}", response_model=TaskRead)

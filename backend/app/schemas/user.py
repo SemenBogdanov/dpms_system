@@ -19,16 +19,23 @@ class UserBase(BaseModel):
     is_active: bool = True
 
 
-class UserCreate(UserBase):
-    """Создание пользователя."""
-    pass
+class UserCreate(BaseModel):
+    """Создание пользователя (admin)."""
+    full_name: str = Field(..., max_length=255)
+    email: EmailStr
+    role: UserRole = UserRole.executor
+    league: League = League.C
+    mpw: int = Field(60, gt=0)
+    password: str = Field(..., min_length=6)
 
 
 class UserUpdate(BaseModel):
-    """Обновление пользователя (частичное)."""
+    """Обновление пользователя (частичное, admin)."""
+    full_name: str | None = None
+    email: EmailStr | None = None
+    role: UserRole | None = None
     league: League | None = None
-    mpw: int | None = Field(None, ge=0)
-    wip_limit: int | None = Field(None, ge=1)
+    mpw: int | None = Field(None, gt=0)
     is_active: bool | None = None
 
 

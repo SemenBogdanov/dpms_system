@@ -1,29 +1,32 @@
-"""Схемы для оценки и применения изменений лиг."""
-from uuid import UUID
-
+"""Схемы прогресса по лигам."""
 from pydantic import BaseModel
 
 
-class ApplyLeagueChangesRequest(BaseModel):
-    """Запрос на применение изменений лиг (только admin). admin_id опционален (из JWT)."""
-    admin_id: UUID | None = None
+class CriteriaPeriod(BaseModel):
+    """Помесячная детализация критерия."""
+    period: str  # "2026-01"
+    value: float | None  # 92.0 (percent) или количество задач
+    met: bool
+    current: bool = False  # Текущий месяц (ещё не закрыт)
 
 
-class LeagueEvaluation(BaseModel):
-    """Оценка смены лиги для одного пользователя."""
+class LeagueCriterion(BaseModel):
+    """Один критерий перехода в следующую лигу."""
+    name: str
+    description: str
+    required: int
+    completed: int
+    met: bool
+    progress_percent: float
+    details: list[CriteriaPeriod]
+
+
+class LeagueProgress(BaseModel):
+    """Детальный прогресс пользователя к следующей лиге."""
     user_id: str
-    full_name: str
     current_league: str
-    suggested_league: str
-    reason: str
-    eligible: bool
-    history: list[dict]  # [{"period": "2026-01", "percent": 92.0}, ...]
-
-
-class LeagueChange(BaseModel):
-    """Фактическое изменение лиги после применения."""
-    user_id: str
-    full_name: str
-    old_league: str
-    new_league: str
-    reason: str
+    next_league: str | None
+    at_max: bool
+    criteria: list[LeagueCriterion]
+    overall_progress: float
+    message: str

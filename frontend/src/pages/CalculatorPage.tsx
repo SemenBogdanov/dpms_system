@@ -22,7 +22,7 @@ export function CalculatorPage() {
   const [createPriority, setCreatePriority] = useState('medium')
   const [createEstimatorId, setCreateEstimatorId] = useState('')
   const [creating, setCreating] = useState(false)
-  const [categoryTab, setCategoryTab] = useState<'all' | 'widget' | 'etl' | 'api' | 'docs'>('all')
+  const [categoryTab, setCategoryTab] = useState<'all' | 'widget' | 'etl' | 'api' | 'docs' | 'proactive'>('all')
 
   useEffect(() => {
     api.get<CatalogItem[]>('/api/catalog').then(setCatalog).catch(() => setCatalog([]))
@@ -127,7 +127,34 @@ export function CalculatorPage() {
     { key: 'etl', label: 'ETL' },
     { key: 'api', label: 'API' },
     { key: 'docs', label: 'Документация' },
+    { key: 'proactive', label: 'Проактивные' },
   ]
+
+  const handleDownloadCalculation = () => {
+    const sumRaw = cart.reduce((s, r) => s + r.catalog.base_cost_q * r.quantity, 0)
+    const totalQ = Math.round(sumRaw * complexityMult * urgencyMult * 10) / 10
+    const header = 'Операция,Категория,Сложность,Стоимость (Q),Количество,Итого (Q)\n'
+    const body = cart
+      .map((r) =>
+        [
+          `"${r.catalog.name.replace(/"/g, '""')}"`,
+          r.catalog.category,
+          r.catalog.complexity,
+          Number(r.catalog.base_cost_q).toFixed(1),
+          r.quantity,
+          Number(r.catalog.base_cost_q * r.quantity).toFixed(1),
+        ].join(',')
+      )
+      .join('\n')
+    const footer = `---\nИТОГО,,,,,${Number(totalQ).toFixed(1)}\n`
+    const blob = new Blob(['\ufeff' + header + body + '\n' + footer], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'dpms-estimate.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <div className="space-y-6">
@@ -163,6 +190,7 @@ export function CalculatorPage() {
             onUrgency={setUrgencyMult}
             onCalculate={handleCalculate}
             onCreateTask={openCreateModal}
+            onDownloadCalculation={handleDownloadCalculation}
             calculated={!!estimateResult}
             loading={loading}
           />

@@ -26,11 +26,12 @@ router = APIRouter()
 
 @router.get("", response_model=list[QueueTaskResponse])
 async def queue_list(
+    category: str | None = Query(None, description="proactive | !proactive | все"),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Задачи в очереди с полями can_pull, locked, lock_reason, estimator_name."""
-    return await get_available_tasks(db, user.id)
+    """Задачи в очереди. category=proactive — только проактивные, !proactive — обычные."""
+    return await get_available_tasks(db, user.id, category=category)
 
 
 @router.post("/pull", response_model=TaskRead)

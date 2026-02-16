@@ -11,7 +11,7 @@ export function MyTasksPage() {
   const [reviewTasks, setReviewTasks] = useState<Task[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error] = useState<string | null>(null)
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null)
 
   const [submitTaskId, setSubmitTaskId] = useState<string | null>(null)

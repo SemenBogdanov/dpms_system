@@ -64,6 +64,16 @@ CATALOG = [
     ("docs", "Documentation: User Guide", "S", Decimal("2.0"), "Руководство пользователя", League.C),
 ]
 
+# Проактивные операции (Доработка 6)
+PROACTIVE_CATALOG = [
+    ("proactive", "Рефакторинг: оптимизация существующего потока", "M", Decimal("5.0"), "Оптимизация потока", League.C),
+    ("proactive", "Документация: описание процесса", "S", Decimal("3.0"), "Описание процесса", League.C),
+    ("proactive", "Менторинг: обучение коллеги", "M", Decimal("4.0"), "Обучение коллеги", League.B),
+    ("proactive", "Исследование: оценка нового инструмента", "L", Decimal("8.0"), "Оценка инструмента", League.B),
+    ("proactive", "Техдолг: покрытие тестами", "S", Decimal("3.0"), "Покрытие тестами", League.C),
+    ("proactive", "Техдолг: улучшение мониторинга", "M", Decimal("5.0"), "Улучшение мониторинга", League.B),
+]
+
 
 async def ensure_users(session: AsyncSession) -> dict[str, User]:
     """Создать пользователей, если ещё нет. Возвращает email -> User."""
@@ -108,6 +118,27 @@ async def ensure_catalog(session: AsyncSession) -> list[CatalogItem]:
         await session.flush()
         items.append(item)
     return items
+
+
+async def ensure_proactive_catalog(session: AsyncSession, catalog_items: list[CatalogItem]) -> list[CatalogItem]:
+    """Добавить проактивные операции, если их ещё нет."""
+    has_proactive = any(getattr(c.category, "value", c.category) == "proactive" for c in catalog_items)
+    if has_proactive:
+        return catalog_items
+    added = []
+    for cat, name, compl, cost, desc, min_league in PROACTIVE_CATALOG:
+        item = CatalogItem(
+            category=CatalogCategory(cat),
+            name=name,
+            complexity=Complexity(compl),
+            base_cost_q=cost,
+            description=desc,
+            min_league=min_league,
+        )
+        session.add(item)
+        await session.flush()
+        added.append(item)
+    return catalog_items + added
 
 
 async def ensure_tasks(
@@ -199,6 +230,26 @@ async def ensure_tasks(
                 task_id=task.id,
             )
 
+    proactive_items = [c for c in catalog_items if getattr(c.category, "value", str(c.category)) == "proactive"]
+    if proactive_items:
+        for idx, proact in enumerate(proactive_items[:3]):
+            task = Task(
+                title=f"Проактивная: {proact.name}",
+                description="Демо проактивная задача.",
+                task_type=TaskType.proactive,
+                complexity=proact.complexity,
+                estimated_q=proact.base_cost_q,
+                priority=TaskPriority.medium,
+                status=TaskStatus.in_queue,
+                min_league=proact.min_league,
+                assignee_id=None,
+                estimator_id=admin.id,
+                validator_id=None,
+                is_proactive=True,
+            )
+            session.add(task)
+            await session.flush()
+
 
 async def ensure_burndown_transactions(session: AsyncSession, users_by_email: dict[str, User]) -> None:
     """Транзакции за текущий месяц по дням для графика burn-down (main, amount > 0)."""
@@ -232,18 +283,36 @@ async def ensure_shop_items(session: AsyncSession) -> None:
         return
     shop_items = [
         ShopItem(
-            name="Remote Day",
-            description="Работа из дома на 1 день",
-            cost_q=Decimal("20.0"),
-            icon="🏠",
+            name="Стикерпак",
+            description="Набор стикеров",
+            cost_q=Decimal("5.0"),
+            icon="🎨",
             max_per_month=2,
+            requires_approval=False,
         ),
         ShopItem(
-            name="Day Off",
+            name="Кофе-бонус",
+            description="Бонус на кофе",
+            cost_q=Decimal("3.0"),
+            icon="☕",
+            max_per_month=5,
+            requires_approval=False,
+        ),
+        ShopItem(
+            name="Remote Day",
+            description="Работа из дома на 1 день",
+            cost_q=Decimal("30.0"),
+            icon="🏠",
+            max_per_month=2,
+            requires_approval=True,
+        ),
+        ShopItem(
+            name="Доп. выходной",
             description="Дополнительный выходной",
             cost_q=Decimal("50.0"),
             icon="🏖️",
             max_per_month=1,
+            requires_approval=True,
         ),
         ShopItem(
             name="Veto Card",
@@ -251,6 +320,7 @@ async def ensure_shop_items(session: AsyncSession) -> None:
             cost_q=Decimal("10.0"),
             icon="🛡️",
             max_per_month=3,
+            requires_approval=True,
         ),
     ]
     for item in shop_items:
@@ -286,6 +356,7 @@ async def run_seed() -> None:
         try:
             users = await ensure_users(session)
             catalog = await ensure_catalog(session)
+            catalog = await ensure_proactive_catalog(session, catalog)
             await ensure_tasks(session, users, catalog)
             await ensure_shop_items(session)
             await ensure_burndown_transactions(session, users)

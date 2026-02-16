@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.task import Task, TaskStatus
+from app.models.task import Task, TaskStatus, TaskType
 from app.models.user import User, League, UserRole
 from app.schemas.queue import QueueTaskResponse
 from app.services.wallet import credit_q
@@ -14,11 +14,14 @@ from app.services.wallet import credit_q
 _LEAGUE_ORDER = {League.C: 0, League.B: 1, League.A: 2}
 
 
-async def get_available_tasks(db: AsyncSession, user_id: UUID) -> list[QueueTaskResponse]:
+async def get_available_tasks(
+    db: AsyncSession,
+    user_id: UUID,
+    category: str | None = None,
+) -> list[QueueTaskResponse]:
     """
-    Все задачи in_queue. Для каждой: can_pull, locked, lock_reason, estimator_name.
-    Задачи с min_league > user.league возвращаются с locked=True.
-    Сортировка: priority DESC, created_at ASC.
+    Все задачи in_queue. category: "proactive" — только проактивные,
+    "!proactive" — только обычные, None — все.
     """
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -30,6 +33,10 @@ async def get_available_tasks(db: AsyncSession, user_id: UUID) -> list[QueueTask
         .where(Task.status == TaskStatus.in_queue)
         .order_by(Task.priority.desc(), Task.created_at.asc())
     )
+    if category == "proactive":
+        stmt = stmt.where(Task.task_type == TaskType.proactive)
+    elif category == "!proactive":
+        stmt = stmt.where(Task.task_type != TaskType.proactive)
     result = await db.execute(stmt)
     tasks = list(result.scalars().all())
 
@@ -70,6 +77,7 @@ async def get_available_tasks(db: AsyncSession, user_id: UUID) -> list[QueueTask
 
         estimator_name = estimator_map.get(task.estimator_id) if task.estimator_id else None
 
+        is_proactive = task.task_type == TaskType.proactive or getattr(task, "is_proactive", False)
         out.append(
             QueueTaskResponse(
                 id=task.id,
@@ -82,6 +90,7 @@ async def get_available_tasks(db: AsyncSession, user_id: UUID) -> list[QueueTask
                 min_league=task.min_league.value,
                 created_at=task.created_at,
                 estimator_name=estimator_name,
+                is_proactive=is_proactive,
                 can_pull=can_pull,
                 locked=locked,
                 lock_reason=lock_reason,

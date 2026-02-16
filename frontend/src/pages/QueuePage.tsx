@@ -9,6 +9,7 @@ import { PriorityBadge } from '@/components/PriorityBadge'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { QBadge } from '@/components/QBadge'
 import { SkeletonTable } from '@/components/Skeleton'
+import { ProactiveBlock } from '@/components/ProactiveBlock'
 
 const complexityStyles: Record<string, string> = {
   S: 'bg-slate-100 text-slate-700',
@@ -26,17 +27,30 @@ export function QueuePage() {
   const [pullingId, setPullingId] = useState<string | null>(null)
   const [confirmPull, setConfirmPull] = useState<QueueTaskResponse | null>(null)
   const [myTasks, setMyTasks] = useState<Task[]>([])
+  const [queueFilter, setQueueFilter] = useState<'default' | 'proactive'>('default')
+
+  const loadQueue = (category: 'default' | 'proactive') => {
+    if (!currentUser) return
+    setLoading(true)
+    const params = category === 'proactive' ? { category: 'proactive' } : undefined
+    api
+      .get<QueueTaskResponse[]>('/api/queue', params)
+      .then(setTasks)
+      .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка'))
+      .finally(() => setLoading(false))
+  }
 
   useEffect(() => {
     if (!currentUser) return
-    let cancelled = false
-    api
-      .get<QueueTaskResponse[]>('/api/queue')
-      .then((list) => !cancelled && setTasks(list))
-      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : 'Ошибка'))
-      .finally(() => !cancelled && setLoading(false))
-    return () => { cancelled = true }
-  }, [currentUser])
+    loadQueue(queueFilter)
+  }, [currentUser, queueFilter])
+
+  const handleShowProactive = () => {
+    setQueueFilter('proactive')
+  }
+  const handleShowDefault = () => {
+    setQueueFilter('default')
+  }
 
   useEffect(() => {
     if (!currentUser) return
@@ -60,7 +74,7 @@ export function QueuePage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось взять задачу')
       setConfirmPull(null)
-      api.get<QueueTaskResponse[]>('/api/queue').then(setTasks)
+      loadQueue(queueFilter)
     } finally {
       setPullingId(null)
     }
@@ -83,11 +97,25 @@ export function QueuePage() {
         )}
       </div>
 
-      {tasks.length === 0 ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-slate-500">
-          Все задачи разобраны 🎉
-        </div>
-      ) : (
+      {queueFilter === 'proactive' && (
+        <button
+          type="button"
+          onClick={handleShowDefault}
+          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          ← Обычная очередь
+        </button>
+      )}
+
+      {tasks.length === 0 && !loading ? (
+        queueFilter === 'default' ? (
+          <ProactiveBlock onShowProactive={handleShowProactive} loading={loading} />
+        ) : (
+          <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-slate-500">
+            Нет проактивных задач в очереди
+          </div>
+        )
+      ) : tasks.length > 0 ? (
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50">
@@ -120,7 +148,14 @@ export function QueuePage() {
                   key={t.id}
                   className={t.locked ? 'bg-slate-50 opacity-75' : ''}
                 >
-                  <td className="px-4 py-3 text-sm text-slate-900">{t.title}</td>
+                  <td className="px-4 py-3 text-sm text-slate-900">
+                    <span>{t.title}</span>
+                    {t.is_proactive && (
+                      <span className="ml-2 inline rounded bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800">
+                        🔄 Проактивная
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-sm text-slate-600">{t.task_type}</td>
                   <td className="px-4 py-3">
                     <span
@@ -172,7 +207,7 @@ export function QueuePage() {
             </tbody>
           </table>
         </div>
-      )}
+      ) : null}
 
       {confirmPull && (
         <div

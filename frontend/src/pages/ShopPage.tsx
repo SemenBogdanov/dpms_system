@@ -46,11 +46,15 @@ export function ShopPage() {
 
   const handlePurchase = (item: ShopItem) => {
     if (!currentUser) return
-    if (!window.confirm(`Купить "${item.name}" за ${item.cost_q} Q кармы?`)) return
+    if (!window.confirm(`Купить "${item.name}" за ${Number(item.cost_q).toFixed(1)} Q кармы?`)) return
     api
       .post<Purchase>('/api/shop/purchase', { shop_item_id: item.id })
-      .then(() => {
-        toast.success('Покупка оформлена! Ожидает подтверждения тимлида.')
+      .then((purchase) => {
+        if (purchase.status === 'approved') {
+          toast.success(`Куплено: ${item.name}! Списано ${Number(item.cost_q).toFixed(1)} кармы.`)
+        } else {
+          toast.success(`Заявка на «${item.name}» отправлена тимлиду на одобрение.`)
+        }
         return api.get<Purchase[]>(`/api/shop/purchases/${currentUser.id}`)
       })
       .then(setPurchases)

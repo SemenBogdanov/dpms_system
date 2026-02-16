@@ -5,12 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_current_user
+from app.api.deps import get_db, get_current_user, require_role
 from app.models.user import User, League, UserRole
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 from app.schemas.dashboard import UserProgress
 from app.schemas.transaction import QTransactionRead
+from app.schemas.leagues import LeagueProgress
 from app.services.analytics import get_user_progress
+from app.services.leagues import get_league_progress as get_league_progress_svc
 
 router = APIRouter()
 
@@ -45,16 +47,26 @@ async def get_user(user_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("", response_model=UserRead)
-async def create_user(body: UserCreate, db: AsyncSession = Depends(get_db)):
-    """Создать пользователя (admin only — проверка роли в MVP не делаем)."""
+async def create_user(
+    body: UserCreate,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_role("admin")),
+):
+    """Создать сотрудника (только admin). Проверка уникальности email."""
+    from app.core.security import get_password_hash
+
+    existing = await db.execute(select(User).where(User.email == body.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Пользователь с таким email уже существует")
     user = User(
         full_name=body.full_name,
         email=body.email,
         league=body.league,
         role=body.role,
         mpw=body.mpw,
-        wip_limit=body.wip_limit,
-        is_active=body.is_active,
+        wip_limit=2,
+        is_active=True,
+        password_hash=get_password_hash(body.password),
     )
     db.add(user)
     await db.flush()
@@ -67,18 +79,26 @@ async def update_user(
     user_id: UUID,
     body: UserUpdate,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_role("admin")),
 ):
-    """Обновить пользователя (league, mpw, wip_limit)."""
+    """Обновить сотрудника (только admin)."""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    if body.full_name is not None:
+        user.full_name = body.full_name
+    if body.email is not None:
+        other = await db.execute(select(User).where(User.email == body.email, User.id != user_id))
+        if other.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Пользователь с таким email уже существует")
+        user.email = body.email
+    if body.role is not None:
+        user.role = body.role
     if body.league is not None:
         user.league = body.league
     if body.mpw is not None:
         user.mpw = body.mpw
-    if body.wip_limit is not None:
-        user.wip_limit = body.wip_limit
     if body.is_active is not None:
         user.is_active = body.is_active
     await db.flush()
@@ -95,6 +115,21 @@ async def get_user_progress_route(
     progress = await get_user_progress(db, user_id)
     if not progress:
         raise HTTPException(status_code=404, detail="User not found")
+    return progress
+
+
+@router.get("/{user_id}/league-progress", response_model=LeagueProgress)
+async def get_league_progress_route(
+    user_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Прогресс к следующей лиге. Свои данные — всегда; чужие — admin/teamlead."""
+    if current_user.id != user_id and current_user.role not in (UserRole.admin, UserRole.teamlead):
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
+    progress = await get_league_progress_svc(db, user_id)
+    if not progress:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
     return progress
 
 

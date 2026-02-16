@@ -32,8 +32,8 @@ async def purchase_item(
 ) -> Purchase:
     """
     Купить товар за карму.
-    Проверки: is_active, баланс кармы, лимит покупок в месяц.
-    Списание через QTransaction, создание Purchase(status=pending).
+    Если item.requires_approval == False: списать карму сразу, Purchase(approved), уведомление пользователю.
+    Если item.requires_approval == True: не списывать, Purchase(pending), уведомление тимлидам.
     """
     result = await db.execute(select(ShopItem).where(ShopItem.id == shop_item_id))
     item = result.scalar_one_or_none()
@@ -71,15 +71,38 @@ async def purchase_item(
             detail="Лимит покупок этого товара в этом месяце исчерпан",
         )
 
-    user.wallet_karma -= cost
-    db.add(
-        QTransaction(
-            user_id=user_id,
-            amount=-cost,
-            wallet_type=WalletType.karma,
-            reason=f"Покупка: {item.name}",
+    from app.services.notifications import create_notification
+
+    if not getattr(item, "requires_approval", True):
+        # Мгновенная покупка: списать карму, статус approved, уведомление пользователю
+        user.wallet_karma -= cost
+        db.add(
+            QTransaction(
+                user_id=user_id,
+                amount=-cost,
+                wallet_type=WalletType.karma,
+                reason=f"Покупка: {item.name}",
+            )
         )
-    )
+        purchase = Purchase(
+            user_id=user_id,
+            shop_item_id=shop_item_id,
+            cost_q=cost,
+            status="approved",
+        )
+        db.add(purchase)
+        await db.flush()
+        await db.refresh(purchase)
+        await create_notification(
+            db, user_id,
+            "purchase_approved",
+            "Покупка выполнена",
+            message=f"Покупка «{item.name}» выполнена. Списано {float(cost):.1f} кармы.",
+            link="/shop",
+        )
+        return purchase
+
+    # Требует одобрения: не списывать, pending, уведомление тимлидам
     purchase = Purchase(
         user_id=user_id,
         shop_item_id=shop_item_id,
@@ -89,12 +112,10 @@ async def purchase_item(
     db.add(purchase)
     await db.flush()
     await db.refresh(purchase)
-    # Уведомление тимлидам о новой покупке
     teamleads_result = await db.execute(
         select(User.id).where(User.role.in_([UserRole.teamlead, UserRole.admin]))
     )
     for (tid,) in teamleads_result.all():
-        from app.services.notifications import create_notification
         await create_notification(
             db, tid,
             "purchase_pending",

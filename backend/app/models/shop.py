@@ -26,6 +26,7 @@ class ShopItem(Base):
     icon: Mapped[str] = mapped_column(String(50), default="🎁")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     max_per_month: Mapped[int] = mapped_column(Integer, default=1)
+    requires_approval: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
 
 

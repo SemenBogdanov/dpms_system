@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/client'
 import type { User, PeriodHistoryItem, LeagueEvaluation, LeagueChange } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
+import { LeagueBadge } from '@/components/LeagueBadge'
+import { UserModal, type UserFormPayload } from '@/components/UserModal'
 import toast from 'react-hot-toast'
+import { cn } from '@/lib/utils'
 
 const MONTHS = [
   'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
@@ -21,6 +24,8 @@ export function AdminUsersPage() {
   const [leagueEvaluations, setLeagueEvaluations] = useState<LeagueEvaluation[]>([])
   const [leagueEvalLoading, setLeagueEvalLoading] = useState(false)
   const [applyLeagueBusy, setApplyLeagueBusy] = useState(false)
+  const [userModalOpen, setUserModalOpen] = useState(false)
+  const [editingUser, setEditingUser] = useState<User | null>(null)
 
   const loadUsers = useCallback(() => {
     api.get<User[]>('/api/users')
@@ -111,38 +116,141 @@ export function AdminUsersPage() {
       .finally(() => setRolloverBusy(false))
   }
 
+  const handleUserSubmit = async (payload: UserFormPayload) => {
+    if (editingUser) {
+      await api.patch(`/api/users/${editingUser.id}`, {
+        full_name: payload.full_name,
+        email: payload.email,
+        role: payload.role,
+        league: payload.league,
+        mpw: payload.mpw,
+      })
+      toast.success('Изменения сохранены')
+    } else {
+      await api.post<User>('/api/users', {
+        full_name: payload.full_name,
+        email: payload.email,
+        role: payload.role,
+        league: payload.league,
+        mpw: payload.mpw,
+        password: payload.password,
+      })
+      toast.success('Сотрудник добавлен')
+    }
+    loadUsers()
+  }
+
+  const handleDeactivate = (u: User) => {
+    if (!window.confirm(`Деактивировать ${u.full_name}?`)) return
+    api.patch(`/api/users/${u.id}`, { is_active: false }).then(() => {
+      toast.success('Сотрудник деактивирован')
+      loadUsers()
+    }).catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
+  }
+
+  const handleRestore = (u: User) => {
+    api.patch(`/api/users/${u.id}`, { is_active: true }).then(() => {
+      toast.success('Сотрудник восстановлен')
+      loadUsers()
+    }).catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
+  }
+
+  const roleBadgeClass: Record<string, string> = {
+    admin: 'bg-red-100 text-red-800',
+    teamlead: 'bg-blue-100 text-blue-800',
+    executor: 'bg-slate-100 text-slate-700',
+  }
+
   if (loading) return <div className="text-slate-500">Загрузка...</div>
   if (error) return <div className="text-red-600">{error}</div>
 
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold text-slate-900">Сотрудники</h1>
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <table className="min-w-full divide-y divide-slate-200">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">ФИО</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Email</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Лига</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Роль</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">План (Q)</th>
-              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Баланс</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200">
-            {users.map((u) => (
-              <tr key={u.id} className="bg-white">
-                <td className="px-4 py-3 text-sm text-slate-900">{u.full_name}</td>
-                <td className="px-4 py-3 text-sm text-slate-600">{u.email}</td>
-                <td className="px-4 py-3 text-sm">{u.league}</td>
-                <td className="px-4 py-3 text-sm">{u.role}</td>
-                <td className="px-4 py-3 text-sm">{u.mpw}</td>
-                <td className="px-4 py-3 text-sm">{u.wallet_main} / {u.wallet_karma} karma</td>
+
+      {/* Управление сотрудниками */}
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <h2 className="font-medium text-slate-800">Управление сотрудниками</h2>
+          {currentUser?.role === 'admin' && (
+            <button
+              type="button"
+              onClick={() => { setEditingUser(null); setUserModalOpen(true) }}
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+            >
+              + Добавить сотрудника
+            </button>
+          )}
+        </div>
+        <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">ФИО</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Email</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Роль</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Лига</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">MPW</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Статус</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Действия</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {users.map((u) => (
+                <tr
+                  key={u.id}
+                  className={cn(
+                    'bg-white',
+                    !u.is_active && 'bg-slate-50 opacity-75'
+                  )}
+                >
+                  <td className="px-4 py-3 text-slate-900">{u.full_name}</td>
+                  <td className="px-4 py-3 text-slate-600">{u.email}</td>
+                  <td className="px-4 py-3">
+                    <span className={cn('rounded px-2 py-0.5 text-xs font-medium', roleBadgeClass[u.role] ?? 'bg-slate-100')}>
+                      {u.role}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3"><LeagueBadge league={u.league} /></td>
+                  <td className="px-4 py-3">{u.mpw}</td>
+                  <td className="px-4 py-3">{u.is_active ? 'Активен' : 'Неактивен'}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setEditingUser(u); setUserModalOpen(true) }}
+                        className="text-slate-500 hover:text-slate-700"
+                        title="Редактировать"
+                      >
+                        ✏️
+                      </button>
+                      {u.is_active ? (
+                        <button
+                          type="button"
+                          onClick={() => handleDeactivate(u)}
+                          className="text-slate-500 hover:text-red-600"
+                          title="Деактивировать"
+                        >
+                          🗑️
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleRestore(u)}
+                          className="text-slate-500 hover:text-emerald-600"
+                          title="Восстановить"
+                        >
+                          ♻️ Восстановить
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
         <h2 className="font-medium text-amber-800">Управление периодом</h2>
@@ -244,6 +352,14 @@ export function AdminUsersPage() {
           </div>
         )}
       </section>
+
+      <UserModal
+        mode={editingUser ? 'edit' : 'create'}
+        initial={editingUser}
+        open={userModalOpen}
+        onClose={() => { setUserModalOpen(false); setEditingUser(null) }}
+        onSubmit={handleUserSubmit}
+      />
 
       {rolloverConfirm && (
         <div

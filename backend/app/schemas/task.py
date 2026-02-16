@@ -52,3 +52,25 @@ class TaskRead(TaskBase):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class TaskExportRow(BaseModel):
+    """Строка экспорта задач."""
+    title: str
+    category: str
+    complexity: str
+    estimated_q: float
+    assignee_name: str
+    started_at: str | None
+    completed_at: str | None
+    duration_hours: float | None
+    validator_name: str | None
+    status: str
+
+
+class TasksExport(BaseModel):
+    """Экспорт задач за период."""
+    period: str
+    rows: list[TaskExportRow]
+    total_tasks: int
+    total_q: float

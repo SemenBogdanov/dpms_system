@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/client'
-import type { PeriodReport, PeriodHistoryItem } from '@/api/types'
+import type { PeriodReport, PeriodHistoryItem, TasksExport } from '@/api/types'
 import { MetricCard } from '@/components/MetricCard'
-import { exportTeamCSV } from '@/lib/csv'
+import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
 
 export function ReportsPage() {
@@ -10,6 +10,7 @@ export function ReportsPage() {
   const [report, setReport] = useState<PeriodReport | null>(null)
   const [history, setHistory] = useState<PeriodHistoryItem[]>([])
   const [loading, setLoading] = useState(false)
+  const [exportTasksLoading, setExportTasksLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -37,8 +38,58 @@ export function ReportsPage() {
     }
   }, [])
 
+  const currentPeriod = period || new Date().toISOString().slice(0, 7)
+
   const handleExport = () => {
     if (!report) return
+    const header = 'ФИО,Лига,% Выполнения,Задач завершено\n'
+    const body = report.team_members
+        .map((m) => `${m.full_name},${m.league},${Number(m.percent).toFixed(1)},${m.tasks_completed}`)
+        .join('\n')
+    const blob = new Blob(['\ufeff' + header + body], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `dpms-report-${report.period}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleExportTasks = () => {
+    setExportTasksLoading(true)
+    api
+      .get<TasksExport>('/api/tasks/export', { period: currentPeriod })
+      .then((data) => {
+        const header = 'Название,Категория,Сложность,Оценка (Q),Исполнитель,Начало,Завершение,Время (ч),Валидатор,Статус\n'
+        const body = data.rows
+          .map((r) =>
+            [
+              `"${r.title.replace(/"/g, '""')}"`,
+              r.category,
+              r.complexity,
+              Number(r.estimated_q).toFixed(1),
+              `"${(r.assignee_name || '').replace(/"/g, '""')}"`,
+              r.started_at ?? '',
+              r.completed_at ?? '',
+              r.duration_hours != null ? Number(r.duration_hours).toFixed(1) : '',
+              r.validator_name ? `"${r.validator_name.replace(/"/g, '""')}"` : '',
+              r.status,
+            ].join(',')
+          )
+          .join('\n')
+        const blob = new Blob(['\ufeff' + header + body], { type: 'text/csv;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `dpms-tasks-${data.period}.csv`
+        a.click()
+        URL.revokeObjectURL(url)
+        toast.success(`Выгружено задач: ${data.total_tasks}`)
+      })
+      .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка выгрузки'))
+      .finally(() => setExportTasksLoading(false))
+  }
+    /*
     const by_league: Record<string, Array<{ full_name: string; league: string; mpw: number; earned: number; percent: number; karma: number; in_progress_q: number; is_at_risk: boolean }>> = { A: [], B: [], C: [] }
     report.team_members.forEach((m) => {
       const row = {
@@ -54,7 +105,7 @@ export function ReportsPage() {
       const key = m.league in by_league ? m.league : 'C'
       by_league[key].push(row)
     })
-    exportTeamCSV({ by_league })
+    exportTeamCSV({ by_league }) */
   }
 
   return (
@@ -89,6 +140,14 @@ export function ReportsPage() {
               📊 Экспорт CSV
             </button>
           )}
+          <button
+            type="button"
+            onClick={handleExportTasks}
+            disabled={exportTasksLoading}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {exportTasksLoading ? '...' : '📋 Выгрузить задачи (CSV)'}
+          </button>
         </div>
       </div>
 

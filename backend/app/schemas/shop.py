@@ -16,6 +16,7 @@ class ShopItemResponse(BaseModel):
     icon: str
     is_active: bool
     max_per_month: int
+    requires_approval: bool = True
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/client'
-import type { CalibrationReport } from '@/api/types'
+import type { CalibrationReport, TeamleadAccuracy as TeamleadAccuracyType } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { MetricCard } from '@/components/MetricCard'
 import { cn } from '@/lib/utils'
@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 export function CalibrationPage() {
   const { user: currentUser } = useAuth()
   const [report, setReport] = useState<CalibrationReport | null>(null)
+  const [teamleadAccuracy, setTeamleadAccuracy] = useState<TeamleadAccuracyType[]>([])
   const [period, setPeriod] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -20,10 +21,15 @@ export function CalibrationPage() {
     const params: Record<string, string> | undefined = period
       ? { period }
       : undefined
+    setLoading(true)
     api
       .get<CalibrationReport>('/api/dashboard/calibration', params)
       .then(setReport)
       .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка'))
+    api
+      .get<TeamleadAccuracyType[]>('/api/dashboard/teamlead-accuracy')
+      .then(setTeamleadAccuracy)
+      .catch(() => setTeamleadAccuracy([]))
       .finally(() => setLoading(false))
   }, [canView, period])
 
@@ -203,6 +209,84 @@ export function CalibrationPage() {
                 Нет данных для анализа
               </p>
             )}
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-4 text-lg font-semibold text-slate-900">
+              📊 Точность оценок тимлидов
+            </h2>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-medium text-slate-600">ФИО</th>
+                    <th className="px-4 py-2 text-left font-medium text-slate-600">Задач</th>
+                    <th className="px-4 py-2 text-left font-medium text-slate-600">Точность</th>
+                    <th className="px-4 py-2 text-left font-medium text-slate-600">Смещение</th>
+                    <th className="px-4 py-2 text-left font-medium text-slate-600">Тренд</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {teamleadAccuracy.map((tl) => {
+                    const accColor =
+                      tl.accuracy_percent > 80
+                        ? 'text-emerald-600'
+                        : tl.accuracy_percent >= 60
+                          ? 'text-amber-600'
+                          : 'text-red-600'
+                    const trendLabel =
+                      tl.trend === 'improving'
+                        ? '↗️ Улучшается'
+                        : tl.trend === 'declining'
+                          ? '↘️ Ухудшается'
+                          : '→ Стабильно'
+                    const trendColor =
+                      tl.trend === 'improving'
+                        ? 'text-emerald-600'
+                        : tl.trend === 'declining'
+                          ? 'text-red-600'
+                          : 'text-slate-600'
+                    const biasLabel =
+                      tl.bias === 'overestimates'
+                        ? `Завышает ${Number(tl.bias_percent).toFixed(0)}%`
+                        : tl.bias === 'underestimates'
+                          ? `Занижает ${Number(Math.abs(tl.bias_percent)).toFixed(0)}%`
+                          : 'Нейтрально'
+                    return (
+                      <tr key={tl.user_id} className="bg-white">
+                        <td className="px-4 py-2 font-medium text-slate-900">{tl.full_name}</td>
+                        <td className="px-4 py-2">{tl.tasks_evaluated}</td>
+                        <td className={cn('px-4 py-2 font-medium', accColor)}>
+                          {Number(tl.accuracy_percent).toFixed(1)}%
+                        </td>
+                        <td className="px-4 py-2 text-slate-600">{biasLabel}</td>
+                        <td className={cn('px-4 py-2', trendColor)}>{trendLabel}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              {teamleadAccuracy.length === 0 && (
+                <p className="p-4 text-center text-slate-500">Нет данных по тимлидам</p>
+              )}
+            </div>
+            {teamleadAccuracy.length > 0 && (() => {
+              const maxBias = teamleadAccuracy.reduce(
+                (max, tl) =>
+                  Math.abs(tl.bias_percent) > Math.abs(max.bias_percent) ? tl : max,
+                teamleadAccuracy[0]
+              )
+              if (maxBias.bias === 'neutral') return null
+              return (
+                <p className="mt-4 text-sm text-slate-600">
+                  💡 {maxBias.full_name} систематически{' '}
+                  {maxBias.bias === 'overestimates' ? 'завышает' : 'занижает'} оценки
+                  {maxBias.bias === 'overestimates' ? '' : ' ETL-'}задач на{' '}
+                  {Number(Math.abs(maxBias.bias_percent)).toFixed(0)}%.
+                  Рекомендуется провести калибровку с командой.
+                </p>
+              )
+            })()}
           </div>
         </>
       )}
