@@ -12,7 +12,12 @@ from app.schemas.leagues import (
     CriteriaPeriod,
     LeagueCriterion,
     LeagueProgress,
+    LeagueEvaluation,
+    LeagueHistory,
+    LeagueChange
 )
+
+# from app.schemas.leagues import LeagueEvaluation, LeagueHistory, LeagueChange
 
 
 def _periods_for_criteria() -> tuple[list[str], str]:
@@ -158,3 +163,71 @@ async def get_league_progress(db: AsyncSession, user_id: UUID) -> LeagueProgress
         overall_progress=round(overall, 1),
         message=message,
     )
+
+
+async def evaluate_league_change(db: AsyncSession, user_id: UUID) -> LeagueEvaluation:
+    """Оценить, нужно ли менять лигу сотруднику (для админки)."""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        return LeagueEvaluation(
+            user_id=str(user_id), full_name="", current_league="C",
+            suggested_league="C", history=[]
+        )
+
+    current = user.league.value if hasattr(user.league, "value") else str(user.league)
+
+    # Последние 3 закрытых периода
+    snap_result = await db.execute(
+        select(PeriodSnapshot)
+        .where(PeriodSnapshot.user_id == user_id)
+        .order_by(PeriodSnapshot.period.desc())
+        .limit(3)
+    )
+    snaps = snap_result.scalars().all()
+
+    history = []
+    for s in snaps:
+        pct = round(float(s.earned_main) / float(s.mpw) * 100, 1) if s.mpw else 0.0
+        history.append(LeagueHistory(period=s.period, percent=pct))
+
+    # Логика повышения
+    suggested = current
+    if current == "C" and len(history) >= 3:
+        if all(h.percent >= 90 for h in history[:3]):
+            suggested = "B"
+    elif current == "B" and len(history) >= 3:
+        if all(h.percent >= 95 for h in history[:3]):
+            suggested = "A"
+
+    return LeagueEvaluation(
+        user_id=str(user_id),
+        full_name=user.full_name,
+        current_league=current,
+        suggested_league=suggested,
+        history=history,
+    )
+
+
+async def apply_league_changes(db: AsyncSession, admin_id: UUID) -> list[LeagueChange]:
+    """Применить рекомендованные изменения лиг для всех сотрудников."""
+    result = await db.execute(select(User).where(User.is_active.is_(True)))
+    users = result.scalars().all()
+
+    changes: list[LeagueChange] = []
+    for u in users:
+        ev = await evaluate_league_change(db, u.id)
+        if ev.suggested_league != ev.current_league:
+            old = ev.current_league
+            u.league = ev.suggested_league
+            changes.append(LeagueChange(
+                user_id=str(u.id),
+                full_name=u.full_name,
+                old_league=old,
+                new_league=ev.suggested_league,
+            ))
+
+    if changes:
+        await db.commit()
+
+    return changes

@@ -22,11 +22,12 @@ interface UserModalProps {
 const ROLES: User['role'][] = ['executor', 'teamlead', 'admin']
 const LEAGUES: User['league'][] = ['C', 'B', 'A']
 
+/*
 const roleBadgeClass: Record<string, string> = {
   admin: 'bg-red-100 text-red-800',
   teamlead: 'bg-blue-100 text-blue-800',
   executor: 'bg-slate-100 text-slate-700',
-}
+}*/
 
 export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalProps) {
   const [full_name, setFullName] = useState('')

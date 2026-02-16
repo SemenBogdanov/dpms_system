@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '@/api/client'
-import type { User, UserProgress, Task, QTransactionRead, LeagueEvaluation, LeagueProgress } from '@/api/types'
+//import type { User, UserProgress, Task, QTransactionRead, LeagueEvaluation, LeagueProgress } from '@/api/types'
+import type { User, UserProgress, Task, QTransactionRead, LeagueProgress } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { LeagueProgressCard } from '@/components/LeagueProgressCard'
@@ -26,7 +27,7 @@ export function ProfilePage() {
   const [transLimit, setTransLimit] = useState(PAGE_SIZE)
   const [walletFilter, setWalletFilter] = useState<'all' | 'main' | 'karma'>('all')
   const [directionFilter, setDirectionFilter] = useState<'all' | 'credit' | 'debit'>('all')
-  const [leagueEval, setLeagueEval] = useState<LeagueEvaluation | null>(null)
+  // const [leagueEval, setLeagueEval] = useState<LeagueEvaluation | null>(null)
   const [leagueProgress, setLeagueProgress] = useState<LeagueProgress | null>(null)
   const [leagueProgressLoading, setLeagueProgressLoading] = useState(false)
   const [leagueProgressError, setLeagueProgressError] = useState<string | null>(null)
@@ -57,6 +58,7 @@ export function ProfilePage() {
       setProgress(p)
       setDoneTasks(tasks)
       setTransactions(trans)
+      /*
       if (currentUser?.role === 'admin' || currentUser?.role === 'teamlead') {
         api.get<LeagueEvaluation[]>('/api/admin/league-evaluation', { user_id: currentId })
           .then((r) => setLeagueEval(r[0] ?? null))
@@ -64,6 +66,7 @@ export function ProfilePage() {
       } else {
         setLeagueEval(null)
       }
+      */
       setLeagueProgress(null)
       setLeagueProgressError(null)
       setLeagueProgressLoading(true)
@@ -77,7 +80,7 @@ export function ProfilePage() {
       setProgress(null)
       setDoneTasks([])
       setTransactions([])
-      setLeagueEval(null)
+      // setLeagueEval(null)
       setLeagueProgress(null)
       setProfileError(e instanceof Error ? e.message : 'Ошибка загрузки профиля')
     } finally {
