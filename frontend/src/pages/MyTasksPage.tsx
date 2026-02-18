@@ -4,6 +4,7 @@ import type { Task, User } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { TaskCard } from '@/components/TaskCard'
 import toast from 'react-hot-toast'
+import { BugfixModal } from '@/components/BugfixModal'
 
 export function MyTasksPage() {
   const { user: currentUser } = useAuth()
@@ -20,6 +21,15 @@ export function MyTasksPage() {
 
   const [rejectTask, setRejectTask] = useState<Task | null>(null)
   const [rejectComment, setRejectComment] = useState('')
+
+  const [bugfixParent, setBugfixParent] = useState<Task | null>(null)
+  const [bugfixTitle, setBugfixTitle] = useState('')
+  const [bugfixDescription, setBugfixDescription] = useState('')
+  const [bugfixBusy, setBugfixBusy] = useState(false)
+
+  const [deadlineTask, setDeadlineTask] = useState<Task | null>(null)
+  const [deadlineValue, setDeadlineValue] = useState('')
+  const [deadlineBusy, setDeadlineBusy] = useState(false)
 
   useEffect(() => {
     api.get<User[]>('/api/users').then(setUsers).catch(() => setUsers([])).finally(() => setLoading(false))
@@ -111,6 +121,68 @@ export function MyTasksPage() {
     handleValidate(rejectTask.id, false, rejectComment.trim())
   }
 
+  const handleOpenBugfix = (task: Task) => {
+    setBugfixParent(task)
+    setBugfixTitle(`Баг: ${task.title}`)
+    setBugfixDescription('')
+  }
+
+  const handleOpenDeadline = (task: Task) => {
+    setDeadlineTask(task)
+    if (task.due_date) {
+      const d = new Date(task.due_date)
+      const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+      setDeadlineValue(local.toISOString().slice(0, 16))
+    } else {
+      setDeadlineValue('')
+    }
+  }
+
+  const handleSaveDeadline = async () => {
+    if (!deadlineTask || !deadlineValue) {
+      setDeadlineTask(null)
+      setDeadlineValue('')
+      return
+    }
+    setDeadlineBusy(true)
+    try {
+      const local = new Date(deadlineValue)
+      const iso = local.toISOString()
+      await api.patch(`/api/tasks/${deadlineTask.id}/due-date`, {
+        due_date: iso,
+      })
+      toast.success('Дедлайн установлен')
+      setDeadlineTask(null)
+      setDeadlineValue('')
+      refreshTasks()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Не удалось установить дедлайн')
+    } finally {
+      setDeadlineBusy(false)
+    }
+  }
+
+  const handleCreateBugfix = async () => {
+    if (!currentUser || !bugfixParent || !bugfixTitle.trim()) return
+    setBugfixBusy(true)
+    try {
+      await api.post('/api/tasks/bugfix', {
+        parent_task_id: bugfixParent.id,
+        title: bugfixTitle.trim(),
+        description: bugfixDescription.trim() || undefined,
+      })
+      toast.success('Баг-фикс создан')
+      setBugfixParent(null)
+      setBugfixTitle('')
+      setBugfixDescription('')
+      refreshTasks()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Не удалось создать баг-фикс')
+    } finally {
+      setBugfixBusy(false)
+    }
+  }
+
   const isTeamleadOrAdmin =
     currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
   const validatorNames: Record<string, string> = {}
@@ -164,13 +236,23 @@ export function MyTasksPage() {
           <h2 className="mb-3 font-medium text-slate-700">В работе</h2>
           <div className="space-y-2">
             {inProgress.map((t) => (
-              <TaskCard
-                key={t.id}
-                task={t}
-                showActions
-                onSubmitReview={handleSubmitReview}
-                busyTaskId={busyTaskId}
-              />
+              <div key={t.id} className="space-y-1">
+                <TaskCard
+                  task={t}
+                  showActions
+                  onSubmitReview={handleSubmitReview}
+                  busyTaskId={busyTaskId}
+                />
+                {isTeamleadOrAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenDeadline(t)}
+                    className="text-xs text-slate-500 hover:text-slate-800"
+                  >
+                    📅 Дедлайн
+                  </button>
+                )}
+              </div>
             ))}
             {inProgress.length === 0 && (
               <p className="text-sm text-slate-400">Нет задач в работе</p>
@@ -181,12 +263,22 @@ export function MyTasksPage() {
           <h2 className="mb-3 font-medium text-slate-700">На проверке</h2>
           <div className="space-y-2">
             {review.map((t) => (
-              <TaskCard
-                key={t.id}
-                task={t}
-                currentUserId={currentUser?.id ?? ''}
-                validatorName={validatorNames[t.validator_id ?? '']}
-              />
+              <div key={t.id} className="space-y-1">
+                <TaskCard
+                  task={t}
+                  currentUserId={currentUser?.id ?? ''}
+                  validatorName={validatorNames[t.validator_id ?? '']}
+                />
+                {isTeamleadOrAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenDeadline(t)}
+                    className="text-xs text-slate-500 hover:text-slate-800"
+                  >
+                    📅 Дедлайн
+                  </button>
+                )}
+              </div>
             ))}
             {review.length === 0 && (
               <p className="text-sm text-slate-400">Нет задач на проверке</p>
@@ -197,11 +289,21 @@ export function MyTasksPage() {
           <h2 className="mb-3 font-medium text-slate-700">Завершено</h2>
           <div className="space-y-2">
             {done.map((t) => (
-              <TaskCard
-                key={t.id}
-                task={t}
-                validatorName={validatorNames[t.validator_id ?? '']}
-              />
+              <div key={t.id} className="space-y-1">
+                <TaskCard
+                  task={t}
+                  validatorName={validatorNames[t.validator_id ?? '']}
+                />
+                {isTeamleadOrAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenBugfix(t)}
+                    className="text-xs text-slate-500 hover:text-slate-800"
+                  >
+                    🐛 Баг
+                  </button>
+                )}
+              </div>
             ))}
             {done.length === 0 && (
               <p className="text-sm text-slate-400">Нет завершённых задач</p>
@@ -336,6 +438,27 @@ export function MyTasksPage() {
           </div>
         </div>
       )}
+
+      <BugfixModal
+        open={Boolean(bugfixParent)}
+        parentTask={bugfixParent}
+        author={
+          bugfixParent
+            ? users.find((u) => u.id === bugfixParent.assignee_id) ?? null
+            : null
+        }
+        title={bugfixTitle}
+        description={bugfixDescription}
+        onTitleChange={setBugfixTitle}
+        onDescriptionChange={setBugfixDescription}
+        onClose={() => {
+          setBugfixParent(null)
+          setBugfixTitle('')
+          setBugfixDescription('')
+        }}
+        onSubmit={handleCreateBugfix}
+        busy={bugfixBusy}
+      />
     </div>
   )
 }

@@ -151,6 +151,29 @@ export function ProfilePage() {
                 <p className="text-lg font-semibold text-slate-900">⭐ {Number(user.wallet_karma).toFixed(1)} Q</p>
                 <p className="text-xs text-slate-500">Свободные средства</p>
               </div>
+              <div>
+                <p className="text-sm font-medium text-slate-700">Quality Score</p>
+                <p className="text-sm text-slate-600">
+                  {Number(user.quality_score).toFixed(1)}%
+                </p>
+                <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                  <div
+                    className={cn(
+                      'h-full transition-all',
+                      user.quality_score >= 90
+                        ? 'bg-emerald-500'
+                        : user.quality_score >= 70
+                        ? 'bg-amber-400'
+                        : user.quality_score >= 50
+                        ? 'bg-orange-500'
+                        : 'bg-red-600'
+                    )}
+                    style={{
+                      width: `${Math.min(100, Math.max(0, user.quality_score))}%`,
+                    }}
+                  />
+                </div>
+              </div>
             </div>
           </div>
 

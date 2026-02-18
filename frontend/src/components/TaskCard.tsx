@@ -3,6 +3,7 @@ import { Check } from 'lucide-react'
 import { QBadge } from './QBadge'
 import { PriorityBadge } from './PriorityBadge'
 import { cn } from '@/lib/utils'
+import { DeadlineBadge } from './DeadlineBadge'
 
 interface TaskCardProps {
   task: Task
@@ -87,6 +88,7 @@ export function TaskCard({
             {days != null && (
               <span className="text-xs text-slate-400">· {days} д. в работе</span>
             )}
+            <DeadlineBadge dueDate={task.due_date} zone={task.deadline_zone} />
           </div>
           {inReview && task.rejection_comment && (
             <p className="mt-2 text-sm text-red-600">{task.rejection_comment}</p>

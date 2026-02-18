@@ -191,6 +191,7 @@ export function AdminUsersPage() {
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Роль</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Лига</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">MPW</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">QS</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Статус</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Действия</th>
               </tr>
@@ -213,6 +214,22 @@ export function AdminUsersPage() {
                   </td>
                   <td className="px-4 py-3"><LeagueBadge league={u.league} /></td>
                   <td className="px-4 py-3">{u.mpw}</td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={cn(
+                        'inline-flex rounded-full px-2 py-0.5 text-xs font-medium',
+                        u.quality_score >= 90
+                          ? 'bg-emerald-50 text-emerald-700'
+                          : u.quality_score >= 70
+                          ? 'bg-amber-50 text-amber-700'
+                          : u.quality_score >= 50
+                          ? 'bg-orange-50 text-orange-700'
+                          : 'bg-red-50 text-red-700'
+                      )}
+                    >
+                      {Number(u.quality_score).toFixed(0)}%
+                    </span>
+                  </td>
                   <td className="px-4 py-3">{u.is_active ? 'Активен' : 'Неактивен'}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">

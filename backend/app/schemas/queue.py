@@ -20,6 +20,8 @@ class QueueTaskResponse(BaseModel):
     min_league: str
     created_at: datetime
     estimator_name: str | None
+    due_date: datetime | None = None
+    deadline_zone: str | None = None
     can_pull: bool
     locked: bool
     lock_reason: str | None

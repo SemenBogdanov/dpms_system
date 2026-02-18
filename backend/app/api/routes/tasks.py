@@ -9,7 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, get_current_user, require_role
 from app.models.user import User
 from app.models.task import Task, TaskStatus
-from app.schemas.task import TaskCreate, TaskRead, TaskUpdate, TaskExportRow, TasksExport
+from app.schemas.task import (
+    TaskCreate,
+    TaskRead,
+    TaskUpdate,
+    TaskExportRow,
+    TasksExport,
+    SetDueDateRequest,
+    CreateBugfixRequest,
+)
+from app.services.queue import create_bugfix
 
 router = APIRouter()
 
@@ -165,5 +174,45 @@ async def update_task(
     if body.priority is not None:
         task.priority = body.priority
     await db.flush()
+    await db.refresh(task)
+    return task
+
+
+@router.patch("/{task_id}/due-date", response_model=TaskRead)
+async def set_due_date(
+    task_id: UUID,
+    body: SetDueDateRequest,
+    user: User = Depends(require_role("admin", "teamlead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Ручная установка дедлайна задачи (только admin/teamlead).
+    """
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    task.due_date = body.due_date
+    await db.flush()
+    await db.refresh(task)
+    return task
+
+
+@router.post("/bugfix", response_model=TaskRead)
+async def create_bugfix_task(
+    body: CreateBugfixRequest,
+    user: User = Depends(require_role("admin", "teamlead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Создать гарантийный баг-фикс по завершённой задаче (admin/teamlead).
+    """
+    task = await create_bugfix(
+        db,
+        reporter_id=user.id,
+        parent_task_id=body.parent_task_id,
+        title=body.title,
+        description=body.description or "",
+    )
     await db.refresh(task)
     return task

@@ -10,6 +10,7 @@ import { LeagueBadge } from '@/components/LeagueBadge'
 import { QBadge } from '@/components/QBadge'
 import { SkeletonTable } from '@/components/Skeleton'
 import { ProactiveBlock } from '@/components/ProactiveBlock'
+import { DeadlineBadge } from '@/components/DeadlineBadge'
 
 const complexityStyles: Record<string, string> = {
   S: 'bg-slate-100 text-slate-700',
@@ -128,6 +129,7 @@ export function QueuePage() {
                   Сложность
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Q</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Срок</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
                   Приоритет
                 </th>
@@ -143,13 +145,30 @@ export function QueuePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {tasks.map((t) => (
+              {[...tasks]
+                .slice()
+                .sort((a, b) => {
+                  const aBug = a.task_type === 'bugfix'
+                  const bBug = b.task_type === 'bugfix'
+                  if (aBug !== bBug) return aBug ? -1 : 1
+                  if (a.priority === b.priority) {
+                    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+                  }
+                  const order: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }
+                  return (order[a.priority] ?? 99) - (order[b.priority] ?? 99)
+                })
+                .map((t) => (
                 <tr
                   key={t.id}
                   className={t.locked ? 'bg-slate-50 opacity-75' : ''}
                 >
                   <td className="px-4 py-3 text-sm text-slate-900">
                     <span>{t.title}</span>
+                    {t.task_type === 'bugfix' && (
+                      <span className="ml-2 inline rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
+                        🐛 Гарантийный
+                      </span>
+                    )}
                     {t.is_proactive && (
                       <span className="ml-2 inline rounded bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800">
                         🔄 Проактивная
@@ -168,6 +187,9 @@ export function QueuePage() {
                   </td>
                   <td className="px-4 py-3">
                     <QBadge q={t.estimated_q} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <DeadlineBadge dueDate={t.due_date} zone={t.deadline_zone} />
                   </td>
                   <td className="px-4 py-3">
                     <PriorityBadge priority={t.priority as 'low' | 'medium' | 'high' | 'critical'} />

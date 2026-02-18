@@ -1,14 +1,17 @@
 """Очередь: список с can_pull/locked, pull (FOR UPDATE), submit, validate."""
 from datetime import datetime, timezone
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.task import Task, TaskStatus, TaskType
+from app.models.task import Task, TaskStatus, TaskType, TaskPriority
 from app.models.user import User, League, UserRole
+from app.models.transaction import QTransaction, WalletType
 from app.schemas.queue import QueueTaskResponse
+from app.schemas.task import compute_deadline_zone
 from app.services.wallet import credit_q
 
 _LEAGUE_ORDER = {League.C: 0, League.B: 1, League.A: 2}
@@ -90,6 +93,8 @@ async def get_available_tasks(
                 min_league=task.min_league.value,
                 created_at=task.created_at,
                 estimator_name=estimator_name,
+                due_date=task.due_date,
+                deadline_zone=compute_deadline_zone(task),
                 is_proactive=is_proactive,
                 can_pull=can_pull,
                 locked=locked,
@@ -129,6 +134,28 @@ async def pull_task(db: AsyncSession, user_id: UUID, task_id: UUID) -> Task:
     task.status = TaskStatus.in_progress
     task.assignee_id = user_id
     task.started_at = datetime.now(timezone.utc)
+
+    # Автоматический расчёт SLA, если дедлайн ещё не установлен тимлидом
+    if task.due_date is None:
+        league_value = user.league.value if hasattr(user.league, "value") else str(user.league)
+        sla_multiplier = {"C": 3.0, "B": 2.0, "A": 1.5}.get(league_value, 3.0)
+        try:
+            est_q = float(task.estimated_q)
+        except Exception:
+            est_q = 0.0
+        sla_hours = int(float(est_q) * sla_multiplier)
+        task.sla_hours = sla_hours
+
+        # Преобразование рабочих часов в календарное время (упрощённо: 1 рабочий день = 8 часов)
+        from datetime import timedelta
+
+        work_days_needed = max(1, sla_hours // 8)
+        remaining_hours = sla_hours % 8
+        task.due_date = datetime.now(timezone.utc) + timedelta(
+            days=work_days_needed,
+            hours=remaining_hours,
+        )
+
     await db.flush()
     return task
 
@@ -193,9 +220,40 @@ async def validate_task(
         task.validated_at = None
         task.completed_at = None
         task.rejection_comment = comment.strip()
+
+        # Quality Score: штраф за возврат
+        if task.assignee_id:
+            assignee_result = await db.execute(select(User).where(User.id == task.assignee_id))
+            assignee = assignee_result.scalar_one_or_none()
+            if assignee:
+                old_score = float(getattr(assignee, "quality_score", 100.0))
+                new_score = max(0.0, round(old_score - 5.0, 1))
+                assignee.quality_score = new_score
+
+                # Уведомление тимлидов при падении ниже 50
+                if new_score < 50.0 <= old_score:
+                    from app.services.notifications import create_notification
+
+                    teamleads_result = await db.execute(
+                        select(User).where(
+                            User.role.in_([UserRole.teamlead, UserRole.admin]),
+                            User.is_active.is_(True),
+                        )
+                    )
+                    for tl in teamleads_result.scalars().all():
+                        await create_notification(
+                            db,
+                            tl.id,
+                            "quality_alert",
+                            "⚠️ Низкий Quality Score",
+                            message=f"{assignee.full_name}: Quality Score упал до {new_score:.0f}%",
+                            link=f"/profile?user_id={assignee.id}",
+                        )
+
         await db.flush()
         if task.assignee_id:
             from app.services.notifications import create_notification
+
             await create_notification(
                 db,
                 task.assignee_id,
@@ -206,19 +264,53 @@ async def validate_task(
             )
         return task
 
+    # Принятие задачи
     task.status = TaskStatus.done
     task.validator_id = validator_id
     task.validated_at = datetime.now(timezone.utc)
     task.rejection_comment = None
+
+    assignee = None
     if task.assignee_id:
-        await credit_q(
-            db,
-            task.assignee_id,
-            task.estimated_q,
-            reason=f"Задача #{task.id} принята",
-            task_id=task.id,
-        )
+        assignee_result = await db.execute(select(User).where(User.id == task.assignee_id))
+        assignee = assignee_result.scalar_one_or_none()
+
+    if task.assignee_id:
+        # Начисление Q
+        if task.task_type == TaskType.bugfix and task.parent_task_id:
+            # Гарантийный баг-фикс
+            est_q = Decimal(str(task.estimated_q))
+            if est_q > 0 and assignee:
+                # Сиротский баг: бонус в karma-кошелёк
+                assignee.wallet_karma += est_q
+                db.add(
+                    QTransaction(
+                        user_id=assignee.id,
+                        amount=est_q,
+                        wallet_type=WalletType.karma,
+                        reason=f"Гарантийный баг-фикс #{task.id}",
+                        task_id=task.id,
+                    )
+                )
+            # Если est_q == 0 — автор чинит бесплатно, без начисления Q
+        else:
+            # Обычная задача: начисление Q по стандартным правилам
+            await credit_q(
+                db,
+                task.assignee_id,
+                task.estimated_q,
+                reason=f"Задача #{task.id} принята",
+                task_id=task.id,
+            )
+
+        # Quality Score: бонус за успешную валидацию
+        if assignee:
+            old_score = float(getattr(assignee, "quality_score", 100.0))
+            new_score = min(100.0, round(old_score + 1.0, 1))
+            assignee.quality_score = new_score
+
         from app.services.notifications import create_notification
+
         await create_notification(
             db,
             task.assignee_id,
@@ -227,5 +319,155 @@ async def validate_task(
             message=f"«{task.title}» валидирована. +{float(task.estimated_q)} Q",
             link="/my-tasks",
         )
+
     await db.flush()
     return task
+
+
+async def create_bugfix(
+    db: AsyncSession,
+    reporter_id: UUID,
+    parent_task_id: UUID,
+    title: str,
+    description: str,
+) -> Task:
+    """
+    Создать гарантийный баг-фикс.
+
+    1. Найти parent_task (должна быть status=done)
+    2. Найти автора (parent_task.assignee_id)
+    3. Если автор is_active=True:
+       - Создать задачу bugfix, назначить на автора
+       - status = in_progress, estimated_q = 0, priority = critical
+       - Уведомить автора
+    4. Если автор is_active=False или отсутствует:
+       - Создать задачу bugfix, assignee_id = None
+       - status = in_queue, estimated_q = parent_task.estimated_q * 0.5
+       - Уведомить тимлидов
+    """
+    parent_result = await db.execute(select(Task).where(Task.id == parent_task_id))
+    parent_task = parent_result.scalar_one_or_none()
+    if not parent_task:
+        raise HTTPException(status_code=404, detail="Оригинальная задача не найдена")
+    if parent_task.status != TaskStatus.done:
+        raise HTTPException(
+            status_code=400,
+            detail="Баг-фикс можно создать только по завершённой задаче",
+        )
+
+    assignee: User | None = None
+    if parent_task.assignee_id:
+        assignee_result = await db.execute(select(User).where(User.id == parent_task.assignee_id))
+        assignee = assignee_result.scalar_one_or_none()
+
+    from app.services.notifications import create_notification
+
+    if assignee and assignee.is_active:
+        # Автор доступен: 0Q, сразу в работу
+        bugfix_task = Task(
+            title=title,
+            description=description,
+            task_type=TaskType.bugfix,
+            complexity=parent_task.complexity,
+            estimated_q=Decimal("0"),
+            priority=TaskPriority.critical,
+            status=TaskStatus.in_progress,
+            min_league=parent_task.min_league,
+            assignee_id=assignee.id,
+            estimator_id=reporter_id,
+            validator_id=None,
+            parent_task_id=parent_task.id,
+        )
+        db.add(bugfix_task)
+        await db.flush()
+        await db.refresh(bugfix_task)
+
+        await create_notification(
+            db,
+            assignee.id,
+            "bugfix_assigned",
+            "Гарантийный баг-фикс",
+            message=f"Гарантийный баг-фикс: «{title}» по задаче «{parent_task.title}»",
+            link="/my-tasks",
+        )
+        return bugfix_task
+
+    # Автор недоступен: задача в общую очередь, karma-бонус 50%
+    estimated_q = Decimal(str(parent_task.estimated_q)) * Decimal("0.5")
+    bugfix_task = Task(
+        title=title,
+        description=description,
+        task_type=TaskType.bugfix,
+        complexity=parent_task.complexity,
+        estimated_q=estimated_q,
+        priority=TaskPriority.critical,
+        status=TaskStatus.in_queue,
+        min_league=parent_task.min_league,
+        assignee_id=None,
+        estimator_id=reporter_id,
+        validator_id=None,
+        parent_task_id=parent_task.id,
+    )
+    db.add(bugfix_task)
+    await db.flush()
+    await db.refresh(bugfix_task)
+
+    teamleads_result = await db.execute(
+        select(User).where(
+            User.role.in_([UserRole.teamlead, UserRole.admin]),
+            User.is_active.is_(True),
+        )
+    )
+    for tl in teamleads_result.scalars().all():
+        await create_notification(
+            db,
+            tl.id,
+            "bugfix_orphan",
+            "Гарантийный баг: автор недоступен",
+            message=f"По задаче «{parent_task.title}» создан гарантийный баг-фикс и отправлен в очередь.",
+            link="/queue",
+        )
+
+    return bugfix_task
+
+
+async def check_overdue_tasks(db: AsyncSession) -> None:
+    """
+    Пометить просроченные задачи и уведомить тимлидов.
+    Вызывается периодически (например, при запросах дашборда).
+    """
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(Task).where(
+            Task.due_date.is_not(None),
+            Task.due_date < now,
+            Task.is_overdue.is_(False),
+            Task.status.in_([TaskStatus.in_progress, TaskStatus.review]),
+        )
+    )
+    overdue_tasks = list(result.scalars().all())
+    if not overdue_tasks:
+        return
+
+    from app.services.notifications import create_notification
+
+    teamleads_result = await db.execute(
+        select(User).where(
+            User.role.in_([UserRole.teamlead, UserRole.admin]),
+            User.is_active.is_(True),
+        )
+    )
+    teamleads = list(teamleads_result.scalars().all())
+
+    for task in overdue_tasks:
+        task.is_overdue = True
+        assignee_name = task.assignee.full_name if getattr(task, "assignee", None) else "—"
+        for tl in teamleads:
+            await create_notification(
+                db,
+                tl.id,
+                "task_overdue",
+                "⏰ Задача просрочена",
+                message=f"«{task.title}» просрочена у {assignee_name}",
+                link="/queue",
+            )

@@ -112,6 +112,20 @@ async def get_team_summary(db: AsyncSession) -> TeamSummary:
         if user_id is not None:
             in_progress_map[str(user_id)] = float(q_sum)
 
+    # Наличие просроченных задач по каждому пользователю
+    overdue_result = await db.execute(
+        select(Task.assignee_id, func.count(Task.id))
+        .where(
+            Task.is_overdue.is_(True),
+            Task.assignee_id.is_not(None),
+        )
+        .group_by(Task.assignee_id)
+    )
+    overdue_map: dict[str, int] = {}
+    for user_id, count in overdue_result.all():
+        if user_id is not None:
+            overdue_map[str(user_id)] = int(count or 0)
+
     # Расчёт ожидаемого процента и статуса риска
     now = datetime.now(timezone.utc)
     # Для упрощения считаем, что в месяце 22 рабочих дня
@@ -129,6 +143,7 @@ async def get_team_summary(db: AsyncSession) -> TeamSummary:
             by_league[key] = []
 
         in_progress_q = in_progress_map.get(str(user.id), 0.0)
+        has_overdue = overdue_map.get(str(user.id), 0) > 0
         # is_at_risk: percent < expected_percent * 0.6
         is_at_risk = percent < expected_percent * 0.6
 
@@ -143,6 +158,8 @@ async def get_team_summary(db: AsyncSession) -> TeamSummary:
                 karma=round(float(user.wallet_karma), 1),
                 in_progress_q=round(in_progress_q, 1),
                 is_at_risk=is_at_risk,
+                quality_score=float(getattr(user, "quality_score", 100.0)),
+                has_overdue=has_overdue,
             )
         )
 

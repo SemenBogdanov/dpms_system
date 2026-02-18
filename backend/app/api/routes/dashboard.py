@@ -14,6 +14,7 @@ from app.services.analytics import (
     get_burndown_data,
 )
 from app.services.calibration import get_calibration_report, get_teamlead_accuracy
+from app.services.queue import check_overdue_tasks
 
 router = APIRouter()
 
@@ -23,6 +24,7 @@ async def capacity(
     db: AsyncSession = Depends(get_db),
 ):
     """Метрика «Стакан»: загрузка vs ёмкость команды."""
+    await check_overdue_tasks(db)
     return await get_capacity_gauge(db)
 
 
@@ -31,6 +33,7 @@ async def team_summary(
     db: AsyncSession = Depends(get_db),
 ):
     """Сводка по команде (по лигам, earned vs target, in_progress_q, is_at_risk)."""
+    await check_overdue_tasks(db)
     return await get_team_summary(db)
 
 
@@ -39,6 +42,7 @@ async def plan_fact(
     db: AsyncSession = Depends(get_db),
 ):
     """План/факт по сотрудникам (то же что team-summary)."""
+    await check_overdue_tasks(db)
     return await get_team_summary(db)
 
 
@@ -47,6 +51,7 @@ async def period_stats(
     db: AsyncSession = Depends(get_db),
 ):
     """Статистика текущего месяца для дашборда руководителя."""
+    await check_overdue_tasks(db)
     return await get_period_stats(db)
 
 
@@ -55,6 +60,7 @@ async def burndown(
     db: AsyncSession = Depends(get_db),
 ):
     """Данные для графика burn-down текущего месяца."""
+    await check_overdue_tasks(db)
     return await get_burndown_data(db)
 
 

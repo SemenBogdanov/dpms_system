@@ -44,6 +44,7 @@ class UserRead(UserBase):
     id: UUID
     wallet_main: float = 0
     wallet_karma: float = 0
+    quality_score: float = 100.0
     created_at: datetime
     updated_at: datetime
 

@@ -6,7 +6,7 @@ export type League = 'C' | 'B' | 'A'
 export type UserRole = 'executor' | 'teamlead' | 'admin'
 export type CatalogCategory = 'widget' | 'etl' | 'api' | 'docs' | 'proactive'
 export type Complexity = 'S' | 'M' | 'L' | 'XL'
-export type TaskType = 'widget' | 'etl' | 'api' | 'docs'
+export type TaskType = 'widget' | 'etl' | 'api' | 'docs' | 'proactive' | 'bugfix'
 export type TaskStatus =
   | 'new'
   | 'estimated'
@@ -27,6 +27,7 @@ export interface User {
   wip_limit: number
   wallet_main: number
   wallet_karma: number
+  quality_score: number
   is_active: boolean
   created_at: string
   updated_at: string
@@ -63,6 +64,12 @@ export interface Task {
   started_at: string | null
   completed_at: string | null
   validated_at: string | null
+   /** SLA / дедлайны */
+  due_date: string | null
+  sla_hours: number | null
+  is_overdue: boolean
+  parent_task_id: string | null
+  deadline_zone: 'green' | 'yellow' | 'red' | null
   created_at: string
   updated_at: string
 }
@@ -79,6 +86,8 @@ export interface QueueTaskResponse {
   min_league: string
   created_at: string
   estimator_name: string | null
+  due_date: string | null
+  deadline_zone: 'green' | 'yellow' | 'red' | null
   can_pull: boolean
   locked: boolean
   lock_reason: string | null
@@ -109,6 +118,8 @@ export interface TeamMemberSummary {
   karma: number
   in_progress_q: number
   is_at_risk: boolean
+  quality_score: number
+  has_overdue: boolean
 }
 
 export interface TeamSummary {

@@ -14,6 +14,7 @@ from app.models.transaction import QTransaction, WalletType
 from app.models.notification import Notification
 from app.services.wallet import credit_q
 from app.services.notifications import create_notification
+from app.services.queue import create_bugfix
 from app.models.catalog import CatalogItem, CatalogCategory, Complexity
 from app.models.task import Task, TaskStatus, TaskType, TaskPriority
 from app.models.shop import ShopItem
@@ -21,12 +22,12 @@ from app.models.shop import ShopItem
 
 # --- Пользователи (7 штук) ---
 USERS = [
-    {"full_name": "Семёнова Ксения", "email": "semenova@ac.gov.ru", "league": League.A, "role": UserRole.teamlead, "mpw": 120},
-    {"full_name": "Орловская Валентина", "email": "orlovskaya@ac.gov.ru", "league": League.B, "role": UserRole.executor, "mpw": 80},
-    {"full_name": "Завьялова Екатерина", "email": "zavyalova@ac.gov.ru", "league": League.B, "role": UserRole.executor, "mpw": 80},
-    {"full_name": "Скачков Егор", "email": "petrov@ac.gov.ru", "league": League.C, "role": UserRole.executor, "mpw": 40},
-    {"full_name": "Богданов Семён", "email": "bogdanov@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0},
-    {"full_name": "Админ Системы", "email": "admin@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0},
+    {"full_name": "Семёнова Ксения", "email": "semenova@ac.gov.ru", "league": League.A, "role": UserRole.teamlead, "mpw": 120, "quality_score": 95.0},
+    {"full_name": "Орловская Валентина", "email": "orlovskaya@ac.gov.ru", "league": League.B, "role": UserRole.executor, "mpw": 80, "quality_score": 88.0},
+    {"full_name": "Завьялова Екатерина", "email": "zavyalova@ac.gov.ru", "league": League.B, "role": UserRole.executor, "mpw": 80, "quality_score": 92.0},
+    {"full_name": "Скачков Егор", "email": "petrov@ac.gov.ru", "league": League.C, "role": UserRole.executor, "mpw": 40, "quality_score": 72.0},
+    {"full_name": "Богданов Семён", "email": "bogdanov@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0, "quality_score": 100.0},
+    {"full_name": "Админ Системы", "email": "admin@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0, "quality_score": 100.0},
 ]
 
 # --- Каталог операций ---
@@ -38,7 +39,7 @@ CATALOG = [
     ("widget", "KPI-карточка (x1)", "M", Decimal("1.0"), "KPI-карточка", League.C), # Закладываем 1 шт. виджета KPI-карточки по 1 час. = 60 мин.
     ("widget", "Домик (x3)", "S", Decimal("0.15"), "Домик", League.C), # Закладываем 3 шт. виджета домик с общим временем 10 мин. = 10 мин.
     ("widget", "Кнопка (x2)", "S", Decimal("0.15"), "Кнопка", League.C), # Закладываем 2 шт. виджета кнопки с общим временем 5 мин. = 10 мин.
-    ("widget", "Календарь (x1)", "M", Decimal("0.3"), "Календарь", League.C), # Закладываем 1 шт. виджета календаря по 30 мин. = 30 мин.
+    ("widget", "Календарь (x1)", "M", Decimal("0.3"), "Календарь", League.C),  # Закладываем 1 шт. виджета календаря по 30 мин. = 30 мин.
     ("widget", "Фильтр (x5)", "L", Decimal("2.0"), "Фильтр или выбор даты", League.C), # Закладываем 5 шт. виджета фильтра по 24 минут каждый = 120 минут.
     ("widget", "Кнопочный фильтр (x4)", "M", Decimal("1.0"), "Кнопочный фильтр", League.C), # Закладываем 4 шт. виджета кнопочного фильтра по 10 минут каждый = 40 минут.
     ("widget", "Комбинированная диаграмма", "XL", Decimal("2.5"), "Комбинированная диаграмма", League.B), # Закладываем 1 шт. виджета комбинированной диаграммы по 150 минут. = 150 минут.
@@ -83,6 +84,7 @@ PROACTIVE_CATALOG = [
     ("proactive", "Исследование: оценка нового инструмента", "L", Decimal("8.0"), "Оценка инструмента", League.B),
     ("proactive", "Техдолг: покрытие тестами", "S", Decimal("3.0"), "Покрытие тестами", League.C),
     ("proactive", "Техдолг: улучшение мониторинга", "M", Decimal("5.0"), "Улучшение мониторинга", League.B),
+    ("proactive", "Предварительный анализ и декомпозиция", "M", Decimal("4.0"), "Анализ сложной задачи, декомпозиция на типовые операции", League.C),
 ]
 
 
@@ -229,6 +231,7 @@ async def ensure_tasks(
             started_at=started_at if t["status"] in (TaskStatus.in_progress, TaskStatus.review, TaskStatus.done) and t["assignee"] else None,
             completed_at=completed_at if t["status"] in (TaskStatus.review, TaskStatus.done) and t["assignee"] else None,
             validated_at=validated_at if t["status"] == TaskStatus.done and t["validator"] else None,
+            due_date=completed_at + timedelta(hours=4) if t["status"] in (TaskStatus.in_progress, TaskStatus.review) and t["assignee"] else None,
         )
         session.add(task)
         await session.flush()
@@ -260,6 +263,21 @@ async def ensure_tasks(
             )
             session.add(task)
             await session.flush()
+
+    # Демо гарантийного баг-фикса по первой завершённой задаче
+    # Берём первую done-задачу Орловской, если она есть
+    first_done = await session.execute(
+        select(Task).where(Task.status == TaskStatus.done).order_by(Task.created_at.asc())
+    )
+    parent = first_done.scalars().first()
+    if parent:
+        await create_bugfix(
+            session,
+            reporter_id=admin.id,
+            parent_task_id=parent.id,
+            title="Баг: некорректная фильтрация в дашборде",
+            description="При выборе фильтра по дате данные не обновляются",
+        )
 
 
 async def ensure_burndown_transactions(session: AsyncSession, users_by_email: dict[str, User]) -> None:

@@ -31,6 +31,8 @@ class TeamMemberSummary(BaseModel):
     karma: float
     in_progress_q: float
     is_at_risk: bool
+    quality_score: float
+    has_overdue: bool
 
 
 class TeamSummary(BaseModel):

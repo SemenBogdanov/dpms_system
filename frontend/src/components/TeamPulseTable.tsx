@@ -27,6 +27,7 @@ export function TeamPulseTable({ members }: TeamPulseTableProps) {
             <th className="px-4 py-3 text-left font-medium text-slate-700">%</th>
             <th className="px-4 py-3 text-left font-medium text-slate-700">Карма</th>
             <th className="px-4 py-3 text-left font-medium text-slate-700">В работе (Q)</th>
+            <th className="px-4 py-3 text-left font-medium text-slate-700">QS</th>
             <th className="px-4 py-3 text-left font-medium text-slate-700">Статус</th>
           </tr>
         </thead>
@@ -51,9 +52,25 @@ export function TeamPulseTable({ members }: TeamPulseTableProps) {
               </td>
               <td className="px-4 py-2 text-slate-600">{Number(m.karma).toFixed(1)}</td>
               <td className="px-4 py-2 text-slate-600">{Number(m.in_progress_q).toFixed(1)}</td>
+              <td className="px-4 py-2 text-slate-600">
+                <span
+                  className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                    m.quality_score >= 90
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : m.quality_score >= 70
+                      ? 'bg-amber-50 text-amber-700'
+                      : m.quality_score >= 50
+                      ? 'bg-orange-50 text-orange-700'
+                      : 'bg-red-50 text-red-700'
+                  }`}
+                >
+                  {Number(m.quality_score).toFixed(0)}%
+                </span>
+              </td>
               <td className="px-4 py-2">
-                {m.is_at_risk && <span title="Отстаёт от темпа">⚠️</span>}
-                {!m.is_at_risk && m.percent >= 100 && <span>✅</span>}
+                {m.has_overdue && <span title="Есть просроченные задачи">🔴</span>}
+                {!m.has_overdue && m.is_at_risk && <span title="Отстаёт от темпа">⚠️</span>}
+                {!m.has_overdue && !m.is_at_risk && m.percent >= 100 && <span>✅</span>}
               </td>
             </tr>
           ))}

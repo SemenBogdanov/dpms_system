@@ -1,5 +1,5 @@
 """Схемы для задач."""
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -48,6 +48,11 @@ class TaskRead(TaskBase):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     validated_at: datetime | None = None
+    due_date: datetime | None = None
+    sla_hours: int | None = None
+    is_overdue: bool = False
+    parent_task_id: UUID | None = None
+    deadline_zone: str | None = None  # "green" | "yellow" | "red" | None
     created_at: datetime
     updated_at: datetime
 
@@ -74,3 +79,40 @@ class TasksExport(BaseModel):
     rows: list[TaskExportRow]
     total_tasks: int
     total_q: float
+
+
+class SetDueDateRequest(BaseModel):
+    """Запрос на установку дедлайна задачи (доступен тимлиду/админу)."""
+
+    due_date: datetime
+
+
+class CreateBugfixRequest(BaseModel):
+    """Создание гарантийного баг-фикса по принятой задаче."""
+
+    parent_task_id: UUID
+    title: str = Field(..., max_length=500)
+    description: str | None = None
+
+
+def compute_deadline_zone(task) -> str | None:
+    """
+    Вычислить зону дедлайна:
+    - None: нет дедлайна
+    - red: просрочено
+    - yellow: осталось <= 50% времени (между started_at и due_date)
+    - green: остальное
+    """
+    if getattr(task, "due_date", None) is None:
+        return None
+    due = task.due_date
+    now = datetime.now(timezone.utc)
+    if now > due:
+        return "red"
+    started_at = getattr(task, "started_at", None)
+    if started_at:
+        total = (due - started_at).total_seconds()
+        remaining = (due - now).total_seconds()
+        if total > 0 and remaining / total <= 0.5:
+            return "yellow"
+    return "green"
