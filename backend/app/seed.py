@@ -4,8 +4,8 @@ import random
 from decimal import Decimal
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select  # type: ignore[import]
+from sqlalchemy.ext.asyncio import AsyncSession  # type: ignore[import]
 
 from app.database import AsyncSessionLocal
 from app.core.security import get_password_hash
