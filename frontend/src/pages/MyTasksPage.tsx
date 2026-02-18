@@ -439,6 +439,51 @@ export function MyTasksPage() {
         </div>
       )}
 
+      {/* Модалка: Установить дедлайн */}
+      {deadlineTask && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setDeadlineTask(null)}
+          onKeyDown={(e) => e.key === 'Escape' && setDeadlineTask(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-lg bg-white p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-slate-900">📅 Установить дедлайн</h3>
+            <p className="mt-1 text-sm text-slate-500">{deadlineTask.title}</p>
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-slate-700">Дата и время</label>
+              <input
+                type="datetime-local"
+                value={deadlineValue}
+                onChange={(e) => setDeadlineValue(e.target.value)}
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDeadlineTask(null)}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveDeadline}
+                disabled={deadlineBusy || !deadlineValue}
+                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                {deadlineBusy ? '...' : 'Сохранить'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <BugfixModal
         open={Boolean(bugfixParent)}
         parentTask={bugfixParent}
