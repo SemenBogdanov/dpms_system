@@ -19,28 +19,39 @@ from app.models.task import Task, TaskStatus, TaskType, TaskPriority
 from app.models.shop import ShopItem
 
 
-# --- Пользователи (5 штук) ---
+# --- Пользователи (7 штук) ---
 USERS = [
-    {"full_name": "Семёнова Анна", "email": "semenova@example.com", "league": League.A, "role": UserRole.teamlead, "mpw": 120},
-    {"full_name": "Орловская Мария", "email": "orlovskaya@example.com", "league": League.B, "role": UserRole.executor, "mpw": 80},
-    {"full_name": "Завьялова Екатерина", "email": "zavyalova@example.com", "league": League.B, "role": UserRole.executor, "mpw": 80},
-    {"full_name": "Петров Иван", "email": "petrov@example.com", "league": League.C, "role": UserRole.executor, "mpw": 40},
-    {"full_name": "Админ Системы", "email": "admin@example.com", "league": League.A, "role": UserRole.admin, "mpw": 0},
+    {"full_name": "Семёнова Ксения", "email": "semenova@ac.gov.ru", "league": League.A, "role": UserRole.teamlead, "mpw": 120},
+    {"full_name": "Орловская Валентина", "email": "orlovskaya@ac.gov.ru", "league": League.B, "role": UserRole.executor, "mpw": 80},
+    {"full_name": "Завьялова Екатерина", "email": "zavyalova@ac.gov.ru", "league": League.B, "role": UserRole.executor, "mpw": 80},
+    {"full_name": "Скачков Егор", "email": "petrov@ac.gov.ru", "league": League.C, "role": UserRole.executor, "mpw": 40},
+    {"full_name": "Богданов Семён", "email": "bogdanov@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0},
+    {"full_name": "Админ Системы", "email": "admin@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0},
 ]
 
 # --- Каталог операций ---
 CATALOG = [
     # Виджеты
-    ("widget", "Текст / Индикатор", "S", Decimal("1.0"), "Текст или индикатор", League.C),
-    ("widget", "Простая таблица", "S", Decimal("2.0"), "Простая таблица", League.C),
-    ("widget", "KPI-карточка", "S", Decimal("1.5"), "KPI-карточка", League.C),
-    ("widget", "Line Chart", "M", Decimal("3.0"), "Линейный график", League.B),
-    ("widget", "Bar Chart", "M", Decimal("3.0"), "Столбчатая диаграмма", League.B),
-    ("widget", "Pie Chart", "M", Decimal("2.5"), "Круговая диаграмма", League.B),
-    ("widget", "Filter / Date Picker", "S", Decimal("1.0"), "Фильтр или выбор даты", League.C),
-    ("widget", "Geo Map", "L", Decimal("6.0"), "Геокарта", League.A),
-    ("widget", "Pivot Table", "L", Decimal("5.0"), "Сводная таблица", League.B),
-    ("widget", "Custom JS Widget", "XL", Decimal("10.0"), "Кастомный JS-виджет", League.A),
+    ("widget", "Разметка (x10)", "M", Decimal("0.5"), "Разметка", League.C), # Закладываем 10 шт. виджета разметки по 3 мин. = 30 мин.
+    ("widget", "Event-контейнер (x2)", "M", Decimal("0.25"), "Ивент контейнер", League.C), # Закладываем 2 шт. виджета разметки по 7.5 мин. = 15 мин.
+    ("widget", "Текст / Индикатор (x10)", "S", Decimal("0.75"), "Текст или индикатор", League.C), # Закладываем 10 шт. виджета текста или индикатора по 4.5 мин. = 45 мин.
+    ("widget", "KPI-карточка (x1)", "M", Decimal("1.0"), "KPI-карточка", League.C), # Закладываем 1 шт. виджета KPI-карточки по 1 час. = 60 мин.
+    ("widget", "Домик (x3)", "S", Decimal("0.15"), "Домик", League.C), # Закладываем 3 шт. виджета домик с общим временем 10 мин. = 10 мин.
+    ("widget", "Кнопка (x2)", "S", Decimal("0.15"), "Кнопка", League.C), # Закладываем 2 шт. виджета кнопки с общим временем 5 мин. = 10 мин.
+    ("widget", "Календарь (x1)", "M", Decimal("0.3"), "Календарь", League.C), # Закладываем 1 шт. виджета календаря по 30 мин. = 30 мин.
+    ("widget", "Фильтр (x5)", "L", Decimal("2.0"), "Фильтр или выбор даты", League.C), # Закладываем 5 шт. виджета фильтра по 24 минут каждый = 120 минут.
+    ("widget", "Кнопочный фильтр (x4)", "M", Decimal("1.0"), "Кнопочный фильтр", League.C), # Закладываем 4 шт. виджета кнопочного фильтра по 10 минут каждый = 40 минут.
+    ("widget", "Комбинированная диаграмма", "XL", Decimal("2.5"), "Комбинированная диаграмма", League.B), # Закладываем 1 шт. виджета комбинированной диаграммы по 150 минут. = 150 минут.
+    ("widget", "Line Chart", "M", Decimal("1.0"), "Линейный график", League.B), # Закладываем одну штуку виджета линейного графика стоимостью 1 час. = 60 минут.
+    ("widget", "Bar Chart", "M", Decimal("1.0"), "Столбчатая диаграмма", League.B), # Закладываем одну штуку виджета столбчатой диаграммы стоимостью 1 час. = 60 минут.
+    ("widget", "Pie Chart", "M", Decimal("1.0"), "Круговая диаграмма", League.B), # Закладываем одну штуку виджета круговой диаграммы стоимостью 1 час. = 60 минут.
+    ("widget", "Простая таблица", "M", Decimal("2.0"), "Простая таблица", League.C), # Закладываем одну штуку виджета простой таблицы стоимостью 2 часа. = 120 минут.
+    ("widget", "Geo Map", "L", Decimal("3.0"), "Геокарта", League.A), # Закладываем одну штуку геокарты стоимостью 3 часа. = 180 минут.
+    ("widget", "Pivot Table", "L", Decimal("2.0"), "Сводная таблица", League.A), # Закладываем одну штуку сводной таблицы, стоимостью в два часа. = 120 минут.
+    ("widget", "Custom JS Widget", "XL", Decimal("8.0"), "Кастомный JS-виджет", League.A), # Закладываем одну штуку виджета стоимостью 8 часов. = 480 минут.
+    ("widget", "Отладка ошибок", "S", Decimal("0.5"), "Отладка ошибок на сформированном экране S-сложности", League.C), # Закладываем 1 шт. теста отладки ошибок на сформированном экране 30 минут. = 30 минут.
+    ("widget", "Отладка ошибок", "M", Decimal("1.0"), "Отладка ошибок на сформированном экране M-сложности", League.C), # Закладываем 1 шт. теста отладки ошибок на сформированном экране 60 минут. = 60 минут.
+    ("widget", "Отладка ошибок", "L", Decimal("2.0"), "Отладка ошибок на сформированном экране L-сложности", League.C), # Закладываем 1 шт. теста отладки ошибок на сформированном экране 120 минут. = 120 минут.
     # ETL
     ("etl", "Простой поток (Source → Target)", "S", Decimal("3.0"), "Простой ETL-поток", League.C),
     ("etl", "DDL + Нейминг", "S", Decimal("1.5"), "DDL и нейминг", League.C),
@@ -77,7 +88,7 @@ PROACTIVE_CATALOG = [
 
 async def ensure_users(session: AsyncSession) -> dict[str, User]:
     """Создать пользователей, если ещё нет. Возвращает email -> User."""
-    result = await session.execute(select(User).where(User.email == "admin@example.com"))
+    result = await session.execute(select(User).where(User.email == "admin@ac.gov.ru"))
     if result.scalar_one_or_none():
         result = await session.execute(select(User))
         users_list = result.scalars().all()
@@ -151,11 +162,11 @@ async def ensure_tasks(
     if result.scalar_one_or_none():
         return
 
-    anna = users_by_email["semenova@example.com"]
-    maria = users_by_email["orlovskaya@example.com"]
-    ekaterina = users_by_email["zavyalova@example.com"]
-    ivan = users_by_email["petrov@example.com"]
-    admin = users_by_email["admin@example.com"]
+    anna = users_by_email["semenova@ac.gov.ru"]
+    maria = users_by_email["orlovskaya@ac.gov.ru"]
+    ekaterina = users_by_email["zavyalova@ac.gov.ru"]
+    ivan = users_by_email["petrov@ac.gov.ru"]
+    admin = users_by_email["admin@ac.gov.ru"]
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 

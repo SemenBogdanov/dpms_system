@@ -17,6 +17,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    op.execute("ALTER TYPE catalogcategory ADD VALUE IF NOT EXISTS 'proactive'")
+    op.execute("ALTER TYPE catalogcategory ADD VALUE IF NOT EXISTS 'api'")
+    op.execute("ALTER TYPE catalogcategory ADD VALUE IF NOT EXISTS 'docs'")
+    op.execute("ALTER TYPE tasktype ADD VALUE IF NOT EXISTS 'proactive'")
+
     op.add_column(
         "shop_items",
         sa.Column("requires_approval", sa.Boolean(), nullable=False, server_default=sa.true()),
