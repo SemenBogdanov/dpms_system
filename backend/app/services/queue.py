@@ -99,6 +99,7 @@ async def get_available_tasks(
                 can_pull=can_pull,
                 locked=locked,
                 lock_reason=lock_reason,
+                tags=getattr(task, "tags", None) or [],
             )
         )
     return out

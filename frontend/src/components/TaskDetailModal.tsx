@@ -227,7 +227,7 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
                 onClick={() => onOpenBugfix(task)}
                 className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
-                🐛 Баг-фикс
+                🐛 Создать баг-фикс
               </button>
             )}
             <button

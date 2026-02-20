@@ -53,6 +53,7 @@ class TaskRead(TaskBase):
     is_overdue: bool = False
     parent_task_id: UUID | None = None
     deadline_zone: str | None = None  # "green" | "yellow" | "red" | None
+    tags: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

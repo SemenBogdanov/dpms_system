@@ -26,6 +26,7 @@ class QueueTaskResponse(BaseModel):
     locked: bool
     lock_reason: str | None
     is_proactive: bool = False
+    tags: list[str] = []
 
     class Config:
         from_attributes = True

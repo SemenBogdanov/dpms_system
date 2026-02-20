@@ -201,6 +201,35 @@ async def set_due_date(
     return task
 
 
+@router.delete("/{task_id}", status_code=204)
+async def cancel_task(
+    task_id: UUID,
+    user: User = Depends(require_role("admin", "teamlead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Мягкое удаление (отмена) задачи."""
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    if task.status == TaskStatus.done:
+        raise HTTPException(status_code=400, detail="Завершённые задачи нельзя отменять")
+
+    old_assignee = task.assignee_id
+    task.status = TaskStatus.cancelled
+
+    if old_assignee:
+        from app.services.notifications import create_notification
+        await create_notification(
+            db,
+            old_assignee,
+            "task_cancelled",
+            "❌ Задача отменена",
+            f"«{task.title}» была отменена",
+            "/queue",
+        )
+
+
 @router.post("/bugfix", response_model=TaskRead)
 async def create_bugfix_task(
     body: CreateBugfixRequest,

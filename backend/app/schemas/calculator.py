@@ -44,5 +44,6 @@ class CreateTaskFromCalcRequest(BaseModel):
     priority: str = "medium"
     estimator_id: UUID
     items: list[CalcItemInput]
+    tags: list[str] = []
     complexity_multiplier: float = Field(default=1.0, ge=1.0, le=2.0)
     urgency_multiplier: float = Field(default=1.0, ge=1.0, le=1.5)

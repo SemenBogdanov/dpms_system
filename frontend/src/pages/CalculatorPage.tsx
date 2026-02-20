@@ -6,6 +6,7 @@ import type { CatalogItem, User, EstimateResponse } from '@/api/types'
 import type { CartRow } from '@/components/EstimateCart'
 import { CatalogPicker } from '@/components/CatalogPicker'
 import { EstimateCart } from '@/components/EstimateCart'
+import { TagInput } from '@/components/TagInput'
 
 export function CalculatorPage() {
   const navigate = useNavigate()
@@ -18,6 +19,7 @@ export function CalculatorPage() {
   const [createTitle, setCreateTitle] = useState('')
   const [createDescription, setCreateDescription] = useState('')
   const [createPriority, setCreatePriority] = useState('medium')
+  const [createTags, setCreateTags] = useState<string[]>([])
   const [createEstimatorId, setCreateEstimatorId] = useState('')
   const [creating, setCreating] = useState(false)
   const [categoryTab, setCategoryTab] = useState<'all' | 'widget' | 'etl' | 'api' | 'docs' | 'proactive'>('all')
@@ -65,8 +67,6 @@ export function CalculatorPage() {
     try {
       const res = await api.post<EstimateResponse>('/api/calculator/estimate', {
         items: cart.map((r) => ({ catalog_id: r.catalog.id, quantity: r.quantity })),
-        complexity_multiplier: 1,
-        urgency_multiplier: 1,
       })
       setEstimateResult(res)
       toast.success('Расчёт выполнен')
@@ -81,6 +81,7 @@ export function CalculatorPage() {
     setCreateTitle('')
     setCreateDescription('')
     setCreatePriority('medium')
+    setCreateTags([])
     setCreateEstimatorId(teamleads[0]?.id ?? '')
     setCreateModalOpen(true)
   }
@@ -101,8 +102,7 @@ export function CalculatorPage() {
           priority: createPriority,
           estimator_id: createEstimatorId,
           items: cart.map((r) => ({ catalog_id: r.catalog.id, quantity: r.quantity })),
-          complexity_multiplier: 1,
-          urgency_multiplier: 1,
+          tags: createTags,
         }
       )
       toast.success(`Задача создана, ${task.estimated_q} Q, в очереди`)
@@ -251,6 +251,10 @@ export function CalculatorPage() {
               <p className="mt-1 text-xs text-slate-400">
                 {priorityHint[createPriority] ?? ''}
               </p>
+              <label className="block text-sm font-medium text-slate-700">
+                Теги
+              </label>
+              <TagInput tags={createTags} onChange={setCreateTags} className="mt-1" />
               <label className="block text-sm font-medium text-slate-700">
                 Оценщик (тимлид)
               </label>

@@ -134,6 +134,7 @@ async def create_task_from_calc(
         "estimated_at": datetime.now(timezone.utc).isoformat(),
     }
 
+    tags_list = getattr(request, "tags", None) or []
     task = Task(
         title=request.title,
         description=request.description or None,
@@ -147,6 +148,7 @@ async def create_task_from_calc(
         estimator_id=request.estimator_id,
         validator_id=None,
         estimation_details=estimation_details,
+        tags=tags_list,
     )
     db.add(task)
     await db.flush()

@@ -70,6 +70,7 @@ export interface Task {
   is_overdue: boolean
   parent_task_id: string | null
   deadline_zone: 'green' | 'yellow' | 'red' | null
+  tags: string[]
   created_at: string
   updated_at: string
 }
@@ -92,6 +93,7 @@ export interface QueueTaskResponse {
   locked: boolean
   lock_reason: string | null
   is_proactive?: boolean
+  tags?: string[]
 }
 
 export interface CapacityGauge {

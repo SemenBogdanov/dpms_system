@@ -185,23 +185,23 @@ async def ensure_tasks(
 
     tasks_data = [
         # Орловская: 3 завершённые (done)
-        {"title": "Дашборд продаж Q1", "status": TaskStatus.done, "estimated_q": Decimal("10"), "assignee": maria, "estimator": admin, "validator": anna},
-        {"title": "ETL загрузка логов", "status": TaskStatus.done, "estimated_q": Decimal("8"), "assignee": maria, "estimator": admin, "validator": anna},
-        {"title": "Виджеты KPI для отчёта", "status": TaskStatus.done, "estimated_q": Decimal("7"), "assignee": maria, "estimator": admin, "validator": anna},
+        {"title": "Дашборд продаж Q1", "status": TaskStatus.done, "estimated_q": Decimal("10"), "assignee": maria, "estimator": admin, "validator": anna, "tags": ["MPRS"]},
+        {"title": "ETL загрузка логов", "status": TaskStatus.done, "estimated_q": Decimal("8"), "assignee": maria, "estimator": admin, "validator": anna, "tags": ["И26"]},
+        {"title": "Виджеты KPI для отчёта", "status": TaskStatus.done, "estimated_q": Decimal("7"), "assignee": maria, "estimator": admin, "validator": anna, "tags": ["MPRS", "И9"]},
         # Петров: 1 завершённая
-        {"title": "Простая таблица выгрузки", "status": TaskStatus.done, "estimated_q": Decimal("5"), "assignee": ivan, "estimator": admin, "validator": anna},
+        {"title": "Простая таблица выгрузки", "status": TaskStatus.done, "estimated_q": Decimal("5"), "assignee": ivan, "estimator": admin, "validator": anna, "tags": ["PRH2"]},
         # Завьялова: 1 завершённая (итого 5 done для калибровки)
-        {"title": "Pivot отчёт по клиентам", "status": TaskStatus.done, "estimated_q": Decimal("5"), "assignee": ekaterina, "estimator": admin, "validator": anna},
+        {"title": "Pivot отчёт по клиентам", "status": TaskStatus.done, "estimated_q": Decimal("5"), "assignee": ekaterina, "estimator": admin, "validator": anna, "tags": ["MNPR"]},
         # В очереди
-        {"title": "Line Chart по регионам", "status": TaskStatus.in_queue, "estimated_q": Decimal("3"), "assignee": None, "estimator": admin, "validator": None},
-        {"title": "ФЛК справочников", "status": TaskStatus.in_queue, "estimated_q": Decimal("3"), "assignee": None, "estimator": admin, "validator": None},
+        {"title": "Line Chart по регионам", "status": TaskStatus.in_queue, "estimated_q": Decimal("3"), "assignee": None, "estimator": admin, "validator": None, "tags": ["MPRS"]},
+        {"title": "ФЛК справочников", "status": TaskStatus.in_queue, "estimated_q": Decimal("3"), "assignee": None, "estimator": admin, "validator": None, "tags": ["И26", "ТЕХДОЛГ"]},
         # В работе
-        {"title": "Pivot по клиентам", "status": TaskStatus.in_progress, "estimated_q": Decimal("5"), "assignee": ekaterina, "estimator": admin, "validator": None},
-        {"title": "Документация API", "status": TaskStatus.in_progress, "estimated_q": Decimal("4"), "assignee": maria, "estimator": admin, "validator": None},
+        {"title": "Pivot по клиентам", "status": TaskStatus.in_progress, "estimated_q": Decimal("5"), "assignee": ekaterina, "estimator": admin, "validator": None, "tags": ["MNPR"]},
+        {"title": "Документация API", "status": TaskStatus.in_progress, "estimated_q": Decimal("4"), "assignee": maria, "estimator": admin, "validator": None, "tags": ["PRH2", "ТЕХДОЛГ"]},
         # На проверке
-        {"title": "Bar Chart сравнение", "status": TaskStatus.review, "estimated_q": Decimal("3"), "assignee": ivan, "estimator": admin, "validator": None},
+        {"title": "Bar Chart сравнение", "status": TaskStatus.review, "estimated_q": Decimal("3"), "assignee": ivan, "estimator": admin, "validator": None, "tags": ["И9"]},
         # Новая
-        {"title": "Geo Map офисов", "status": TaskStatus.new, "estimated_q": Decimal("6"), "assignee": None, "estimator": admin, "validator": None},
+        {"title": "Geo Map офисов", "status": TaskStatus.new, "estimated_q": Decimal("6"), "assignee": None, "estimator": admin, "validator": None, "tags": ["MPRS"]},
     ]
 
     for t in tasks_data:
@@ -247,6 +247,7 @@ async def ensure_tasks(
             due_date=due_date,
             sla_hours=sla_hours,
             is_overdue=is_overdue,
+            tags=t.get("tags", []) or [],
         )
         session.add(task)
         await session.flush()
@@ -275,6 +276,7 @@ async def ensure_tasks(
                 estimator_id=admin.id,
                 validator_id=None,
                 is_proactive=True,
+                tags=[],
             )
             session.add(task)
             await session.flush()

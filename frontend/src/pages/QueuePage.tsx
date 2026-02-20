@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { Lock } from 'lucide-react'
 import { api } from '@/api/client'
-import type { QueueTaskResponse, Task, User } from '@/api/types'
+import type { QueueTaskResponse, Task, User, TaskStatus } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { PriorityBadge } from '@/components/PriorityBadge'
 import { LeagueBadge } from '@/components/LeagueBadge'
@@ -27,11 +27,17 @@ export function QueuePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [pullingId, setPullingId] = useState<string | null>(null)
-  const [confirmPull, setConfirmPull] = useState<QueueTaskResponse | null>(null)
+  const [confirmPull, setConfirmPull] = useState<QueueTaskResponse | Task | null>(null)
   const [myTasks, setMyTasks] = useState<Task[]>([])
   const [queueFilter, setQueueFilter] = useState<'default' | 'proactive'>('default')
   const [detailTask, setDetailTask] = useState<Task | null>(null)
   const [users, setUsers] = useState<User[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
+  const [includeArchived, setIncludeArchived] = useState(false)
+  const [allTasks, setAllTasks] = useState<Task[]>([])
+  const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [sortField, setSortField] = useState<'title' | 'estimated_q' | 'priority' | 'due_date' | 'status'>('priority')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   const loadQueue = (category: 'default' | 'proactive') => {
     if (!currentUser) return
@@ -68,6 +74,81 @@ export function QueuePage() {
     api.get<User[]>('/api/users').then(setUsers).catch(() => setUsers([]))
   }, [])
 
+  useEffect(() => {
+    if (!includeArchived) return
+    api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
+  }, [includeArchived])
+
+  type RowItem = (QueueTaskResponse & { status?: TaskStatus }) | Task
+  const displayList: RowItem[] = includeArchived
+    ? allTasks
+    : tasks.map((t) => ({ ...t, status: 'in_queue' as TaskStatus }))
+
+  const filteredBySearch = displayList.filter((t) => {
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toUpperCase()
+      const matchTitle = t.title.toUpperCase().includes(q)
+      const tags = (t as QueueTaskResponse).tags ?? (t as Task).tags ?? []
+      const matchTag = tags.some((tag: string) => tag.toUpperCase().includes(q))
+      return matchTitle || matchTag
+    }
+    return true
+  })
+
+  const filteredByTag = activeTag
+    ? filteredBySearch.filter((t) => {
+        const tags = (t as QueueTaskResponse).tags ?? (t as Task).tags ?? []
+        return tags.includes(activeTag)
+      })
+    : filteredBySearch
+
+  const priorityOrder: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 }
+  const sortedTasks = [...filteredByTag].sort((a, b) => {
+    const aBug = (a as QueueTaskResponse).task_type === 'bugfix' || (a as Task).task_type === 'bugfix'
+    const bBug = (b as QueueTaskResponse).task_type === 'bugfix' || (b as Task).task_type === 'bugfix'
+    if (aBug !== bBug) return aBug ? -1 : 1
+    const aStatus = (a as Task).status ?? 'in_queue'
+    const bStatus = (b as Task).status ?? 'in_queue'
+    const aPri = priorityOrder[(a as QueueTaskResponse).priority ?? (a as Task).priority] ?? 0
+    const bPri = priorityOrder[(b as QueueTaskResponse).priority ?? (b as Task).priority] ?? 0
+    if (sortField === 'priority') {
+      const diff = sortDir === 'desc' ? bPri - aPri : aPri - bPri
+      if (diff !== 0) return diff
+    }
+    if (sortField === 'title') {
+      const cmp = (a.title ?? '').localeCompare(b.title ?? '')
+      return sortDir === 'asc' ? cmp : -cmp
+    }
+    if (sortField === 'estimated_q') {
+      const diff = (a.estimated_q ?? 0) - (b.estimated_q ?? 0)
+      return sortDir === 'asc' ? diff : -diff
+    }
+    if (sortField === 'due_date') {
+      const aD = (a as QueueTaskResponse).due_date ?? (a as Task).due_date
+      const bD = (b as QueueTaskResponse).due_date ?? (b as Task).due_date
+      const aT = aD ? new Date(aD).getTime() : 0
+      const bT = bD ? new Date(bD).getTime() : 0
+      return sortDir === 'asc' ? aT - bT : bT - aT
+    }
+    if (sortField === 'status') {
+      const cmp = String(aStatus).localeCompare(String(bStatus))
+      return sortDir === 'asc' ? cmp : -cmp
+    }
+    return new Date((a as QueueTaskResponse).created_at ?? (a as Task).created_at).getTime() - new Date((b as QueueTaskResponse).created_at ?? (b as Task).created_at).getTime()
+  })
+
+  const handleSort = (field: typeof sortField) => {
+    if (sortField === field) {
+      setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortField(field)
+      setSortDir('desc')
+    }
+  }
+
+  const allTags = [...new Set(displayList.flatMap((t) => (t as QueueTaskResponse).tags ?? (t as Task).tags ?? []))].sort()
+  const isTeamleadOrAdmin = currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
+
   const doPull = async () => {
     if (!confirmPull || !currentUser) return
     setPullingId(confirmPull.id)
@@ -77,12 +158,20 @@ export function QueuePage() {
       })
       toast.success('Задача взята!')
       setConfirmPull(null)
-      setTasks((prev) => prev.filter((t) => t.id !== confirmPull.id))
+      if (includeArchived) {
+        api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
+      } else {
+        setTasks((prev) => prev.filter((t) => t.id !== confirmPull.id))
+      }
       navigate('/my-tasks')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось взять задачу')
       setConfirmPull(null)
-      loadQueue(queueFilter)
+      if (includeArchived) {
+        api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
+      } else {
+        loadQueue(queueFilter)
+      }
     } finally {
       setPullingId(null)
     }
@@ -93,19 +182,57 @@ export function QueuePage() {
   if (loading) return <SkeletonTable rows={8} />
   if (error) return <div className="text-red-600">{error}</div>
 
+  const openDetail = (id: string) => {
+    api.get<Task>(`/api/tasks/${id}`).then(setDetailTask).catch(() => toast.error('Не удалось загрузить задачу'))
+  }
+
+  const handleDelete = (t: RowItem) => {
+    const title = t.title
+    if (!window.confirm(`Отменить задачу «${title}»?`)) return
+    api
+      .delete(`/api/tasks/${t.id}`)
+      .then(() => {
+        toast.success('Задача отменена')
+        if (includeArchived) {
+          api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
+        } else {
+          loadQueue(queueFilter)
+        }
+      })
+      .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
+  }
+
+  const taskStatus = (t: RowItem): TaskStatus => (t as Task).status ?? 'in_queue'
+  const canPull = (t: RowItem) => (t as QueueTaskResponse).can_pull === true || (taskStatus(t) === 'in_queue' && (t as QueueTaskResponse).locked !== true)
+  const locked = (t: RowItem) => (t as QueueTaskResponse).locked === true
+  const lockReason = (t: RowItem) => (t as QueueTaskResponse).lock_reason
+  const taskTags = (t: RowItem) => (t as QueueTaskResponse).tags ?? (t as Task).tags ?? []
+  const taskType = (t: RowItem) => (t as QueueTaskResponse).task_type ?? (t as Task).task_type
+  const isProactive = (t: RowItem) => (t as QueueTaskResponse).is_proactive === true || (t as Task).task_type === 'proactive'
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold text-slate-900">Глобальная очередь</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold text-slate-900">Глобальная очередь</h1>
+          {isTeamleadOrAdmin && (
+            <Link
+              to="/calculator"
+              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+            >
+              ➕ Создать задачу
+            </Link>
+          )}
+        </div>
         {currentUser && (
-          <div className="text-sm text-slate-600">
+          <div className="text-sm text-slate-600 whitespace-nowrap">
             Лига {currentUser.league} · WIP: {wipCount} из {currentUser.wip_limit} ·{' '}
             {Number(currentUser.wallet_main).toFixed(1)}/{currentUser.mpw} Q
           </div>
         )}
       </div>
 
-      {queueFilter === 'proactive' && (
+      {queueFilter === 'proactive' && !includeArchived && (
         <button
           type="button"
           onClick={handleShowDefault}
@@ -115,113 +242,190 @@ export function QueuePage() {
         </button>
       )}
 
-      {tasks.length === 0 && !loading ? (
-        queueFilter === 'default' ? (
-          <ProactiveBlock onShowProactive={handleShowProactive} loading={loading} />
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="relative flex-1 min-w-[200px]">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+          <input
+            type="text"
+            placeholder="Поиск по названию или тегу..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-10 pr-4 text-sm"
+          />
+        </div>
+        <label className="flex items-center gap-2 whitespace-nowrap text-sm text-slate-600">
+          <input
+            type="checkbox"
+            checked={includeArchived}
+            onChange={(e) => setIncludeArchived(e.target.checked)}
+            className="rounded border-slate-300"
+          />
+          Включая закрытые
+        </label>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-slate-500">Проекты:</span>
+        <button
+          type="button"
+          onClick={() => setActiveTag(null)}
+          className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+            activeTag === null ? 'bg-primary text-primary-foreground' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+          }`}
+        >
+          Все
+        </button>
+        {allTags.map((tag) => (
+          <button
+            key={tag}
+            type="button"
+            onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+              activeTag === tag ? 'bg-primary text-primary-foreground' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            {tag}
+          </button>
+        ))}
+      </div>
+      {activeTag && (
+        <div className="text-sm text-slate-600">
+          Проект <span className="font-semibold">{activeTag}</span>: {filteredByTag.length} задач,{' '}
+          <span className="whitespace-nowrap font-semibold">
+            {Number(filteredByTag.reduce((sum, t) => sum + Number(t.estimated_q), 0)).toFixed(1)} Q
+          </span>
+        </div>
+      )}
+
+      {displayList.length === 0 && !loading ? (
+        queueFilter === 'default' && !includeArchived ? (
+          <div className="space-y-2">
+            <ProactiveBlock onShowProactive={handleShowProactive} loading={loading} />
+            <p className="text-center text-sm text-slate-500">
+              Очередь задач пуста. Создайте задачу через калькулятор.
+            </p>
+          </div>
         ) : (
           <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-slate-500">
-            Нет проактивных задач в очереди
+            {includeArchived ? 'Нет задач' : 'Нет проактивных задач в очереди'}
           </div>
         )
-      ) : tasks.length > 0 ? (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      ) : sortedTasks.length === 0 ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-500">
+          {searchQuery.trim()
+            ? `По запросу «${searchQuery}» задач не найдено`
+            : activeTag
+              ? `Нет задач по проекту ${activeTag}`
+              : 'Нет задач'}
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
-                  Название
+                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-slate-600" onClick={() => handleSort('title')}>
+                  Название {sortField === 'title' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                </th>
+                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-slate-600" onClick={() => handleSort('status')}>
+                  Статус {sortField === 'status' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Тип</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
-                  Сложность
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Сложность</th>
+                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-slate-600 min-w-[60px]" onClick={() => handleSort('estimated_q')}>
+                  Q {sortField === 'estimated_q' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Q</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Срок</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
-                  Приоритет
+                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-slate-600" onClick={() => handleSort('due_date')}>
+                  Срок {sortField === 'due_date' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
-                  Мин. лига
+                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-slate-600" onClick={() => handleSort('priority')}>
+                  Приоритет {sortField === 'priority' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
-                  Дата
-                </th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-slate-600">
-                  Действие
-                </th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Мин. лига</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Дата</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-slate-600">Действие</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {[...tasks]
-                .slice()
-                .sort((a, b) => {
-                  const aBug = a.task_type === 'bugfix'
-                  const bBug = b.task_type === 'bugfix'
-                  if (aBug !== bBug) return aBug ? -1 : 1
-                  if (a.priority === b.priority) {
-                    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-                  }
-                  const order: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }
-                  return (order[a.priority] ?? 99) - (order[b.priority] ?? 99)
-                })
-                .map((t) => (
+              {sortedTasks.map((t) => (
                 <tr
                   key={t.id}
-                  className={t.locked ? 'bg-slate-50 opacity-75' : ''}
+                  className={`${locked(t) ? 'bg-slate-50 opacity-75' : ''} ${taskType(t) === 'bugfix' ? 'border-l-4 border-red-400 bg-red-50/50' : ''}`}
                 >
                   <td className="px-4 py-3 text-sm text-slate-900">
                     <button
                       type="button"
-                      onClick={() => {
-                        api.get<Task>(`/api/tasks/${t.id}`).then(setDetailTask).catch(() => toast.error('Не удалось загрузить задачу'))
-                      }}
+                      onClick={() => openDetail(t.id)}
                       className="cursor-pointer text-left text-primary hover:underline"
                     >
                       {t.title}
                     </button>
-                    {t.task_type === 'bugfix' && (
+                    {taskType(t) === 'bugfix' && (
                       <span className="ml-2 inline rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
                         🐛 Гарантийный
                       </span>
                     )}
-                    {t.is_proactive && (
+                    {isProactive(t) && (
                       <span className="ml-2 inline rounded bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800">
                         🔄 Проактивная
                       </span>
                     )}
+                    {taskTags(t).length > 0 && (
+                      <div className="mt-0.5 flex flex-wrap gap-1">
+                        {taskTags(t).map((tag) => (
+                          <span key={tag} className="inline-block rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </td>
-                  <td className="px-4 py-3 text-sm text-slate-600">{t.task_type}</td>
+                  <td className="px-4 py-3 text-xs text-slate-600">
+                    {taskStatus(t) === 'in_queue' && 'В очереди'}
+                    {taskStatus(t) === 'in_progress' && 'В работе'}
+                    {taskStatus(t) === 'review' && 'На проверке'}
+                    {taskStatus(t) === 'done' && 'Готово'}
+                    {taskStatus(t) === 'cancelled' && 'Отменена'}
+                    {taskStatus(t) === 'new' && 'Новая'}
+                    {taskStatus(t) === 'estimated' && 'Оценена'}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-slate-600">{taskType(t)}</td>
                   <td className="px-4 py-3">
-                    <span
-                      className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${
-                        complexityStyles[t.complexity] ?? 'bg-slate-100'
-                      }`}
-                    >
-                      {t.complexity}
+                    <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${complexityStyles[(t as QueueTaskResponse).complexity ?? (t as Task).complexity] ?? 'bg-slate-100'}`}>
+                      {(t as QueueTaskResponse).complexity ?? (t as Task).complexity}
                     </span>
                   </td>
                   <td className="px-4 py-3 min-w-[60px]">
                     <span className="whitespace-nowrap"><QBadge q={t.estimated_q} /></span>
                   </td>
                   <td className="px-4 py-3">
-                    <DeadlineBadge dueDate={t.due_date} zone={t.deadline_zone} />
+                    <DeadlineBadge dueDate={(t as QueueTaskResponse).due_date ?? (t as Task).due_date} zone={(t as QueueTaskResponse).deadline_zone ?? (t as Task).deadline_zone} />
                   </td>
                   <td className="px-4 py-3">
-                    <PriorityBadge priority={t.priority as 'low' | 'medium' | 'high' | 'critical'} />
+                    <PriorityBadge priority={((t as QueueTaskResponse).priority ?? (t as Task).priority) as 'low' | 'medium' | 'high' | 'critical'} />
                   </td>
                   <td className="px-4 py-3">
-                    <LeagueBadge league={t.min_league} />
+                    <LeagueBadge league={(t as QueueTaskResponse).min_league ?? (t as Task).min_league} />
                   </td>
                   <td className="px-4 py-3 text-sm text-slate-500">
-                    {new Date(t.created_at).toLocaleDateString('ru')}
+                    {new Date((t as QueueTaskResponse).created_at ?? (t as Task).created_at).toLocaleDateString('ru')}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {t.locked ? (
+                    {isTeamleadOrAdmin && taskStatus(t) !== 'done' && (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(t)}
+                        className="ml-2 text-slate-400 hover:text-red-600"
+                        title="Отменить задачу"
+                      >
+                        🗑️
+                      </button>
+                    )}
+                    {locked(t) ? (
                       <span className="inline-flex items-center gap-1 text-sm text-slate-500">
                         <Lock className="h-4 w-4" />
-                        {t.lock_reason ?? `Лига ${t.min_league}`}
+                        {lockReason(t) ?? `Лига ${(t as QueueTaskResponse).min_league}`}
                       </span>
-                    ) : t.can_pull ? (
+                    ) : canPull(t) ? (
                       <button
                         type="button"
                         onClick={() => setConfirmPull(t)}
@@ -230,21 +434,18 @@ export function QueuePage() {
                       >
                         Взять
                       </button>
-                    ) : (
-                      <span
-                        title={t.lock_reason ?? 'WIP-лимит исчерпан'}
-                        className="cursor-help text-sm text-slate-400"
-                      >
+                    ) : taskStatus(t) === 'in_queue' ? (
+                      <span title={lockReason(t) ?? 'WIP-лимит исчерпан'} className="cursor-help text-sm text-slate-400">
                         WIP-лимит
                       </span>
-                    )}
+                    ) : null}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      ) : null}
+      )}
 
       <TaskDetailModal
         task={detailTask}
