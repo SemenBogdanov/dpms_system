@@ -3,43 +3,60 @@ import { api } from '@/api/client'
 import type {
   CapacityGauge,
   TeamSummary,
-  PeriodStats,
   TeamMemberSummary,
   BurndownData,
+  Task,
+  User,
 } from '@/api/types'
-import { GlassGauge } from '@/components/GlassGauge'
+import { useAuth } from '@/contexts/AuthContext'
 import { MetricCard } from '@/components/MetricCard'
 import { TeamPulseTable } from '@/components/TeamPulseTable'
 import { BurndownChart } from '@/components/BurndownChart'
+import { TaskDetailModal } from '@/components/TaskDetailModal'
 import { SkeletonCard } from '@/components/Skeleton'
 import { exportTeamCSV } from '@/lib/csv'
 
 export function DashboardPage() {
+  const { user: currentUser } = useAuth()
   const [capacity, setCapacity] = useState<CapacityGauge | null>(null)
   const [team, setTeam] = useState<TeamSummary | null>(null)
-  const [periodStats, setPeriodStats] = useState<PeriodStats | null>(null)
   const [burndown, setBurndown] = useState<BurndownData | null>(null)
+  const [tasksInWorkCount, setTasksInWorkCount] = useState(0)
+  const [overdueTasks, setOverdueTasks] = useState<Task[]>([])
+  const [users, setUsers] = useState<User[]>([])
+  const [detailTask, setDetailTask] = useState<Task | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const isTeamleadOrAdmin = currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
+
   const load = useCallback(async () => {
     try {
-      const [cap, sum, period, bd] = await Promise.all([
+      const [cap, sum, bd, ip, rv] = await Promise.all([
         api.get<CapacityGauge>('/api/dashboard/capacity'),
         api.get<TeamSummary>('/api/dashboard/team-summary'),
-        api.get<PeriodStats>('/api/dashboard/period-stats'),
         api.get<BurndownData>('/api/dashboard/burndown'),
+        api.get<Task[]>('/api/tasks?status=in_progress'),
+        api.get<Task[]>('/api/tasks?status=review'),
       ])
       setCapacity(cap)
       setTeam(sum)
-      setPeriodStats(period)
       setBurndown(bd)
+      setTasksInWorkCount((ip?.length ?? 0) + (rv?.length ?? 0))
       setError(null)
+      if (currentUser?.role === 'teamlead' || currentUser?.role === 'admin') {
+        const od = await api.get<Task[]>('/api/tasks?is_overdue=true').catch(() => [])
+        setOverdueTasks(od)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка загрузки')
     } finally {
       setLoading(false)
     }
+  }, [currentUser?.role])
+
+  useEffect(() => {
+    api.get<User[]>('/api/users').then(setUsers).catch(() => setUsers([]))
   }, [])
 
   useEffect(() => {
@@ -74,11 +91,13 @@ export function DashboardPage() {
   if (team?.by_league) {
     Object.values(team.by_league).forEach((arr) => arr.forEach((m) => allMembers.push(m)))
   }
-
-  const avgTimeDays =
-    periodStats?.avg_completion_time_hours != null
-      ? Number(periodStats.avg_completion_time_hours / 24).toFixed(1)
+  const avgQualityScore =
+    allMembers.length > 0
+      ? Number(
+          allMembers.reduce((s, m) => s + m.quality_score, 0) / allMembers.length
+        ).toFixed(0)
       : '—'
+  const capacityPercent = capVal > 0 ? (loadVal / capVal) * 100 : 0
 
   return (
     <div className="space-y-6">
@@ -95,76 +114,81 @@ export function DashboardPage() {
         )}
       </div>
 
-      {/* Строка 1 — 4 карточки метрик */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Строка 1 — три метрики */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <MetricCard
           title="Ёмкость команды"
-          value={`${Number(capVal).toFixed(0)} Q`}
+          value={`${Number(util).toFixed(0)}%`}
         />
         <MetricCard
-          title="Текущая нагрузка"
-          value={`${Number(loadVal).toFixed(0)} Q`}
-          subtitle={`${Number(util).toFixed(0)}%`}
+          title="Задач в работе"
+          value={tasksInWorkCount}
         />
         <MetricCard
-          title="Задач завершено"
-          value={periodStats?.tasks_completed ?? 0}
-          subtitle="в этом месяце"
-        />
-        <MetricCard
-          title="Среднее время"
-          value={avgTimeDays === '—' ? '—' : `${avgTimeDays} д.`}
-          subtitle="выполнения задачи"
+          title="Среднее качество"
+          value={avgQualityScore === '—' ? '—' : `QS: ${avgQualityScore}`}
         />
       </div>
 
-      {/* Строка 2 — Стакан + Пульс команды */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_2.5fr]">
-        <div className="space-y-2">
-          {capacity && (
-            <GlassGauge
-              load={loadVal}
-              capacity={capVal}
-              utilization={util}
-              status={status}
-            />
-          )}
-          <p className="text-sm text-slate-600">
-            Ёмкость: {Number(capVal).toFixed(0)} Q · Нагрузка: {Number(loadVal).toFixed(0)} Q · Утилизация: {Number(util).toFixed(1)}%
-          </p>
+      {/* Строка 2 — прогресс-бар ёмкости */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-sm font-medium text-slate-700">Ёмкость команды</span>
+          <span className="whitespace-nowrap text-sm font-semibold text-slate-900">
+            {Number(loadVal).toFixed(1)} / {Number(capVal).toFixed(1)} Q
+          </span>
         </div>
-        <div>
-          <h2 className="mb-2 font-medium text-slate-800">Пульс команды</h2>
-          <TeamPulseTable members={allMembers} />
+        <div className="h-4 w-full overflow-hidden rounded-full bg-slate-200">
+          <div
+            className={`h-full rounded-full transition-all ${
+              status === 'green' ? 'bg-emerald-500' : status === 'yellow' ? 'bg-amber-500' : 'bg-red-500'
+            }`}
+            style={{ width: `${Math.min(100, capacityPercent)}%` }}
+          />
         </div>
       </div>
 
-      {/* Burn-down */}
+      {/* Строка 3 — таблица команды */}
+      <div>
+        <h2 className="mb-2 font-medium text-slate-800">Команда</h2>
+        <TeamPulseTable members={allMembers} />
+      </div>
+
+      {/* Строка 4 — просроченные (только teamlead/admin) */}
+      {isTeamleadOrAdmin && overdueTasks.length > 0 && (
+        <div className="rounded-xl border border-red-200 bg-red-50/50 p-4 shadow-sm">
+          <h2 className="mb-2 font-medium text-red-800">
+            ⚠️ Просроченные задачи ({overdueTasks.length})
+          </h2>
+          <ul className="space-y-1">
+            {overdueTasks.map((t) => (
+              <li key={t.id}>
+                <button
+                  type="button"
+                  onClick={() => setDetailTask(t)}
+                  className="text-left text-sm text-red-800 hover:underline"
+                >
+                  🔴 «{t.title}» — {users.find((u) => u.id === t.assignee_id)?.full_name ?? '—'} — просрочено
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <TaskDetailModal
+        task={detailTask}
+        onClose={() => setDetailTask(null)}
+        users={users}
+      />
+
+      {/* Строка 5 — Burn-down */}
       {burndown && burndown.points.length > 0 && (
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="mb-3 font-medium text-slate-800">Burn-down: План vs Факт</h2>
           <BurndownChart data={burndown} />
         </div>
       )}
-
-      {/* Строка 3 — По лигам */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        {['A', 'B', 'C'].map((league) => {
-          const list = team?.by_league?.[league] ?? []
-          const count = list.length
-          const avg =
-            count > 0
-              ? Number(list.reduce((s, m) => s + m.percent, 0) / count).toFixed(0)
-              : '—'
-          return (
-            <MetricCard
-              key={league}
-              title={`Лига ${league}`}
-              value={count === 0 ? '—' : `${count} чел, avg ${avg}%`}
-            />
-          )
-        })}
-      </div>
     </div>
   )
 }

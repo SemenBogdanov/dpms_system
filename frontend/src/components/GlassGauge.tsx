@@ -27,7 +27,7 @@ export function GlassGauge({ load, capacity, utilization, status, className }: G
       <div className="flex items-end justify-between gap-4">
         <div className="flex-1">
           <p className="text-sm font-medium text-slate-700">Загрузка / Ёмкость</p>
-          <p className="mt-1 text-2xl font-semibold text-slate-900">
+          <p className="mt-1 text-2xl font-semibold text-slate-900 whitespace-nowrap">
             {Number(load).toFixed(1)} / {Number(capacity).toFixed(1)} Q
           </p>
           <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-slate-100">

@@ -215,6 +215,19 @@ async def ensure_tasks(
             created_at = started_at = completed_at = validated_at = now
             estimation_details = None
 
+        due_date = None
+        sla_hours = None
+        is_overdue = False
+        if t["status"] in (TaskStatus.in_progress, TaskStatus.review) and t["assignee"]:
+            if t["title"] == "Pivot по клиентам":
+                due_date = now - timedelta(hours=3)
+                sla_hours = 24
+                is_overdue = True
+            else:
+                due_date = now + timedelta(hours=random.choice([4, 8, 16, 24, 48]))
+                sla_hours = random.choice([8, 12, 16, 24])
+                is_overdue = False
+
         task = Task(
             title=t["title"],
             description="Описание задачи.",
@@ -231,7 +244,9 @@ async def ensure_tasks(
             started_at=started_at if t["status"] in (TaskStatus.in_progress, TaskStatus.review, TaskStatus.done) and t["assignee"] else None,
             completed_at=completed_at if t["status"] in (TaskStatus.review, TaskStatus.done) and t["assignee"] else None,
             validated_at=validated_at if t["status"] == TaskStatus.done and t["validator"] else None,
-            due_date=completed_at + timedelta(hours=4) if t["status"] in (TaskStatus.in_progress, TaskStatus.review) and t["assignee"] else None,
+            due_date=due_date,
+            sla_hours=sla_hours,
+            is_overdue=is_overdue,
         )
         session.add(task)
         await session.flush()

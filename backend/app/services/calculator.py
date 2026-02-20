@@ -70,16 +70,13 @@ async def calculate_estimate(
             )
         )
 
-    total_q = round(
-        raw_total * request.complexity_multiplier * request.urgency_multiplier,
-        1,
-    )
+    total_q = round(raw_total, 1)
 
     return EstimateResponse(
         total_q=total_q,
         min_league=max_league.value,
-        complexity_multiplier=request.complexity_multiplier,
-        urgency_multiplier=request.urgency_multiplier,
+        complexity_multiplier=getattr(request, "complexity_multiplier", 1.0) or 1.0,
+        urgency_multiplier=getattr(request, "urgency_multiplier", 1.0) or 1.0,
         breakdown=breakdown,
     )
 

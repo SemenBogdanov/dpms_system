@@ -1,7 +1,7 @@
 """Модель задачи и enum статуса/типа."""
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
@@ -113,3 +113,18 @@ class Task(Base):
     estimator = relationship("User", back_populates="estimated_tasks", foreign_keys=[estimator_id])
     validator = relationship("User", back_populates="validated_tasks", foreign_keys=[validator_id])
     transactions = relationship("QTransaction", back_populates="task")
+
+    @property
+    def deadline_zone(self) -> str | None:
+        """Вычисляемая зона дедлайна для сериализации в API."""
+        if self.due_date is None:
+            return None
+        now = datetime.now(timezone.utc)
+        if now > self.due_date:
+            return "red"
+        if self.started_at:
+            total = (self.due_date - self.started_at).total_seconds()
+            remaining = (self.due_date - now).total_seconds()
+            if total > 0 and remaining / total <= 0.5:
+                return "yellow"
+        return "green"

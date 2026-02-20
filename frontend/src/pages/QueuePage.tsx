@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { Lock } from 'lucide-react'
 import { api } from '@/api/client'
-import type { QueueTaskResponse, Task } from '@/api/types'
+import type { QueueTaskResponse, Task, User } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { PriorityBadge } from '@/components/PriorityBadge'
 import { LeagueBadge } from '@/components/LeagueBadge'
@@ -11,6 +11,7 @@ import { QBadge } from '@/components/QBadge'
 import { SkeletonTable } from '@/components/Skeleton'
 import { ProactiveBlock } from '@/components/ProactiveBlock'
 import { DeadlineBadge } from '@/components/DeadlineBadge'
+import { TaskDetailModal } from '@/components/TaskDetailModal'
 
 const complexityStyles: Record<string, string> = {
   S: 'bg-slate-100 text-slate-700',
@@ -29,6 +30,8 @@ export function QueuePage() {
   const [confirmPull, setConfirmPull] = useState<QueueTaskResponse | null>(null)
   const [myTasks, setMyTasks] = useState<Task[]>([])
   const [queueFilter, setQueueFilter] = useState<'default' | 'proactive'>('default')
+  const [detailTask, setDetailTask] = useState<Task | null>(null)
+  const [users, setUsers] = useState<User[]>([])
 
   const loadQueue = (category: 'default' | 'proactive') => {
     if (!currentUser) return
@@ -60,6 +63,10 @@ export function QueuePage() {
       .then(setMyTasks)
       .catch(() => setMyTasks([]))
   }, [currentUser])
+
+  useEffect(() => {
+    api.get<User[]>('/api/users').then(setUsers).catch(() => setUsers([]))
+  }, [])
 
   const doPull = async () => {
     if (!confirmPull || !currentUser) return
@@ -163,7 +170,15 @@ export function QueuePage() {
                   className={t.locked ? 'bg-slate-50 opacity-75' : ''}
                 >
                   <td className="px-4 py-3 text-sm text-slate-900">
-                    <span>{t.title}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        api.get<Task>(`/api/tasks/${t.id}`).then(setDetailTask).catch(() => toast.error('Не удалось загрузить задачу'))
+                      }}
+                      className="cursor-pointer text-left text-primary hover:underline"
+                    >
+                      {t.title}
+                    </button>
                     {t.task_type === 'bugfix' && (
                       <span className="ml-2 inline rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
                         🐛 Гарантийный
@@ -185,8 +200,8 @@ export function QueuePage() {
                       {t.complexity}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
-                    <QBadge q={t.estimated_q} />
+                  <td className="px-4 py-3 min-w-[60px]">
+                    <span className="whitespace-nowrap"><QBadge q={t.estimated_q} /></span>
                   </td>
                   <td className="px-4 py-3">
                     <DeadlineBadge dueDate={t.due_date} zone={t.deadline_zone} />
@@ -230,6 +245,12 @@ export function QueuePage() {
           </table>
         </div>
       ) : null}
+
+      <TaskDetailModal
+        task={detailTask}
+        onClose={() => setDetailTask(null)}
+        users={users}
+      />
 
       {confirmPull && (
         <div

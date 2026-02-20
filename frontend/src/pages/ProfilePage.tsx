@@ -134,7 +134,7 @@ export function ProfilePage() {
             <div className="flex flex-col gap-4 min-w-[240px]">
               <div>
                 <p className="text-sm font-medium text-slate-700">Main Wallet</p>
-                <p className="text-sm text-slate-600">
+                <p className="text-sm text-slate-600 whitespace-nowrap">
                   {Number(user.wallet_main).toFixed(1)} / {user.mpw} Q
                 </p>
                 <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-200">
@@ -148,7 +148,7 @@ export function ProfilePage() {
               </div>
               <div>
                 <p className="text-sm font-medium text-slate-700">Karma Wallet</p>
-                <p className="text-lg font-semibold text-slate-900">⭐ {Number(user.wallet_karma).toFixed(1)} Q</p>
+                <p className="text-lg font-semibold text-slate-900 whitespace-nowrap">⭐ {Number(user.wallet_karma).toFixed(1)} Q</p>
                 <p className="text-xs text-slate-500">Свободные средства</p>
               </div>
               <div>

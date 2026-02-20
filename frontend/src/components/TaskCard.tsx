@@ -12,6 +12,8 @@ interface TaskCardProps {
   onValidate?: (taskId: string, approved: boolean, comment?: string) => void
   /** Открыть модалку «Вернуть» с полем «Причина возврата»; сабмит вызовет onValidate(taskId, false, comment) */
   onRejectClick?: (task: Task) => void
+  /** Клик по названию задачи — открыть детальную модалку */
+  onOpenDetail?: (task: Task) => void
   showActions?: boolean
   pullingTaskId?: string | null
   busyTaskId?: string | null
@@ -45,6 +47,7 @@ export function TaskCard({
   onSubmitReview,
   onValidate,
   onRejectClick,
+  onOpenDetail,
   showActions,
   pullingTaskId,
   busyTaskId,
@@ -74,12 +77,22 @@ export function TaskCard({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <h3 className="font-medium text-slate-900 truncate">{task.title}</h3>
+          {onOpenDetail ? (
+            <button
+              type="button"
+              onClick={() => onOpenDetail(task)}
+              className="text-left font-medium text-slate-900 truncate block w-full cursor-pointer text-primary hover:underline"
+            >
+              {task.title}
+            </button>
+          ) : (
+            <h3 className="font-medium text-slate-900 truncate">{task.title}</h3>
+          )}
           {task.description && (
             <p className="mt-1 text-sm text-slate-500 line-clamp-2">{task.description}</p>
           )}
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <QBadge q={task.estimated_q} />
+            <span className="whitespace-nowrap"><QBadge q={task.estimated_q} /></span>
             <PriorityBadge priority={task.priority} />
             <span className="text-xs text-slate-400">
               {statusLabels[task.status] ?? task.status}
@@ -99,7 +112,7 @@ export function TaskCard({
           {isDone && (
             <p className="mt-2 flex items-center gap-1 text-sm text-emerald-700">
               <Check className="h-4 w-4" />
-              +{task.estimated_q} Q
+              <span className="whitespace-nowrap">+{task.estimated_q} Q</span>
               {validatorName && ` · ${validatorName}`}
             </p>
           )}

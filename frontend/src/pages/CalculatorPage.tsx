@@ -12,8 +12,6 @@ export function CalculatorPage() {
   const [catalog, setCatalog] = useState<CatalogItem[]>([])
   const [teamleads, setTeamleads] = useState<User[]>([])
   const [cart, setCart] = useState<CartRow[]>([])
-  const [complexityMult, setComplexityMult] = useState(1)
-  const [urgencyMult, setUrgencyMult] = useState(1)
   const [estimateResult, setEstimateResult] = useState<EstimateResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [createModalOpen, setCreateModalOpen] = useState(false)
@@ -44,6 +42,7 @@ export function CalculatorPage() {
       return [...prev, { catalog: item, quantity: 1 }]
     })
     setEstimateResult(null)
+    toast.success(`✅ ${item.name} добавлен — ${Number(item.base_cost_q).toFixed(1)} Q`, { duration: 2000 })
   }
 
   const setQuantity = (catalogId: string, quantity: number) => {
@@ -66,8 +65,8 @@ export function CalculatorPage() {
     try {
       const res = await api.post<EstimateResponse>('/api/calculator/estimate', {
         items: cart.map((r) => ({ catalog_id: r.catalog.id, quantity: r.quantity })),
-        complexity_multiplier: complexityMult,
-        urgency_multiplier: urgencyMult,
+        complexity_multiplier: 1,
+        urgency_multiplier: 1,
       })
       setEstimateResult(res)
       toast.success('Расчёт выполнен')
@@ -102,8 +101,8 @@ export function CalculatorPage() {
           priority: createPriority,
           estimator_id: createEstimatorId,
           items: cart.map((r) => ({ catalog_id: r.catalog.id, quantity: r.quantity })),
-          complexity_multiplier: complexityMult,
-          urgency_multiplier: urgencyMult,
+          complexity_multiplier: 1,
+          urgency_multiplier: 1,
         }
       )
       toast.success(`Задача создана, ${task.estimated_q} Q, в очереди`)
@@ -132,7 +131,7 @@ export function CalculatorPage() {
 
   const handleDownloadCalculation = () => {
     const sumRaw = cart.reduce((s, r) => s + r.catalog.base_cost_q * r.quantity, 0)
-    const totalQ = Math.round(sumRaw * complexityMult * urgencyMult * 10) / 10
+    const totalQ = Math.round(sumRaw * 10) / 10
     const header = 'Операция,Категория,Сложность,Стоимость (Q),Количество,Итого (Q)\n'
     const body = cart
       .map((r) =>
@@ -156,11 +155,18 @@ export function CalculatorPage() {
     URL.revokeObjectURL(url)
   }
 
+  const priorityHint: Record<string, string> = {
+    critical: 'Блокирует совещание/релиз в ближайшие 24ч',
+    high: 'Нужно на этой неделе, есть внешний заказчик',
+    medium: 'Плановая задача текущего месяца',
+    low: 'Техдолг, исследования, можно отложить',
+  }
+
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold text-slate-900">Калькулятор оценки</h1>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <h1 className="text-2xl font-semibold text-slate-900">Калькулятор задач</h1>
+      <div className="flex gap-6">
+        <div className="flex-1 overflow-y-auto max-h-[calc(100vh-180px)] rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex flex-wrap gap-1 border-b border-slate-200 pb-2">
             {tabs.map(({ key, label }) => (
               <button
@@ -179,15 +185,11 @@ export function CalculatorPage() {
           </div>
           <CatalogPicker catalog={filteredCatalog} onAdd={addToCart} />
         </div>
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="w-80 flex-shrink-0 sticky top-4 self-start max-h-[calc(100vh-180px)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <EstimateCart
             rows={cart}
-            complexityMult={complexityMult}
-            urgencyMult={urgencyMult}
             onQuantity={setQuantity}
             onRemove={removeFromCart}
-            onComplexity={setComplexityMult}
-            onUrgency={setUrgencyMult}
             onCalculate={handleCalculate}
             onCreateTask={openCreateModal}
             onDownloadCalculation={handleDownloadCalculation}
@@ -241,11 +243,14 @@ export function CalculatorPage() {
                 onChange={(e) => setCreatePriority(e.target.value)}
                 className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
               >
-                <option value="low">Низкий</option>
-                <option value="medium">Средний</option>
-                <option value="high">Высокий</option>
-                <option value="critical">Критичный</option>
+                <option value="critical">🔴 Критический</option>
+                <option value="high">🟠 Высокий</option>
+                <option value="medium">🟡 Средний</option>
+                <option value="low">🟢 Низкий</option>
               </select>
+              <p className="mt-1 text-xs text-slate-400">
+                {priorityHint[createPriority] ?? ''}
+              </p>
               <label className="block text-sm font-medium text-slate-700">
                 Оценщик (тимлид)
               </label>

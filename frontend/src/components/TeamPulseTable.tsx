@@ -44,14 +44,14 @@ export function TeamPulseTable({ members }: TeamPulseTableProps) {
               <td className="px-4 py-2">
                 <LeagueBadge league={m.league as 'C' | 'B' | 'A'} />
               </td>
-              <td className="px-4 py-2 text-slate-600">{m.mpw}</td>
-              <td className="px-4 py-2 text-slate-600">{Number(m.earned).toFixed(1)}</td>
+              <td className="px-4 py-2 text-slate-600 whitespace-nowrap min-w-[44px]">{m.mpw}</td>
+              <td className="px-4 py-2 text-slate-600 whitespace-nowrap">{Number(m.earned).toFixed(1)}</td>
               <td className="px-4 py-2 w-24">
                 <ProgressBar percent={m.percent} variant="risk" />
                 <span className="text-xs text-slate-500">{Number(m.percent).toFixed(0)}%</span>
               </td>
-              <td className="px-4 py-2 text-slate-600">{Number(m.karma).toFixed(1)}</td>
-              <td className="px-4 py-2 text-slate-600">{Number(m.in_progress_q).toFixed(1)}</td>
+              <td className="px-4 py-2 text-slate-600 whitespace-nowrap">{Number(m.karma).toFixed(1)}</td>
+              <td className="px-4 py-2 text-slate-600 whitespace-nowrap min-w-[52px]">{Number(m.in_progress_q).toFixed(1)}</td>
               <td className="px-4 py-2 text-slate-600">
                 <span
                   className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${

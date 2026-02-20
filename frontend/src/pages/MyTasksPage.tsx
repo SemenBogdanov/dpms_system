@@ -3,6 +3,7 @@ import { api } from '@/api/client'
 import type { Task, User } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { TaskCard } from '@/components/TaskCard'
+import { TaskDetailModal } from '@/components/TaskDetailModal'
 import toast from 'react-hot-toast'
 import { BugfixModal } from '@/components/BugfixModal'
 
@@ -30,6 +31,7 @@ export function MyTasksPage() {
   const [deadlineTask, setDeadlineTask] = useState<Task | null>(null)
   const [deadlineValue, setDeadlineValue] = useState('')
   const [deadlineBusy, setDeadlineBusy] = useState(false)
+  const [detailTask, setDetailTask] = useState<Task | null>(null)
 
   useEffect(() => {
     api.get<User[]>('/api/users').then(setUsers).catch(() => setUsers([])).finally(() => setLoading(false))
@@ -213,7 +215,7 @@ export function MyTasksPage() {
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <div className="mb-2 flex items-center justify-between text-sm">
             <span className="text-slate-600">Кошелёк / MPW</span>
-            <span className="font-medium text-slate-900">
+            <span className="whitespace-nowrap font-medium text-slate-900">
               {currentUser.wallet_main} / {currentUser.mpw} Q
             </span>
           </div>
@@ -225,7 +227,7 @@ export function MyTasksPage() {
           </div>
           {currentUser.wallet_karma > 0 && (
             <p className="mt-2 text-sm text-slate-600">
-              ⭐ Karma: {currentUser.wallet_karma} Q
+              <span className="whitespace-nowrap">⭐ Karma: {currentUser.wallet_karma} Q</span>
             </p>
           )}
         </div>
@@ -268,6 +270,7 @@ export function MyTasksPage() {
                   task={t}
                   currentUserId={currentUser?.id ?? ''}
                   validatorName={validatorNames[t.validator_id ?? '']}
+                  onOpenDetail={setDetailTask}
                 />
                 {isTeamleadOrAdmin && (
                   <button
@@ -293,6 +296,7 @@ export function MyTasksPage() {
                 <TaskCard
                   task={t}
                   validatorName={validatorNames[t.validator_id ?? '']}
+                  onOpenDetail={setDetailTask}
                 />
                 {isTeamleadOrAdmin && (
                   <button
@@ -312,6 +316,24 @@ export function MyTasksPage() {
         </section>
       </div>
 
+      <TaskDetailModal
+        task={detailTask}
+        onClose={() => setDetailTask(null)}
+        users={users}
+        isTeamleadOrAdmin={isTeamleadOrAdmin}
+        onOpenBugfix={(t) => {
+          setDetailTask(null)
+          setBugfixParent(t)
+          setBugfixTitle('')
+          setBugfixDescription('')
+        }}
+        onOpenDeadline={(t) => {
+          setDetailTask(null)
+          setDeadlineTask(t)
+          setDeadlineValue(t.due_date ? new Date(t.due_date).toISOString().slice(0, 16) : '')
+        }}
+      />
+
       {isTeamleadOrAdmin && reviewTasks.length > 0 && (
         <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
           <h2 className="mb-3 font-medium text-amber-800">На валидацию</h2>
@@ -326,6 +348,7 @@ export function MyTasksPage() {
                 busyTaskId={busyTaskId}
                 currentUserId={currentUser?.id ?? ''}
                 validatorName={validatorNames[t.validator_id ?? '']}
+                onOpenDetail={setDetailTask}
               />
             ))}
           </div>

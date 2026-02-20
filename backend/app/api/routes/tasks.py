@@ -28,6 +28,7 @@ async def list_tasks(
     status: TaskStatus | None = Query(None),
     assignee_id: UUID | None = Query(None),
     task_type: str | None = Query(None),
+    is_overdue: bool | None = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -44,6 +45,8 @@ async def list_tasks(
             stmt = stmt.where(Task.task_type == tt)
         except ValueError:
             pass
+    if is_overdue is not None:
+        stmt = stmt.where(Task.is_overdue == is_overdue)
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
