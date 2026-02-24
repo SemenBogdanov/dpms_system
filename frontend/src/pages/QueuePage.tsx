@@ -12,6 +12,7 @@ import { SkeletonTable } from '@/components/Skeleton'
 import { ProactiveBlock } from '@/components/ProactiveBlock'
 import { DeadlineBadge } from '@/components/DeadlineBadge'
 import { TaskDetailModal } from '@/components/TaskDetailModal'
+import { BugfixModal } from '@/components/BugfixModal'
 
 const complexityStyles: Record<string, string> = {
   S: 'bg-slate-100 text-slate-700',
@@ -38,6 +39,10 @@ export function QueuePage() {
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [sortField, setSortField] = useState<'title' | 'estimated_q' | 'priority' | 'due_date' | 'status'>('priority')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [bugfixParent, setBugfixParent] = useState<Task | null>(null)
+  const [bugfixTitle, setBugfixTitle] = useState('')
+  const [bugfixDescription, setBugfixDescription] = useState('')
+  const [bugfixBusy, setBugfixBusy] = useState(false)
 
   const loadQueue = (category: 'default' | 'proactive') => {
     if (!currentUser) return
@@ -184,6 +189,38 @@ export function QueuePage() {
 
   const openDetail = (id: string) => {
     api.get<Task>(`/api/tasks/${id}`).then(setDetailTask).catch(() => toast.error('Не удалось загрузить задачу'))
+  }
+
+  const handleOpenBugfix = (task: Task) => {
+    setDetailTask(null)
+    setBugfixParent(task)
+    setBugfixTitle(`Баг: ${task.title}`)
+    setBugfixDescription('')
+  }
+
+  const handleCreateBugfix = async () => {
+    if (!bugfixParent || !bugfixTitle.trim()) return
+    setBugfixBusy(true)
+    try {
+      await api.post('/api/tasks/bugfix', {
+        parent_task_id: bugfixParent.id,
+        title: bugfixTitle.trim(),
+        description: bugfixDescription.trim() || undefined,
+      })
+      toast.success('Баг-фикс создан')
+      setBugfixParent(null)
+      setBugfixTitle('')
+      setBugfixDescription('')
+      if (includeArchived) {
+        api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
+      } else {
+        loadQueue(queueFilter)
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Не удалось создать баг-фикс')
+    } finally {
+      setBugfixBusy(false)
+    }
   }
 
   const handleDelete = (t: RowItem) => {
@@ -398,47 +435,64 @@ export function QueuePage() {
                     <span className="whitespace-nowrap"><QBadge q={t.estimated_q} /></span>
                   </td>
                   <td className="px-4 py-3">
-                    <DeadlineBadge dueDate={(t as QueueTaskResponse).due_date ?? (t as Task).due_date} zone={(t as QueueTaskResponse).deadline_zone ?? (t as Task).deadline_zone} />
+                    <div className="flex flex-col items-start gap-0.5">
+                      <DeadlineBadge
+                        dueDate={(t as QueueTaskResponse).due_date ?? (t as Task).due_date}
+                        zone={(t as QueueTaskResponse).deadline_zone ?? (t as Task).deadline_zone}
+                      />
+                      {((t as QueueTaskResponse).due_date ?? (t as Task).due_date) && (
+                        <span className="whitespace-nowrap text-xs text-slate-500">
+                          {new Date(((t as QueueTaskResponse).due_date ?? (t as Task).due_date)!).toLocaleDateString('ru', {
+                            day: 'numeric',
+                            month: 'short',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <PriorityBadge priority={((t as QueueTaskResponse).priority ?? (t as Task).priority) as 'low' | 'medium' | 'high' | 'critical'} />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3 whitespace-nowrap">
                     <LeagueBadge league={(t as QueueTaskResponse).min_league ?? (t as Task).min_league} />
                   </td>
                   <td className="px-4 py-3 text-sm text-slate-500">
                     {new Date((t as QueueTaskResponse).created_at ?? (t as Task).created_at).toLocaleDateString('ru')}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {isTeamleadOrAdmin && taskStatus(t) !== 'done' && (
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(t)}
-                        className="ml-2 text-slate-400 hover:text-red-600"
-                        title="Отменить задачу"
-                      >
-                        🗑️
-                      </button>
-                    )}
-                    {locked(t) ? (
-                      <span className="inline-flex items-center gap-1 text-sm text-slate-500">
-                        <Lock className="h-4 w-4" />
-                        {lockReason(t) ?? `Лига ${(t as QueueTaskResponse).min_league}`}
-                      </span>
-                    ) : canPull(t) ? (
-                      <button
-                        type="button"
-                        onClick={() => setConfirmPull(t)}
-                        disabled={!!pullingId}
-                        className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                      >
-                        Взять
-                      </button>
-                    ) : taskStatus(t) === 'in_queue' ? (
-                      <span title={lockReason(t) ?? 'WIP-лимит исчерпан'} className="cursor-help text-sm text-slate-400">
-                        WIP-лимит
-                      </span>
-                    ) : null}
+                    <div className="flex items-center justify-end gap-2 whitespace-nowrap">
+                      {isTeamleadOrAdmin && taskStatus(t) !== 'done' && taskStatus(t) !== 'cancelled' && (
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(t)}
+                          className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                          title="Отменить задачу"
+                        >
+                          🗑️
+                        </button>
+                      )}
+                      {locked(t) ? (
+                        <span className="inline-flex items-center gap-1 text-sm text-slate-500">
+                          <Lock className="h-4 w-4" />
+                          <span className="hidden sm:inline">{lockReason(t) ?? `Лига ${(t as QueueTaskResponse).min_league}`}</span>
+                        </span>
+                      ) : canPull(t) ? (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmPull(t)}
+                          disabled={!!pullingId}
+                          className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                        >
+                          Взять
+                        </button>
+                      ) : taskStatus(t) === 'in_queue' ? (
+                        <span title={lockReason(t) ?? 'WIP-лимит исчерпан'} className="cursor-help text-sm text-slate-400">
+                          WIP
+                        </span>
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -451,7 +505,41 @@ export function QueuePage() {
         task={detailTask}
         onClose={() => setDetailTask(null)}
         users={users}
+        isTeamleadOrAdmin={isTeamleadOrAdmin}
+        onOpenBugfix={handleOpenBugfix}
+        onOpenDeadline={(task) => {
+          setDetailTask(null)
+          const hours = prompt('Срок выполнения (часов от сейчас):')
+          if (!hours || Number.isNaN(Number(hours))) return
+          const dueDate = new Date(Date.now() + Number(hours) * 3600000).toISOString()
+          api
+            .patch(`/api/tasks/${task.id}/due-date`, { due_date: dueDate })
+            .then(() => {
+              toast.success('Дедлайн установлен')
+              openDetail(task.id)
+            })
+            .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
+        }}
       />
+
+      {bugfixParent && (
+        <BugfixModal
+          open={Boolean(bugfixParent)}
+          parentTask={bugfixParent}
+          author={users.find((u) => u.id === bugfixParent.assignee_id) ?? null}
+          title={bugfixTitle}
+          description={bugfixDescription}
+          onTitleChange={setBugfixTitle}
+          onDescriptionChange={setBugfixDescription}
+          onClose={() => {
+            setBugfixParent(null)
+            setBugfixTitle('')
+            setBugfixDescription('')
+          }}
+          onSubmit={handleCreateBugfix}
+          busy={bugfixBusy}
+        />
+      )}
 
       {confirmPull && (
         <div

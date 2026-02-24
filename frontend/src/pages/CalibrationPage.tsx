@@ -1,294 +1,227 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/client'
-import type { CalibrationReport, TeamleadAccuracy as TeamleadAccuracyType } from '@/api/types'
+import type { CalibrationReportNew } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { MetricCard } from '@/components/MetricCard'
-import { cn } from '@/lib/utils'
+
+function deviationColor(pct: number): string {
+  const abs = Math.abs(pct)
+  if (abs <= 15) return 'text-emerald-600'
+  if (abs <= 30) return 'text-amber-600'
+  return 'text-red-600'
+}
 
 export function CalibrationPage() {
   const { user: currentUser } = useAuth()
-  const [report, setReport] = useState<CalibrationReport | null>(null)
-  const [teamleadAccuracy, setTeamleadAccuracy] = useState<TeamleadAccuracyType[]>([])
+  const [data, setData] = useState<CalibrationReportNew | null>(null)
   const [period, setPeriod] = useState<string>('')
+  const [activeTab, setActiveTab] = useState<'tasks' | 'estimators' | 'popularity'>('tasks')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const canView =
-    currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
+  const canView = currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
 
   const load = useCallback(() => {
     if (!canView) return
-    const params: Record<string, string> | undefined = period
-      ? { period }
-      : undefined
     setLoading(true)
+    const params = period ? { period } : undefined
     api
-      .get<CalibrationReport>('/api/dashboard/calibration', params)
-      .then(setReport)
+      .get<CalibrationReportNew>('/api/dashboard/calibration', params)
+      .then(setData)
       .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка'))
-    api
-      .get<TeamleadAccuracyType[]>('/api/dashboard/teamlead-accuracy')
-      .then(setTeamleadAccuracy)
-      .catch(() => setTeamleadAccuracy([]))
       .finally(() => setLoading(false))
   }, [canView, period])
 
   useEffect(() => {
-    setLoading(true)
     load()
   }, [load])
-
-  const itemsWithDeviation =
-    report?.items.filter((i) => i.recommendation !== 'OK').length ?? 0
-  const accuracyColor =
-    (report?.overall_accuracy_percent ?? 0) > 80
-      ? 'text-emerald-600'
-      : (report?.overall_accuracy_percent ?? 0) >= 60
-        ? 'text-amber-600'
-        : 'text-red-600'
 
   if (!canView) {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl font-semibold text-slate-900">Калибровка</h1>
-        <p className="text-slate-600">
-          Доступ разрешён только тимлидам и администраторам.
-        </p>
+        <p className="text-slate-600">Доступ разрешён только тимлидам и администраторам.</p>
       </div>
     )
   }
 
-  if (loading && !report)
-    return <div className="text-slate-500">Загрузка...</div>
+  if (loading && !data) return <div className="text-slate-500">Загрузка...</div>
   if (error) return <div className="text-red-600">{error}</div>
+  if (!data) return null
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold text-slate-900">
-          Калибровка нормативов
-        </h1>
+        <h1 className="text-2xl font-semibold text-slate-900">Калибровка нормативов</h1>
+        <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+          Период:
+          <select
+            value={period}
+            onChange={(e) => setPeriod(e.target.value)}
+            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+          >
+            <option value="">Текущий месяц</option>
+            <option value="all">Все данные</option>
+          </select>
+        </label>
       </div>
 
-      {report && (
-        <>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <MetricCard
-              title="Точность нормативов"
-              value={`${Number(report.overall_accuracy_percent).toFixed(1)}%`}
-              subtitle={
-                report.period === 'all'
-                  ? 'За всё время'
-                  : `Период ${report.period}`
-              }
-              className={accuracyColor}
-            />
-            <MetricCard
-              title="Задач проанализировано"
-              value={report.total_tasks_analyzed}
-            />
-            <MetricCard
-              title="Операций с отклонением"
-              value={itemsWithDeviation}
-            />
-          </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <MetricCard title="Точность оценок" value={`${data.overall_accuracy_pct}%`} />
+        <MetricCard title="Задач проанализировано" value={data.total_tasks_analyzed} />
+        <MetricCard
+          title="Ср. отклонение"
+          value={`${data.avg_deviation_pct > 0 ? '+' : ''}${data.avg_deviation_pct}%`}
+        />
+      </div>
 
-          <div className="flex items-center gap-3">
-            <label className="text-sm font-medium text-slate-700">
-              Период:
-            </label>
-            <select
-              value={period}
-              onChange={(e) => setPeriod(e.target.value)}
-              className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-            >
-              <option value="">Текущий месяц</option>
-              <option value="all">Все данные</option>
-            </select>
-          </div>
+      <div className="flex gap-1 border-b border-slate-200 pb-2">
+        {[
+          { key: 'tasks' as const, label: 'По задачам' },
+          { key: 'estimators' as const, label: 'По оценщикам' },
+          { key: 'popularity' as const, label: 'Популярность операций' },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            onClick={() => setActiveTab(tab.key)}
+            className={`rounded-md px-4 py-2 text-sm font-medium ${
+              activeTab === tab.key
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      {activeTab === 'tasks' && (
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Задача</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Тип</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Слож.</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Оценка Q</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Факт (ч)</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Откл.</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Оценщик</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Исполнитель</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Теги</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {data.task_calibrations.map((tc) => (
+                <tr key={tc.task_id} className="bg-white">
+                  <td className="px-4 py-2 font-medium text-slate-900">{tc.title}</td>
+                  <td className="px-4 py-2 text-slate-600">{tc.task_type}</td>
+                  <td className="px-4 py-2 text-slate-600">{tc.complexity}</td>
+                  <td className="px-4 py-2">{Number(tc.estimated_q).toFixed(1)}</td>
+                  <td className="px-4 py-2">{Number(tc.actual_hours).toFixed(1)}</td>
+                  <td className={`px-4 py-2 font-semibold ${deviationColor(tc.deviation_pct)}`}>
+                    {tc.deviation_pct > 0 ? '+' : ''}{tc.deviation_pct}%
+                  </td>
+                  <td className="px-4 py-2 text-slate-600">{tc.estimator_name}</td>
+                  <td className="px-4 py-2 text-slate-600">{tc.assignee_name}</td>
+                  <td className="px-4 py-2 text-slate-500">
+                    {tc.tags.length > 0 ? tc.tags.join(', ') : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {data.task_calibrations.length === 0 && (
+            <p className="p-6 text-center text-slate-500">Нет завершённых задач за период</p>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'estimators' && (
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Оценщик</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Задач</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Точность</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Ср.откл.</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Тенденция</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Завышает</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Занижает</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {data.estimator_calibrations.map((ec) => (
+                <tr key={ec.estimator_name} className="bg-white">
+                  <td className="px-4 py-2 font-medium text-slate-900">{ec.estimator_name}</td>
+                  <td className="px-4 py-2">{ec.tasks_count}</td>
+                  <td className="px-4 py-2">{ec.accuracy_pct}%</td>
+                  <td className="px-4 py-2">
+                    {ec.avg_deviation_pct > 0 ? '+' : ''}{ec.avg_deviation_pct}%
+                  </td>
+                  <td className="px-4 py-2">
+                    <span
+                      className={
+                        ec.bias === 'точно'
+                          ? 'text-emerald-600'
+                          : ec.bias === 'завышает'
+                            ? 'text-amber-600'
+                            : 'text-red-600'
+                      }
+                    >
+                      {ec.bias === 'точно' ? '✅' : ec.bias === 'завышает' ? '📈' : '📉'} {ec.bias}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2">{ec.overestimates}</td>
+                  <td className="px-4 py-2">{ec.underestimates}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {data.estimator_calibrations.length === 0 && (
+            <p className="p-6 text-center text-slate-500">Нет данных по оценщикам</p>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'popularity' && (
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          {data.widget_popularity.length === 0 ? (
+            <p className="p-6 text-center text-slate-500">
+              Нет данных за период. Задачи с декомпозицией из калькулятора появятся после создания.
+            </p>
+          ) : (
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium text-slate-600">
-                    Операция
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-600">
-                    Категория
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-600">
-                    Сложность
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-600">
-                    Норматив (Q)
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-600">
-                    Задач
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-600">
-                    Ср. оценка
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-600">
-                    Ср. факт (ч)
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-600">
-                    Отклонение
-                  </th>
-                  <th className="px-4 py-3 text-left font-medium text-slate-600">
-                    Рекомендация
-                  </th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-600">Операция</th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-600">Задач</th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-600">%</th>
+                  <th className="px-4 py-3 text-left font-medium text-slate-600">Доля</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {[...report.items]
-                  .sort((a, b) => {
-                    const da =
-                      a.deviation_percent != null
-                        ? Math.abs(a.deviation_percent)
-                        : 0
-                    const db =
-                      b.deviation_percent != null
-                        ? Math.abs(b.deviation_percent)
-                        : 0
-                    return db - da
-                  })
-                  .map((item) => (
-                    <tr
-                      key={item.catalog_item_id}
-                      className={cn(
-                        'bg-white',
-                        item.recommendation === 'Завышена' && 'bg-amber-50',
-                        item.recommendation === 'Занижена' && 'bg-red-50'
-                      )}
-                      title={
-                        item.recommendation !== 'OK'
-                          ? 'Рекомендуется пересмотреть base_cost_q'
-                          : undefined
-                      }
-                    >
-                      <td className="px-4 py-2 font-medium text-slate-900">
-                        {item.name}
-                      </td>
-                      <td className="px-4 py-2 text-slate-600">
-                        {item.category}
-                      </td>
-                      <td className="px-4 py-2 text-slate-600">
-                        {item.complexity}
-                      </td>
-                      <td className="px-4 py-2">
-                        {Number(item.base_cost_q).toFixed(1)}
-                      </td>
-                      <td className="px-4 py-2">{item.tasks_count}</td>
-                      <td className="px-4 py-2">
-                        {Number(item.avg_estimated_q).toFixed(1)}
-                      </td>
-                      <td className="px-4 py-2">
-                        {item.avg_actual_hours != null
-                          ? Number(item.avg_actual_hours).toFixed(1)
-                          : '—'}
-                      </td>
-                      <td className="px-4 py-2">
-                        {item.deviation_percent != null
-                          ? `${Number(item.deviation_percent).toFixed(1)}%`
-                          : '—'}
-                      </td>
-                      <td className="px-4 py-2">
-                        {item.recommendation === 'OK' && '✅ OK'}
-                        {item.recommendation === 'Завышена' &&
-                          `⬆️ Завышена на ${item.deviation_percent != null ? Math.abs(Number(item.deviation_percent)).toFixed(0) : 0}%`}
-                        {item.recommendation === 'Занижена' &&
-                          `⬇️ Занижена на ${item.deviation_percent != null ? Math.abs(Number(item.deviation_percent)).toFixed(0) : 0}%`}
-                      </td>
-                    </tr>
-                  ))}
+                {data.widget_popularity.map((wp) => (
+                  <tr key={wp.name} className="bg-white">
+                    <td className="px-4 py-2 text-sm text-slate-900">{wp.name}</td>
+                    <td className="px-4 py-2 text-sm text-slate-600">{wp.tasks_count}</td>
+                    <td className="px-4 py-2 text-sm text-slate-600">{wp.usage_percent}%</td>
+                    <td className="px-4 py-2 w-48">
+                      <div className="h-3 w-full overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full rounded-full bg-indigo-500 transition-all"
+                          style={{ width: `${Math.min(100, wp.usage_percent)}%` }}
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
-            {report.items.length === 0 && (
-              <p className="p-6 text-center text-slate-500">
-                Нет данных для анализа
-              </p>
-            )}
-          </div>
-
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            <h2 className="mb-4 text-lg font-semibold text-slate-900">
-              📊 Точность оценок тимлидов
-            </h2>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-medium text-slate-600">ФИО</th>
-                    <th className="px-4 py-2 text-left font-medium text-slate-600">Задач</th>
-                    <th className="px-4 py-2 text-left font-medium text-slate-600">Точность</th>
-                    <th className="px-4 py-2 text-left font-medium text-slate-600">Смещение</th>
-                    <th className="px-4 py-2 text-left font-medium text-slate-600">Тренд</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-200">
-                  {teamleadAccuracy.map((tl) => {
-                    const accColor =
-                      tl.accuracy_percent > 80
-                        ? 'text-emerald-600'
-                        : tl.accuracy_percent >= 60
-                          ? 'text-amber-600'
-                          : 'text-red-600'
-                    const trendLabel =
-                      tl.trend === 'improving'
-                        ? '↗️ Улучшается'
-                        : tl.trend === 'declining'
-                          ? '↘️ Ухудшается'
-                          : '→ Стабильно'
-                    const trendColor =
-                      tl.trend === 'improving'
-                        ? 'text-emerald-600'
-                        : tl.trend === 'declining'
-                          ? 'text-red-600'
-                          : 'text-slate-600'
-                    const biasLabel =
-                      tl.bias === 'overestimates'
-                        ? `Завышает ${Number(tl.bias_percent).toFixed(0)}%`
-                        : tl.bias === 'underestimates'
-                          ? `Занижает ${Number(Math.abs(tl.bias_percent)).toFixed(0)}%`
-                          : 'Нейтрально'
-                    return (
-                      <tr key={tl.user_id} className="bg-white">
-                        <td className="px-4 py-2 font-medium text-slate-900">{tl.full_name}</td>
-                        <td className="px-4 py-2">{tl.tasks_evaluated}</td>
-                        <td className={cn('px-4 py-2 font-medium', accColor)}>
-                          {Number(tl.accuracy_percent).toFixed(1)}%
-                        </td>
-                        <td className="px-4 py-2 text-slate-600">{biasLabel}</td>
-                        <td className={cn('px-4 py-2', trendColor)}>{trendLabel}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-              {teamleadAccuracy.length === 0 && (
-                <p className="p-4 text-center text-slate-500">Нет данных по тимлидам</p>
-              )}
-            </div>
-            {teamleadAccuracy.length > 0 && (() => {
-              const maxBias = teamleadAccuracy.reduce(
-                (max, tl) =>
-                  Math.abs(tl.bias_percent) > Math.abs(max.bias_percent) ? tl : max,
-                teamleadAccuracy[0]
-              )
-              if (maxBias.bias === 'neutral') return null
-              return (
-                <p className="mt-4 text-sm text-slate-600">
-                  💡 {maxBias.full_name} систематически{' '}
-                  {maxBias.bias === 'overestimates' ? 'завышает' : 'занижает'} оценки
-                  {maxBias.bias === 'overestimates' ? '' : ' ETL-'}задач на{' '}
-                  {Number(Math.abs(maxBias.bias_percent)).toFixed(0)}%.
-                  Рекомендуется провести калибровку с командой.
-                </p>
-              )
-            })()}
-          </div>
-        </>
+          )}
+        </div>
       )}
     </div>
   )

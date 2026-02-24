@@ -17,7 +17,7 @@ export function LeagueBadge({ league, className }: LeagueBadgeProps) {
   return (
     <span
       className={cn(
-        'inline-flex rounded px-2 py-0.5 text-xs font-medium',
+        'inline-flex whitespace-nowrap rounded px-2 py-0.5 text-xs font-medium',
         styles[l] ?? 'bg-slate-100 text-slate-600',
         className
       )}

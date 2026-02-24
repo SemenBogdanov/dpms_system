@@ -38,6 +38,7 @@ class CatalogItemUpdate(BaseModel):
 class CatalogItemRead(CatalogItemBase):
     """Чтение позиции каталога."""
     id: UUID
+    sort_order: int = 100
     created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -45,5 +45,6 @@ class CatalogItem(Base):
     base_cost_q: Mapped[Decimal] = mapped_column(Numeric(5, 1), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     min_league: Mapped[League] = mapped_column(Enum(League), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

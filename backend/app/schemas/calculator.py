@@ -13,8 +13,6 @@ class CalcItemInput(BaseModel):
 class EstimateRequest(BaseModel):
     """Запрос на расчёт стоимости."""
     items: list[CalcItemInput]
-    complexity_multiplier: float = Field(default=1.0, ge=1.0, le=2.0)
-    urgency_multiplier: float = Field(default=1.0, ge=1.0, le=1.5)
 
 
 class EstimateBreakdownItem(BaseModel):
@@ -32,8 +30,6 @@ class EstimateResponse(BaseModel):
     """Ответ калькулятора."""
     total_q: float
     min_league: str
-    complexity_multiplier: float
-    urgency_multiplier: float
     breakdown: list[EstimateBreakdownItem]
 
 
@@ -45,5 +41,3 @@ class CreateTaskFromCalcRequest(BaseModel):
     estimator_id: UUID
     items: list[CalcItemInput]
     tags: list[str] = []
-    complexity_multiplier: float = Field(default=1.0, ge=1.0, le=2.0)
-    urgency_multiplier: float = Field(default=1.0, ge=1.0, le=1.5)

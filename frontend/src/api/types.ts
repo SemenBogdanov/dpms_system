@@ -41,6 +41,7 @@ export interface CatalogItem {
   base_cost_q: number
   description: string | null
   min_league: League
+  sort_order?: number
   is_active: boolean
   created_at: string
 }
@@ -101,6 +102,18 @@ export interface CapacityGauge {
   load: number
   utilization: number
   status: 'green' | 'yellow' | 'red'
+}
+
+export interface CapacityHistoryPoint {
+  week: string
+  earned: number
+  capacity: number
+  percent: number
+}
+
+export interface CapacityHistoryResponse {
+  weeks: CapacityHistoryPoint[]
+  total_capacity: number
 }
 
 export interface UserProgress {
@@ -171,6 +184,47 @@ export interface CalibrationReport {
   items: CalibrationItem[]
   total_tasks_analyzed: number
   overall_accuracy_percent: number
+}
+
+/** Новый формат калибровки: по задачам, оценщикам, популярность операций */
+export interface TaskCalibration {
+  task_id: string
+  title: string
+  task_type: string
+  complexity: string
+  estimated_q: number
+  actual_hours: number
+  deviation_pct: number
+  assignee_name: string
+  estimator_name: string
+  tags: string[]
+}
+
+export interface EstimatorCalibration {
+  estimator_name: string
+  tasks_count: number
+  avg_deviation_pct: number
+  accuracy_pct: number
+  bias: 'точно' | 'завышает' | 'занижает'
+  overestimates: number
+  underestimates: number
+}
+
+export interface WidgetPopularityItem {
+  name: string
+  tasks_count: number
+  usage_percent: number
+}
+
+export interface CalibrationReportNew {
+  period: string
+  total_tasks_analyzed: number
+  overall_accuracy_pct: number
+  avg_deviation_pct: number
+  task_calibrations: TaskCalibration[]
+  estimator_calibrations: EstimatorCalibration[]
+  widget_popularity: WidgetPopularityItem[]
+  total_tasks_with_breakdown: number
 }
 
 export interface TeamleadAccuracy {
@@ -369,8 +423,6 @@ export interface EstimateBreakdownItem {
 export interface EstimateResponse {
   total_q: number
   min_league: string
-  complexity_multiplier: number
-  urgency_multiplier: number
   breakdown: EstimateBreakdownItem[]
 }
 
@@ -381,6 +433,5 @@ export interface CreateTaskFromCalcRequest {
   priority: string
   estimator_id: string
   items: CalcItemInput[]
-  complexity_multiplier: number
-  urgency_multiplier: number
+  tags?: string[]
 }

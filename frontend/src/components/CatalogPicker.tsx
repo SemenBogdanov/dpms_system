@@ -24,7 +24,8 @@ interface CatalogPickerProps {
 }
 
 export function CatalogPicker({ catalog, onAdd, className }: CatalogPickerProps) {
-  const byCategory = catalog.reduce<Record<string, CatalogItem[]>>((acc, item) => {
+  const sorted = [...catalog].sort((a, b) => (a.sort_order ?? 100) - (b.sort_order ?? 100))
+  const byCategory = sorted.reduce<Record<string, CatalogItem[]>>((acc, item) => {
     const cat = item.category
     if (!acc[cat]) acc[cat] = []
     acc[cat].push(item)

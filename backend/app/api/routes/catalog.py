@@ -22,7 +22,7 @@ async def list_catalog(
     db: AsyncSession = Depends(get_db),
 ):
     """Справочник операций с фильтрами."""
-    stmt = select(CatalogItem).order_by(CatalogItem.category, CatalogItem.name)
+    stmt = select(CatalogItem).order_by(CatalogItem.sort_order)
     if category is not None:
         stmt = stmt.where(CatalogItem.category == category)
     if complexity is not None:

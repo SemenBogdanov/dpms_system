@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.task import Task, TaskStatus, TaskType, TaskPriority
 from app.models.user import User, League, UserRole
@@ -439,12 +440,14 @@ async def check_overdue_tasks(db: AsyncSession) -> None:
     """
     now = datetime.now(timezone.utc)
     result = await db.execute(
-        select(Task).where(
+        select(Task)
+        .where(
             Task.due_date.is_not(None),
             Task.due_date < now,
             Task.is_overdue.is_(False),
             Task.status.in_([TaskStatus.in_progress, TaskStatus.review]),
         )
+        .options(selectinload(Task.assignee))
     )
     overdue_tasks = list(result.scalars().all())
     if not overdue_tasks:

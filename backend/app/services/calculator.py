@@ -24,15 +24,13 @@ async def calculate_estimate(
     request: EstimateRequest,
 ) -> EstimateResponse:
     """
-    Рассчитать стоимость задачи по выбранным позициям каталога.
-    total_q = round(Σ(subtotal_q) × complexity_multiplier × urgency_multiplier, 1).
+        Рассчитать стоимость задачи по выбранным позициям каталога.
+        total_q = round(Σ(subtotal_q), 1).
     """
     if not request.items:
         return EstimateResponse(
             total_q=0.0,
             min_league="C",
-            complexity_multiplier=request.complexity_multiplier,
-            urgency_multiplier=request.urgency_multiplier,
             breakdown=[],
         )
 
@@ -75,8 +73,6 @@ async def calculate_estimate(
     return EstimateResponse(
         total_q=total_q,
         min_league=max_league.value,
-        complexity_multiplier=getattr(request, "complexity_multiplier", 1.0) or 1.0,
-        urgency_multiplier=getattr(request, "urgency_multiplier", 1.0) or 1.0,
         breakdown=breakdown,
     )
 
@@ -105,11 +101,7 @@ async def create_task_from_calc(
     """
     estimate = await calculate_estimate(
         db,
-        EstimateRequest(
-            items=request.items,
-            complexity_multiplier=request.complexity_multiplier,
-            urgency_multiplier=request.urgency_multiplier,
-        ),
+        EstimateRequest(items=request.items),
     )
 
     categories = {b.category for b in estimate.breakdown}
@@ -126,10 +118,7 @@ async def create_task_from_calc(
     league_enum = League(estimate.min_league) if estimate.min_league in ("C", "B", "A") else League.C
 
     estimation_details = {
-        # "breakdown": [b.model_dump() for b in estimate.breakdown],
         "breakdown": [b.model_dump(mode="json") for b in estimate.breakdown],
-        "complexity_multiplier": estimate.complexity_multiplier,
-        "urgency_multiplier": estimate.urgency_multiplier,
         "total_q": estimate.total_q,
         "estimated_at": datetime.now(timezone.utc).isoformat(),
     }

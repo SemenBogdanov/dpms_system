@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/client'
 import type {
   CapacityGauge,
+  CapacityHistoryPoint,
   TeamSummary,
   TeamMemberSummary,
   BurndownData,
@@ -19,6 +20,7 @@ import { exportTeamCSV } from '@/lib/csv'
 export function DashboardPage() {
   const { user: currentUser } = useAuth()
   const [capacity, setCapacity] = useState<CapacityGauge | null>(null)
+  const [capacityHistory, setCapacityHistory] = useState<CapacityHistoryPoint[]>([])
   const [team, setTeam] = useState<TeamSummary | null>(null)
   const [burndown, setBurndown] = useState<BurndownData | null>(null)
   const [tasksInWorkCount, setTasksInWorkCount] = useState(0)
@@ -44,6 +46,8 @@ export function DashboardPage() {
       setBurndown(bd)
       setTasksInWorkCount((ip?.length ?? 0) + (rv?.length ?? 0))
       setError(null)
+      const history = await api.get<{ weeks: CapacityHistoryPoint[] }>('/api/dashboard/capacity-history').catch(() => ({ weeks: [] }))
+      setCapacityHistory(history.weeks ?? [])
       if (currentUser?.role === 'teamlead' || currentUser?.role === 'admin') {
         const od = await api.get<Task[]>('/api/tasks?is_overdue=true').catch(() => [])
         setOverdueTasks(od)
@@ -119,6 +123,7 @@ export function DashboardPage() {
         <MetricCard
           title="Ёмкость команды"
           value={`${Number(util).toFixed(0)}%`}
+          sparkData={capacityHistory}
         />
         <MetricCard
           title="Задач в работе"

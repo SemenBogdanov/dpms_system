@@ -165,8 +165,8 @@ export function CalculatorPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold text-slate-900">Калькулятор задач</h1>
-      <div className="flex gap-6">
-        <div className="flex-1 overflow-y-auto max-h-[calc(100vh-180px)] rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-6 md:flex-row">
+        <div className="w-full md:w-[620px] md:flex-shrink-0 overflow-y-auto max-h-[60vh] md:max-h-[calc(100vh-180px)] rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex flex-wrap gap-1 border-b border-slate-200 pb-2">
             {tabs.map(({ key, label }) => (
               <button
@@ -185,7 +185,7 @@ export function CalculatorPage() {
           </div>
           <CatalogPicker catalog={filteredCatalog} onAdd={addToCart} />
         </div>
-        <div className="w-80 flex-shrink-0 sticky top-4 self-start max-h-[calc(100vh-180px)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="w-full md:flex-1 md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-180px)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <EstimateCart
             rows={cart}
             onQuantity={setQuantity}

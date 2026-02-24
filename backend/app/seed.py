@@ -4,7 +4,7 @@ import random
 from decimal import Decimal
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select  # type: ignore[import]
+from sqlalchemy import select, update  # type: ignore[import]
 from sqlalchemy.ext.asyncio import AsyncSession  # type: ignore[import]
 
 from app.database import AsyncSessionLocal
@@ -30,61 +30,63 @@ USERS = [
     {"full_name": "Админ Системы", "email": "admin@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0, "quality_score": 100.0},
 ]
 
-# --- Каталог операций ---
+# --- Каталог операций (cat, name, compl, cost, desc, min_league, sort_order) ---
 CATALOG = [
-    # Виджеты
-    ("widget", "Разметка (x10)", "M", Decimal("0.5"), "Разметка", League.C), # Закладываем 10 шт. виджета разметки по 3 мин. = 30 мин.
-    ("widget", "Event-контейнер (x2)", "M", Decimal("0.25"), "Ивент контейнер", League.C), # Закладываем 2 шт. виджета разметки по 7.5 мин. = 15 мин.
-    ("widget", "Текст / Индикатор (x10)", "S", Decimal("0.75"), "Текст или индикатор", League.C), # Закладываем 10 шт. виджета текста или индикатора по 4.5 мин. = 45 мин.
-    ("widget", "KPI-карточка (x1)", "M", Decimal("1.0"), "KPI-карточка", League.C), # Закладываем 1 шт. виджета KPI-карточки по 1 час. = 60 мин.
-    ("widget", "Домик (x3)", "S", Decimal("0.15"), "Домик", League.C), # Закладываем 3 шт. виджета домик с общим временем 10 мин. = 10 мин.
-    ("widget", "Кнопка (x2)", "S", Decimal("0.15"), "Кнопка", League.C), # Закладываем 2 шт. виджета кнопки с общим временем 5 мин. = 10 мин.
-    ("widget", "Календарь (x1)", "M", Decimal("0.3"), "Календарь", League.C),  # Закладываем 1 шт. виджета календаря по 30 мин. = 30 мин.
-    ("widget", "Фильтр (x5)", "L", Decimal("2.0"), "Фильтр или выбор даты", League.C), # Закладываем 5 шт. виджета фильтра по 24 минут каждый = 120 минут.
-    ("widget", "Кнопочный фильтр (x4)", "M", Decimal("1.0"), "Кнопочный фильтр", League.C), # Закладываем 4 шт. виджета кнопочного фильтра по 10 минут каждый = 40 минут.
-    ("widget", "Комбинированная диаграмма (x1)", "XL", Decimal("2.5"), "Комбинированная диаграмма", League.B), # Закладываем 1 шт. виджета комбинированной диаграммы по 150 минут. = 150 минут.
-    ("widget", "Line Chart (x1)", "M", Decimal("1.0"), "Линейный график", League.B), # Закладываем одну штуку виджета линейного графика стоимостью 1 час. = 60 минут.
-    ("widget", "Bar Chart (x1)", "M", Decimal("1.0"), "Столбчатая диаграмма", League.B), # Закладываем одну штуку виджета столбчатой диаграммы стоимостью 1 час. = 60 минут.
-    ("widget", "Pie Chart (x1)", "M", Decimal("1.0"), "Круговая диаграмма", League.B), # Закладываем одну штуку виджета круговой диаграммы стоимостью 1 час. = 60 минут.
-    ("widget", "Простая таблица (x1)", "M", Decimal("2.0"), "Простая таблица", League.C), # Закладываем одну штуку виджета простой таблицы стоимостью 2 часа. = 120 минут.
-    ("widget", "Geo Map (x1)", "L", Decimal("3.0"), "Геокарта", League.A), # Закладываем одну штуку геокарты стоимостью 3 часа. = 180 минут.
-    ("widget", "Pivot Table (x1)", "L", Decimal("2.0"), "Сводная таблица", League.A), # Закладываем одну штуку сводной таблицы, стоимостью в два часа. = 120 минут.
-    ("widget", "Custom JS Widget (x1)", "XL", Decimal("8.0"), "Кастомный JS-виджет", League.A), # Закладываем одну штуку виджета стоимостью 8 часов. = 480 минут.
-    ("widget", "Отладка S", "S", Decimal("0.5"), "Отладка ошибок на сформированном экране S-сложности", League.C), # Закладываем 1 шт. теста отладки ошибок на сформированном экране 30 минут. = 30 минут.
-    ("widget", "Отладка M", "M", Decimal("1.0"), "Отладка ошибок на сформированном экране M-сложности", League.C), # Закладываем 1 шт. теста отладки ошибок на сформированном экране 60 минут. = 60 минут.
-    ("widget", "Отладка L", "L", Decimal("2.0"), "Отладка ошибок на сформированном экране L-сложности", League.B), # Закладываем 1 шт. теста отладки ошибок на сформированном экране 90 минут. = 90 минут.
-    # ETL
-    #("etl", "Простой поток (Source → Target) (x1)", "S", Decimal("3.0"), "Простой ETL-поток", League.C),
-    ("etl", "DDL + Нейминг", "S", Decimal("1.5"), "DDL и нейминг", League.C),
-    ("etl", "Настройка NiFi / Airflow DAG (x1)", "M", Decimal("4.0"), "Настройка оркестрации", League.B),
-    ("etl", "Сложный SQL (JOIN 3+, оконные функции) (x1)", "L", Decimal("6.0"), "Сложный SQL", League.A),
-    ("etl", "ФЛК (Форматно-логический контроль) (x1)", "M", Decimal("3.0"), "ФЛК", League.B),
-    ("etl", "Wiki-документация", "S", Decimal("2.0"), "Документация в Wiki", League.C),
-    # ETL/API/Docs (Phase 5)
-    ("etl", "NiFi Flow: Simple (1-3 processors)", "S", Decimal("3.0"), "NiFi Flow 1-3 процессора", League.C),
-    ("etl", "NiFi Flow: Medium (4-8 processors)", "M", Decimal("6.0"), "NiFi Flow 4-8 процессоров", League.C),
-    ("etl", "NiFi Flow: Complex (9+ processors)", "L", Decimal("12.0"), "NiFi Flow 9+ процессоров", League.B),
-    ("etl", "Dremio View: Simple Join", "S", Decimal("2.0"), "Dremio View простой join", League.C),
-    ("etl", "Dremio View: Multi-source + Transform", "M", Decimal("5.0"), "Dremio View несколько источников", League.B),
-    ("etl", "Dremio View: Complex Analytics", "L", Decimal("10.0"), "Dremio View сложная аналитика", League.A),
-    ("etl", "PostgreSQL Migration Script", "M", Decimal("4.0"), "Скрипт миграции PostgreSQL", League.C),
-    ("etl", "Data Quality Check", "S", Decimal("2.5"), "Проверка качества данных", League.C),
-    ("api", "API Endpoint: REST GET", "S", Decimal("3.0"), "REST GET эндпоинт", League.C),
-    ("api", "API Endpoint: REST POST + Validation", "M", Decimal("5.0"), "REST POST с валидацией", League.B),
-    ("api", "API Integration: External Service", "L", Decimal("8.0"), "Интеграция с внешним сервисом", League.B),
-    ("docs", "Documentation: Technical Spec", "M", Decimal("4.0"), "Техническая спецификация", League.C),
-    ("docs", "Documentation: User Guide", "S", Decimal("2.0"), "Руководство пользователя", League.C),
+    # ─── Часто используемые (10-29) ───
+    ("widget", "Разметка (x10)", "M", Decimal("0.5"), "Разметка", League.C, 10),
+    ("widget", "Текст / Индикатор (x10)", "S", Decimal("0.75"), "Текст или индикатор", League.C, 11),
+    ("widget", "Кнопочный фильтр (x4)", "M", Decimal("1.0"), "Кнопочный фильтр", League.C, 12),
+    ("widget", "Event-контейнер (x2)", "M", Decimal("0.25"), "Ивент контейнер", League.C, 13),
+    ("widget", "Фильтр (x5)", "L", Decimal("2.0"), "Фильтр или выбор даты", League.C, 14),
+    ("widget", "Простая таблица (x1)", "M", Decimal("2.0"), "Простая таблица", League.C, 15),
+    ("widget", "KPI-карточка (x1)", "M", Decimal("1.0"), "KPI-карточка", League.C, 16),
+    # ─── Средняя частота (30-49) ───
+    ("widget", "Line Chart (x1)", "M", Decimal("1.0"), "Линейный график", League.B, 30),
+    ("widget", "Bar Chart (x1)", "M", Decimal("1.0"), "Столбчатая диаграмма", League.B, 31),
+    ("widget", "Pie Chart (x1)", "M", Decimal("1.0"), "Круговая диаграмма", League.B, 32),
+    ("widget", "Календарь (x1)", "M", Decimal("0.3"), "Календарь", League.C, 33),
+    ("widget", "Домик (x3)", "S", Decimal("0.15"), "Домик", League.C, 34),
+    ("widget", "Кнопка (x2)", "S", Decimal("0.15"), "Кнопка", League.C, 35),
+    ("widget", "Отладка S", "S", Decimal("0.5"), "Отладка ошибок S-сложности", League.C, 36),
+    ("widget", "Отладка M", "M", Decimal("1.0"), "Отладка ошибок M-сложности", League.C, 37),
+    ("widget", "Отладка L", "L", Decimal("2.0"), "Отладка ошибок L-сложности", League.B, 38),
+    # ─── Редко используемые (50-69) ───
+    ("widget", "Комбинированная диаграмма (x1)", "XL", Decimal("2.5"), "Комбинированная диаграмма", League.B, 50),
+    ("widget", "Geo Map (x1)", "L", Decimal("3.0"), "Геокарта", League.A, 51),
+    ("widget", "Pivot Table (x1)", "L", Decimal("2.0"), "Сводная таблица", League.A, 52),
+    ("widget", "Custom JS Widget (x1)", "XL", Decimal("8.0"), "Кастомный JS-виджет", League.A, 53),
+    # ─── ETL (70-89) ───
+    ("etl", "DDL + Нейминг", "S", Decimal("1.5"), "DDL и нейминг", League.C, 70),
+    ("etl", "ФЛК (Форматно-логический контроль) (x1)", "M", Decimal("3.0"), "ФЛК", League.B, 71),
+    ("etl", "Настройка NiFi / Airflow DAG (x1)", "M", Decimal("4.0"), "Настройка оркестрации", League.B, 72),
+    ("etl", "Сложный SQL (JOIN 3+, оконные функции) (x1)", "L", Decimal("6.0"), "Сложный SQL", League.A, 73),
+    ("etl", "Wiki-документация", "S", Decimal("2.0"), "Документация в Wiki", League.C, 74),
+    ("etl", "NiFi Flow: Simple (1-3 processors)", "S", Decimal("3.0"), "NiFi Flow 1-3 процессора", League.C, 75),
+    ("etl", "NiFi Flow: Medium (4-8 processors)", "M", Decimal("6.0"), "NiFi Flow 4-8 процессоров", League.C, 76),
+    ("etl", "NiFi Flow: Complex (9+ processors)", "L", Decimal("12.0"), "NiFi Flow 9+ процессоров", League.B, 77),
+    ("etl", "Dremio View: Simple Join", "S", Decimal("2.0"), "Dremio View простой join", League.C, 78),
+    ("etl", "Dremio View: Multi-source + Transform", "M", Decimal("5.0"), "Dremio View несколько источников", League.B, 79),
+    ("etl", "Dremio View: Complex Analytics", "L", Decimal("10.0"), "Dremio View сложная аналитика", League.A, 80),
+    ("etl", "PostgreSQL Migration Script", "M", Decimal("4.0"), "Скрипт миграции PostgreSQL", League.C, 81),
+    ("etl", "Data Quality Check", "S", Decimal("2.5"), "Проверка качества данных", League.C, 82),
+    # ─── API (90-99) ───
+    ("api", "API Endpoint: REST GET", "S", Decimal("3.0"), "REST GET эндпоинт", League.C, 90),
+    ("api", "API Endpoint: REST POST + Validation", "M", Decimal("5.0"), "REST POST с валидацией", League.B, 91),
+    ("api", "API Integration: External Service", "L", Decimal("8.0"), "Интеграция с внешним сервисом", League.B, 92),
+    # ─── Docs (100-109) ───
+    ("docs", "Documentation: Technical Spec", "M", Decimal("4.0"), "Техническая спецификация", League.C, 100),
+    ("docs", "Documentation: User Guide", "S", Decimal("2.0"), "Руководство пользователя", League.C, 101),
 ]
 
-# Проактивные операции (Доработка 6)
+# Проактивные операции (sort_order 200+)
 PROACTIVE_CATALOG = [
-    ("proactive", "Рефакторинг: оптимизация существующего потока", "M", Decimal("5.0"), "Оптимизация потока", League.C),
-    ("proactive", "Документация: описание процесса", "S", Decimal("3.0"), "Описание процесса", League.C),
-    ("proactive", "Менторинг: обучение коллеги", "M", Decimal("4.0"), "Обучение коллеги", League.B),
-    ("proactive", "Исследование: оценка нового инструмента", "L", Decimal("8.0"), "Оценка инструмента", League.B),
-    ("proactive", "Техдолг: покрытие тестами", "S", Decimal("3.0"), "Покрытие тестами", League.C),
-    ("proactive", "Техдолг: улучшение мониторинга", "M", Decimal("5.0"), "Улучшение мониторинга", League.B),
-    ("proactive", "Предварительный анализ и декомпозиция", "M", Decimal("4.0"), "Анализ сложной задачи, декомпозиция на типовые операции", League.C),
+    ("proactive", "Рефакторинг: оптимизация существующего потока", "M", Decimal("5.0"), "Оптимизация потока", League.C, 200),
+    ("proactive", "Документация: описание процесса", "S", Decimal("3.0"), "Описание процесса", League.C, 201),
+    ("proactive", "Менторинг: обучение коллеги", "M", Decimal("4.0"), "Обучение коллеги", League.B, 202),
+    ("proactive", "Исследование: оценка нового инструмента", "L", Decimal("8.0"), "Оценка инструмента", League.B, 203),
+    ("proactive", "Техдолг: покрытие тестами", "S", Decimal("3.0"), "Покрытие тестами", League.C, 204),
+    ("proactive", "Техдолг: улучшение мониторинга", "M", Decimal("5.0"), "Улучшение мониторинга", League.B, 205),
+    ("proactive", "Предварительный анализ и декомпозиция", "M", Decimal("4.0"), "Анализ сложной задачи", League.C, 206),
 ]
 
 
@@ -118,7 +120,7 @@ async def ensure_catalog(session: AsyncSession) -> list[CatalogItem]:
         return list(result.scalars().all())
 
     items = []
-    for cat, name, compl, cost, desc, min_league in CATALOG:
+    for cat, name, compl, cost, desc, min_league, sort_order in CATALOG:
         item = CatalogItem(
             category=CatalogCategory(cat),
             name=name,
@@ -126,6 +128,7 @@ async def ensure_catalog(session: AsyncSession) -> list[CatalogItem]:
             base_cost_q=cost,
             description=desc,
             min_league=min_league,
+            sort_order=sort_order,
         )
         session.add(item)
         await session.flush()
@@ -139,7 +142,7 @@ async def ensure_proactive_catalog(session: AsyncSession, catalog_items: list[Ca
     if has_proactive:
         return catalog_items
     added = []
-    for cat, name, compl, cost, desc, min_league in PROACTIVE_CATALOG:
+    for cat, name, compl, cost, desc, min_league, sort_order in PROACTIVE_CATALOG:
         item = CatalogItem(
             category=CatalogCategory(cat),
             name=name,
@@ -147,6 +150,7 @@ async def ensure_proactive_catalog(session: AsyncSession, catalog_items: list[Ca
             base_cost_q=cost,
             description=desc,
             min_league=min_league,
+            sort_order=sort_order,
         )
         session.add(item)
         await session.flush()
@@ -322,6 +326,70 @@ async def ensure_burndown_transactions(session: AsyncSession, users_by_email: di
         session.add(t)
 
 
+async def ensure_capacity_history(session: AsyncSession, users_by_email: dict[str, User]) -> None:
+    """Транзакции за 6 недель для спарклайна ёмкости."""
+    result = await session.execute(
+        select(QTransaction.id).where(QTransaction.reason == "Capacity history seed").limit(1)
+    )
+    if result.scalar_one_or_none():
+        return
+
+    now = datetime.now(timezone.utc)
+    executors = [u for u in users_by_email.values() if u.role.value == "executor"]
+
+    weekly_data = [
+        (5, [Decimal("18.0"), Decimal("15.0"), Decimal("12.0")]),
+        (4, [Decimal("20.0"), Decimal("18.0"), Decimal("8.0")]),
+        (3, [Decimal("25.0"), Decimal("20.0"), Decimal("15.0")]),
+        (2, [Decimal("22.0"), Decimal("16.0"), Decimal("10.0")]),
+        (1, [Decimal("30.0"), Decimal("25.0"), Decimal("18.0")]),
+    ]
+
+    for weeks_ago, amounts in weekly_data:
+        week_center = now - timedelta(weeks=weeks_ago) + timedelta(days=random.randint(0, 4))
+        for i, amount in enumerate(amounts):
+            if i >= len(executors):
+                break
+            t = QTransaction(
+                user_id=executors[i].id,
+                amount=amount,
+                wallet_type=WalletType.main,
+                reason="Capacity history seed",
+            )
+            session.add(t)
+            await session.flush()
+            await session.execute(
+                update(QTransaction).where(QTransaction.id == t.id).values(created_at=week_center)
+            )
+
+
+async def ensure_karma_demo(session: AsyncSession, users_by_email: dict[str, User]) -> None:
+    """Начислить карму для демо магазина."""
+    maria = users_by_email.get("orlovskaya@ac.gov.ru")
+    if not maria or float(maria.wallet_karma) > 0:
+        return
+
+    maria.wallet_karma = Decimal("15.0")
+    t = QTransaction(
+        user_id=maria.id,
+        amount=Decimal("15.0"),
+        wallet_type=WalletType.karma,
+        reason="Перевыполнение плана за январь 2026",
+    )
+    session.add(t)
+
+    ekaterina = users_by_email.get("zavyalova@ac.gov.ru")
+    if ekaterina and float(ekaterina.wallet_karma) == 0:
+        ekaterina.wallet_karma = Decimal("8.0")
+        t2 = QTransaction(
+            user_id=ekaterina.id,
+            amount=Decimal("8.0"),
+            wallet_type=WalletType.karma,
+            reason="Перевыполнение плана за январь 2026",
+        )
+        session.add(t2)
+
+
 async def ensure_shop_items(session: AsyncSession) -> None:
     """Добавить товары магазина, если ещё нет."""
     result = await session.execute(select(ShopItem).limit(1))
@@ -406,6 +474,8 @@ async def run_seed() -> None:
             await ensure_tasks(session, users, catalog)
             await ensure_shop_items(session)
             await ensure_burndown_transactions(session, users)
+            await ensure_capacity_history(session, users)
+            await ensure_karma_demo(session, users)
             await ensure_demo_notifications(session, users)
             await session.commit()
             print("Seed выполнен успешно.")
