@@ -19,6 +19,7 @@ from app.schemas.task import (
     CreateBugfixRequest,
     FocusResponse,
     TimeCorrection,
+    compute_deadline_zone,
 )
 from app.services.queue import create_bugfix
 from app.services.focus import start_focus, pause_focus, correct_active_time
@@ -51,7 +52,14 @@ async def list_tasks(
     if is_overdue is not None:
         stmt = stmt.where(Task.is_overdue == is_overdue)
     result = await db.execute(stmt)
-    return list(result.scalars().all())
+    tasks = list(result.scalars().all())
+    out: list[TaskRead] = []
+    for t in tasks:
+        data = TaskRead.model_validate(t, from_attributes=True)
+        if t.due_date:
+            data.deadline_zone = compute_deadline_zone(t)
+        out.append(data)
+    return out
 
 
 @router.get("/export", response_model=TasksExport)
@@ -133,7 +141,10 @@ async def get_task(
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
-    return task
+    data = TaskRead.model_validate(task, from_attributes=True)
+    if task.due_date:
+        data.deadline_zone = compute_deadline_zone(task)
+    return data
 
 
 @router.post("", response_model=TaskRead)

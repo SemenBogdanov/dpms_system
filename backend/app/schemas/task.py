@@ -54,6 +54,7 @@ class TaskRead(TaskBase):
     parent_task_id: UUID | None = None
     deadline_zone: str | None = None  # "green" | "yellow" | "red" | None
     tags: list[str] = Field(default_factory=list)
+    rejection_count: int = 0
     focus_started_at: datetime | None = None
     active_seconds: int = 0
     active_hours: float = 0.0

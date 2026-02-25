@@ -282,6 +282,8 @@ async def validate_task(
         task.rejection_comment = comment.strip()
         # При возврате задача не должна оставаться в фокусе
         task.focus_started_at = None
+        # Счётчик возвратов
+        task.rejection_count = (getattr(task, "rejection_count", 0) or 0) + 1
 
         # Quality Score: штраф за возврат
         if task.assignee_id:

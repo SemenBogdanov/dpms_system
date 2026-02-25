@@ -309,6 +309,270 @@ async def ensure_tasks(
         )
 
 
+async def ensure_extended_test_tasks(
+    session: AsyncSession,
+    users_by_email: dict[str, User],
+    catalog_items: list[CatalogItem],
+) -> None:
+    """Расширенные тестовые задачи с разными датами, статусами и возвратами."""
+    result = await session.execute(
+        select(Task).where(Task.title == "Интеграция с СУФД (старая)").limit(1)
+    )
+    if result.scalar_one_or_none():
+        return
+
+    anna = users_by_email["semenova@ac.gov.ru"]
+    maria = users_by_email["orlovskaya@ac.gov.ru"]
+    ekaterina = users_by_email["zavyalova@ac.gov.ru"]
+    ivan = users_by_email["petrov@ac.gov.ru"]
+    admin = users_by_email["admin@ac.gov.ru"]
+
+    now = datetime.now(timezone.utc)
+
+    extended_tasks = [
+        {
+            "title": "Интеграция с СУФД (старая)",
+            "task_type": TaskType.api,
+            "complexity": Complexity.L,
+            "estimated_q": Decimal("8.0"),
+            "priority": TaskPriority.high,
+            "status": TaskStatus.in_queue,
+            "min_league": League.B,
+            "assignee": None,
+            "created_ago_hours": 168,
+            "tags": ["СУФД", "API"],
+        },
+        {
+            "title": "Отчёт по госзакупкам за 2025",
+            "task_type": TaskType.widget,
+            "complexity": Complexity.XL,
+            "estimated_q": Decimal("12.0"),
+            "priority": TaskPriority.medium,
+            "status": TaskStatus.in_queue,
+            "min_league": League.A,
+            "assignee": None,
+            "created_ago_hours": 240,
+            "tags": ["Закупки", "Отчётность"],
+        },
+        {
+            "title": "DDL для нового справочника ОКЕИ",
+            "task_type": TaskType.etl,
+            "complexity": Complexity.S,
+            "estimated_q": Decimal("1.5"),
+            "priority": TaskPriority.low,
+            "status": TaskStatus.in_queue,
+            "min_league": League.C,
+            "assignee": None,
+            "created_ago_hours": 336,
+            "tags": ["Справочники", "DDL"],
+        },
+        {
+            "title": "KPI-дашборд для зампреда",
+            "task_type": TaskType.widget,
+            "complexity": Complexity.L,
+            "estimated_q": Decimal("7.0"),
+            "priority": TaskPriority.high,
+            "status": TaskStatus.in_progress,
+            "min_league": League.B,
+            "assignee": maria,
+            "created_ago_hours": 72,
+            "started_ago_hours": 48,
+            "due_in_hours": 8,
+            "sla_hours": 14,
+            "tags": ["КПЭ", "Руководство"],
+        },
+        {
+            "title": "NiFi flow: загрузка реестра МСП",
+            "task_type": TaskType.etl,
+            "complexity": Complexity.M,
+            "estimated_q": Decimal("6.0"),
+            "priority": TaskPriority.medium,
+            "status": TaskStatus.in_progress,
+            "min_league": League.C,
+            "assignee": ivan,
+            "created_ago_hours": 96,
+            "started_ago_hours": 24,
+            "due_in_hours": 48,
+            "sla_hours": 18,
+            "tags": ["NiFi", "МСП"],
+        },
+        {
+            "title": "Витрина данных по 44-ФЗ",
+            "task_type": TaskType.widget,
+            "complexity": Complexity.M,
+            "estimated_q": Decimal("4.0"),
+            "priority": TaskPriority.high,
+            "status": TaskStatus.in_progress,
+            "min_league": League.B,
+            "assignee": ekaterina,
+            "created_ago_hours": 120,
+            "started_ago_hours": 72,
+            "due_in_hours": -6,
+            "sla_hours": 12,
+            "is_overdue": True,
+            "tags": ["44-ФЗ", "Витрина"],
+        },
+        {
+            "title": "Сложный SQL: аналитика по контрактам",
+            "task_type": TaskType.etl,
+            "complexity": Complexity.L,
+            "estimated_q": Decimal("6.0"),
+            "priority": TaskPriority.medium,
+            "status": TaskStatus.in_progress,
+            "min_league": League.B,
+            "assignee": maria,
+            "created_ago_hours": 200,
+            "started_ago_hours": 120,
+            "due_in_hours": 24,
+            "sla_hours": 12,
+            "rejection_count": 2,
+            "rejection_comment": "Некорректная агрегация по подразделениям, пересчитать",
+            "tags": ["SQL", "Контракты"],
+        },
+        {
+            "title": "Geo Map филиалов с KPI",
+            "task_type": TaskType.widget,
+            "complexity": Complexity.L,
+            "estimated_q": Decimal("5.0"),
+            "priority": TaskPriority.medium,
+            "status": TaskStatus.review,
+            "min_league": League.B,
+            "assignee": ekaterina,
+            "created_ago_hours": 180,
+            "started_ago_hours": 100,
+            "due_in_hours": 16,
+            "sla_hours": 10,
+            "rejection_count": 1,
+            "tags": ["GeoMap", "КПЭ"],
+        },
+        {
+            "title": "ETL: миграция справочника ОКПД-2",
+            "task_type": TaskType.etl,
+            "complexity": Complexity.S,
+            "estimated_q": Decimal("2.0"),
+            "priority": TaskPriority.medium,
+            "status": TaskStatus.done,
+            "min_league": League.C,
+            "assignee": ivan,
+            "created_ago_hours": 400,
+            "started_ago_hours": 350,
+            "completed_ago_hours": 320,
+            "rejection_count": 0,
+            "tags": ["ОКПД", "Справочники"],
+        },
+        {
+            "title": "Дашборд мониторинга NiFi",
+            "task_type": TaskType.widget,
+            "complexity": Complexity.L,
+            "estimated_q": Decimal("7.0"),
+            "priority": TaskPriority.high,
+            "status": TaskStatus.done,
+            "min_league": League.B,
+            "assignee": maria,
+            "created_ago_hours": 500,
+            "started_ago_hours": 450,
+            "completed_ago_hours": 400,
+            "rejection_count": 1,
+            "tags": ["NiFi", "Мониторинг"],
+        },
+        {
+            "title": "Документация API: руководство разработчика",
+            "task_type": TaskType.docs,
+            "complexity": Complexity.M,
+            "estimated_q": Decimal("4.0"),
+            "priority": TaskPriority.low,
+            "status": TaskStatus.done,
+            "min_league": League.C,
+            "assignee": ivan,
+            "created_ago_hours": 600,
+            "started_ago_hours": 550,
+            "completed_ago_hours": 500,
+            "rejection_count": 3,
+            "tags": ["Документация", "API"],
+        },
+        {
+            "title": "Pivot: сводка по исполнению бюджета",
+            "task_type": TaskType.widget,
+            "complexity": Complexity.M,
+            "estimated_q": Decimal("4.5"),
+            "priority": TaskPriority.medium,
+            "status": TaskStatus.done,
+            "min_league": League.B,
+            "assignee": ekaterina,
+            "created_ago_hours": 350,
+            "started_ago_hours": 300,
+            "completed_ago_hours": 270,
+            "rejection_count": 0,
+            "tags": ["Бюджет", "Pivot"],
+        },
+        {
+            "title": "Срочная выгрузка для коллегии",
+            "task_type": TaskType.widget,
+            "complexity": Complexity.M,
+            "estimated_q": Decimal("3.0"),
+            "priority": TaskPriority.critical,
+            "status": TaskStatus.in_progress,
+            "min_league": League.C,
+            "assignee": ivan,
+            "assigned_by": anna,
+            "created_ago_hours": 30,
+            "started_ago_hours": 26,
+            "due_in_hours": 4,
+            "sla_hours": 9,
+            "tags": ["Руководство", "Срочное"],
+        },
+    ]
+
+    for t in extended_tasks:
+        created_at = now - timedelta(hours=t.get("created_ago_hours", 0))
+        started_at = now - timedelta(hours=t["started_ago_hours"]) if t.get("started_ago_hours") else None
+        completed_at = now - timedelta(hours=t["completed_ago_hours"]) if t.get("completed_ago_hours") else None
+        validated_at = completed_at + timedelta(hours=1) if completed_at else None
+
+        due_date = None
+        if t.get("due_in_hours") is not None:
+            due_date = now + timedelta(hours=t["due_in_hours"])
+
+        task = Task(
+            title=t["title"],
+            description=f"Тестовая задача: {t['title']}",
+            task_type=t["task_type"],
+            complexity=t["complexity"],
+            estimated_q=t["estimated_q"],
+            priority=t["priority"],
+            status=t["status"],
+            min_league=t["min_league"],
+            assignee_id=t["assignee"].id if t.get("assignee") else None,
+            assigned_by_id=t["assigned_by"].id if t.get("assigned_by") else None,
+            estimator_id=admin.id,
+            validator_id=anna.id if t["status"] == TaskStatus.done else None,
+            started_at=started_at,
+            completed_at=completed_at,
+            validated_at=validated_at,
+            due_date=due_date,
+            sla_hours=t.get("sla_hours"),
+            is_overdue=t.get("is_overdue", False),
+            rejection_count=t.get("rejection_count", 0),
+            rejection_comment=t.get("rejection_comment"),
+            tags=t.get("tags", []),
+        )
+        session.add(task)
+        await session.flush()
+
+        await session.execute(
+            update(Task).where(Task.id == task.id).values(created_at=created_at)
+        )
+
+        if t["status"] == TaskStatus.done and t.get("assignee"):
+            await credit_q(
+                session,
+                t["assignee"].id,
+                t["estimated_q"],
+                reason=f"Задача #{task.id} принята",
+                task_id=task.id,
+            )
+
+
 async def ensure_burndown_transactions(session: AsyncSession, users_by_email: dict[str, User]) -> None:
     """Транзакции за текущий месяц по дням для графика burn-down (main, amount > 0)."""
     result = await session.execute(
@@ -489,6 +753,7 @@ async def run_seed() -> None:
             catalog = await ensure_catalog(session)
             catalog = await ensure_proactive_catalog(session, catalog)
             await ensure_tasks(session, users, catalog)
+            await ensure_extended_test_tasks(session, users, catalog)
             await ensure_shop_items(session)
             await ensure_burndown_transactions(session, users)
             await ensure_capacity_history(session, users)
