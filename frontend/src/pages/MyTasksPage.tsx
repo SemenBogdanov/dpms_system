@@ -59,20 +59,55 @@ export function MyTasksPage() {
     loadReviewTasks()
   }, [loadReviewTasks])
 
-  const refreshTasks = useCallback(() => {
+  const refreshTasks = useCallback(async () => {
     if (!currentUser) return
-    api.get<Task[]>(`/api/tasks?assignee_id=${currentUser.id}`).then(setTasks)
-    loadReviewTasks()
-    api.get<User[]>('/api/users').then(setUsers)
+    const [newTasks] = await Promise.all([
+      api.get<Task[]>(`/api/tasks?assignee_id=${currentUser.id}`),
+      loadReviewTasks(),
+      api.get<User[]>('/api/users')
+        .then((u) => setUsers(u))
+        .catch(() => {}),
+    ])
+    setTasks(newTasks)
   }, [currentUser, loadReviewTasks])
+
+  const handleFocus = async (taskId: string) => {
+    setFocusBusyId(taskId)
+    try {
+      await api.post(`/api/tasks/${taskId}/focus`, {})
+      toast.success('Задача в фокусе')
+      await refreshTasks()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка фокуса')
+    } finally {
+      setFocusBusyId(null)
+    }
+  }
+
+  const handlePause = async (taskId: string) => {
+    setFocusBusyId(taskId)
+    try {
+      await api.post(`/api/tasks/${taskId}/pause`, {})
+      toast.success('Пауза')
+      await refreshTasks()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка паузы')
+    } finally {
+      setFocusBusyId(null)
+    }
+  }
 
   const formatDuration = (totalSeconds: number): string => {
     const hours = Math.floor(totalSeconds / 3600)
     const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const seconds = Math.floor(totalSeconds % 60)
     if (hours > 0) {
-      return `${hours}ч ${minutes}мин`
+      return `${hours}ч ${String(minutes).padStart(2, '0')}м ${String(seconds).padStart(2, '0')}с`
     }
-    return `${minutes}мин`
+    if (minutes > 0) {
+      return `${minutes}м ${String(seconds).padStart(2, '0')}с`
+    }
+    return `${seconds}с`
   }
 
   const [now, setNow] = useState<number>(() => Date.now())
@@ -271,26 +306,53 @@ export function MyTasksPage() {
               const hasActive = !t.is_focused && (t.active_seconds ?? 0) > 0
               const isNewAssigned = !t.is_focused && (t.active_seconds ?? 0) === 0
 
+              const borderClass = isFocused
+                ? 'border-emerald-300 bg-emerald-50/30'
+                : hasActive
+                  ? 'border-amber-200 bg-amber-50/20'
+                  : 'border-slate-200 bg-white'
+
               return (
-                <div key={t.id} className="space-y-1 rounded-lg border border-slate-200 bg-white p-3">
-                  <div className="mb-1 flex items-center justify-between text-xs font-medium">
-                    {isFocused && (
-                      <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-700">
-                        🟢 В ФОКУСЕ&nbsp;
-                        <span className="font-semibold">⏱ {elapsedLabel}</span>
-                      </span>
-                    )}
-                    {!isFocused && hasActive && (
-                      <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-slate-700">
-                        ⏸ НА ПАУЗЕ&nbsp;
-                        <span className="font-semibold">⏱ {elapsedLabel} накоплено</span>
-                      </span>
-                    )}
-                    {!isFocused && isNewAssigned && (
-                      <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-blue-700">
-                        🆕 НАЗНАЧЕНА (ожидает фокуса)
-                      </span>
-                    )}
+                <div key={t.id} className={`space-y-2 rounded-lg border-2 p-3 ${borderClass}`}>
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-medium">
+                      {isFocused && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-emerald-700">
+                          🟢 В фокусе · ⏱ {elapsedLabel}
+                        </span>
+                      )}
+                      {!isFocused && hasActive && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">
+                          ⏸ Пауза · ⏱ {elapsedLabel}
+                        </span>
+                      )}
+                      {!isFocused && isNewAssigned && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-blue-600">
+                          🆕 Ожидает начала
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {isFocused ? (
+                        <button
+                          type="button"
+                          disabled={focusBusyId === t.id}
+                          onClick={() => handlePause(t.id)}
+                          className="rounded-md bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-300 disabled:opacity-50"
+                        >
+                          {focusBusyId === t.id ? '...' : '⏸ Пауза'}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={focusBusyId === t.id}
+                          onClick={() => handleFocus(t.id)}
+                          className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          {focusBusyId === t.id ? '...' : isNewAssigned ? '▶ Начать' : '▶ В фокус'}
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <TaskCard
@@ -298,55 +360,19 @@ export function MyTasksPage() {
                     showActions
                     onSubmitReview={handleSubmitReview}
                     busyTaskId={busyTaskId}
+                    onOpenDetail={setDetailTask}
+                    className="border-0 p-0 shadow-none"
                   />
 
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    {isFocused ? (
-                      <button
-                        type="button"
-                        disabled={focusBusyId === t.id}
-                        onClick={async () => {
-                          setFocusBusyId(t.id)
-                          try {
-                            await api.post(`/api/tasks/${t.id}/pause`, {})
-                            refreshTasks()
-                          } finally {
-                            setFocusBusyId(null)
-                          }
-                        }}
-                        className="inline-flex items-center rounded-md bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-200"
-                      >
-                        ⏸ Пауза
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={focusBusyId === t.id}
-                        onClick={async () => {
-                          setFocusBusyId(t.id)
-                          try {
-                            await api.post(`/api/tasks/${t.id}/focus`, {})
-                            refreshTasks()
-                          } finally {
-                            setFocusBusyId(null)
-                          }
-                        }}
-                        className="inline-flex items-center rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700"
-                      >
-                        ▶ {isNewAssigned ? 'Начать работу' : 'В фокус'}
-                      </button>
-                    )}
-
-                    {isTeamleadOrAdmin && (
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDeadline(t)}
-                        className="text-xs text-slate-500 hover:text-slate-800"
-                      >
-                        📅 Дедлайн
-                      </button>
-                    )}
-                  </div>
+                  {isTeamleadOrAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDeadline(t)}
+                      className="text-xs text-slate-500 hover:text-slate-800"
+                    >
+                      📅 Изменить дедлайн
+                    </button>
+                  )}
                 </div>
               )
             })}

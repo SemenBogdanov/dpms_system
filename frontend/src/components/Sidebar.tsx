@@ -22,7 +22,7 @@ import { LeagueBadge } from '@/components/LeagueBadge'
 const nav: Array<
   { to: string; label: string; icon: typeof LayoutDashboard; roles?: readonly ('executor' | 'teamlead' | 'admin')[] }
 > = [
-  { to: '/', label: 'Дашборд', icon: LayoutDashboard },
+  { to: '/', label: 'Дашборд', icon: LayoutDashboard, roles: ['teamlead', 'admin'] as const },
   { to: '/calibration', label: 'Калибровка', icon: Scale, roles: ['teamlead', 'admin'] },
   { to: '/queue', label: 'Очередь', icon: ListTodo },
   { to: '/my-tasks', label: 'Мои задачи', icon: ClipboardList },

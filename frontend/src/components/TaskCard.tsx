@@ -102,6 +102,21 @@ export function TaskCard({
               <span className="text-xs text-slate-400">· {days} д. в работе</span>
             )}
             <DeadlineBadge dueDate={task.due_date} zone={task.deadline_zone} />
+            {task.rejection_count > 0 && (
+              <span
+                className={cn(
+                  'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium',
+                  task.rejection_count === 1
+                    ? 'bg-amber-50 text-amber-700'
+                    : task.rejection_count === 2
+                      ? 'bg-orange-100 text-orange-800'
+                      : 'bg-red-100 text-red-800'
+                )}
+                title={`Возвращена на доработку ${task.rejection_count} раз`}
+              >
+                🔄 {task.rejection_count}
+              </span>
+            )}
           </div>
           {inReview && task.rejection_comment && (
             <p className="mt-2 text-sm text-red-600">{task.rejection_comment}</p>

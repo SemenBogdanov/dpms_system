@@ -72,6 +72,7 @@ export interface Task {
   parent_task_id: string | null
   deadline_zone: 'green' | 'yellow' | 'red' | null
   tags: string[]
+  rejection_count: number
   created_at: string
   updated_at: string
   focus_started_at: string | null

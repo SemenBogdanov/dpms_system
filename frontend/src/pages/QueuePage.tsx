@@ -438,6 +438,11 @@ export function QueuePage() {
                         ))}
                       </div>
                     )}
+                    {(row.task as Task).rejection_count > 0 && (
+                      <span className="ml-2 inline rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                        🔄 {(row.task as Task).rejection_count}
+                      </span>
+                    )}
                     {(row.task as QueueTaskResponse).is_stale && (
                       <span className="ml-2 inline rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
                         🔥 Застряла {Math.round((row.task as QueueTaskResponse).hours_in_queue ?? 0)}ч

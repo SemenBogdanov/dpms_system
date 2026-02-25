@@ -124,6 +124,27 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
                 Дедлайн: <DeadlineBadge dueDate={task.due_date} zone={task.deadline_zone ?? null} />
               </div>
             )}
+            {task.rejection_count > 0 && (
+              <div className="mt-2 flex items-center gap-2 text-sm">
+                <span className="text-slate-500">Возвраты:</span>
+                <span
+                  className={`font-semibold ${
+                    task.rejection_count >= 3
+                      ? 'text-red-600'
+                      : task.rejection_count >= 2
+                        ? 'text-orange-600'
+                        : 'text-amber-600'
+                  }`}
+                >
+                  {task.rejection_count}{' '}
+                  {task.rejection_count === 1
+                    ? 'раз'
+                    : task.rejection_count < 5
+                      ? 'раза'
+                      : 'раз'}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Оценка */}

@@ -1,6 +1,7 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from '@/components/Layout'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
+import { useAuth } from '@/contexts/AuthContext'
 import { LoginPage } from '@/pages/LoginPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { QueuePage } from '@/pages/QueuePage'
@@ -14,6 +15,14 @@ import { CalibrationPage } from '@/pages/CalibrationPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { ReportsPage } from '@/pages/ReportsPage'
 
+function DashboardRoute() {
+  const { user } = useAuth()
+  if (user?.role === 'executor') {
+    return <Navigate to="/my-tasks" replace />
+  }
+  return <DashboardPage />
+}
+
 function App() {
   return (
     <Routes>
@@ -26,7 +35,7 @@ function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<DashboardPage />} />
+        <Route index element={<DashboardRoute />} />
         <Route path="calibration" element={<CalibrationPage />} />
         <Route path="queue" element={<QueuePage />} />
         <Route path="my-tasks" element={<MyTasksPage />} />
