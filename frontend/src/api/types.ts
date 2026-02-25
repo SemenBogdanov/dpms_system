@@ -74,6 +74,10 @@ export interface Task {
   tags: string[]
   created_at: string
   updated_at: string
+  focus_started_at: string | null
+  active_seconds: number
+  active_hours: number
+  is_focused: boolean
 }
 
 /** Задача в очереди с флагами can_pull, locked */
@@ -95,6 +99,21 @@ export interface QueueTaskResponse {
   lock_reason: string | null
   is_proactive?: boolean
   tags?: string[]
+  is_stale?: boolean
+  hours_in_queue?: number
+  can_assign?: boolean
+  recommended?: boolean
+  assigned_by_name?: string | null
+}
+
+/** Кандидат для назначения задачи */
+export interface AssignCandidate {
+  id: string
+  full_name: string
+  league: string
+  wip_current: number
+  wip_limit: number
+  is_available: boolean
 }
 
 export interface CapacityGauge {
@@ -225,6 +244,16 @@ export interface CalibrationReportNew {
   estimator_calibrations: EstimatorCalibration[]
   widget_popularity: WidgetPopularityItem[]
   total_tasks_with_breakdown: number
+}
+
+export interface FocusStatusItem {
+  user_id: string
+  full_name: string
+  league: string
+  focused_task_id: string | null
+  focused_task_title: string | null
+  focus_duration_minutes: number
+  status: 'focused' | 'idle' | 'paused'
 }
 
 export interface TeamleadAccuracy {

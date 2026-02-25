@@ -92,6 +92,8 @@ export function CalculatorPage() {
       return
     }
     if (cart.length === 0) return
+    const hasProactive = cart.some((r) => r.catalog.category === 'proactive')
+    const priorityToSend = hasProactive && (createPriority === 'critical' || createPriority === 'high') ? 'medium' : createPriority
     setCreating(true)
     try {
       const task = await api.post<{ id: string; title: string; estimated_q: number }>(
@@ -99,7 +101,7 @@ export function CalculatorPage() {
         {
           title: createTitle.trim(),
           description: createDescription.trim(),
-          priority: createPriority,
+          priority: priorityToSend,
           estimator_id: createEstimatorId,
           items: cart.map((r) => ({ catalog_id: r.catalog.id, quantity: r.quantity })),
           tags: createTags,
@@ -238,19 +240,46 @@ export function CalculatorPage() {
               <label className="block text-sm font-medium text-slate-700">
                 Приоритет
               </label>
-              <select
-                value={createPriority}
-                onChange={(e) => setCreatePriority(e.target.value)}
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="critical">🔴 Критический</option>
-                <option value="high">🟠 Высокий</option>
-                <option value="medium">🟡 Средний</option>
-                <option value="low">🟢 Низкий</option>
-              </select>
-              <p className="mt-1 text-xs text-slate-400">
-                {priorityHint[createPriority] ?? ''}
-              </p>
+              {(() => {
+                const hasProactive = cart.some((r) => r.catalog.category === 'proactive')
+                const effectivePriority = hasProactive && (createPriority === 'critical' || createPriority === 'high') ? 'medium' : createPriority
+                const priorityOptions = hasProactive
+                  ? [
+                      { value: 'medium', label: '🟡 Средний' },
+                      { value: 'low', label: '🟢 Низкий' },
+                    ]
+                  : [
+                      { value: 'critical', label: '🔴 Критический' },
+                      { value: 'high', label: '🟠 Высокий' },
+                      { value: 'medium', label: '🟡 Средний' },
+                      { value: 'low', label: '🟢 Низкий' },
+                    ]
+                return (
+                  <>
+                    <select
+                      value={effectivePriority}
+                      onChange={(e) => setCreatePriority(e.target.value)}
+                      className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                    >
+                      {priorityOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                    {hasProactive && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        Проактивные задачи: максимальный приоритет — средний.
+                      </p>
+                    )}
+                    {!hasProactive && (
+                      <p className="mt-1 text-xs text-slate-400">
+                        {priorityHint[createPriority] ?? ''}
+                      </p>
+                    )}
+                  </>
+                )
+              })()}
               <label className="block text-sm font-medium text-slate-700">
                 Теги
               </label>

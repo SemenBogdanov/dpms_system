@@ -115,6 +115,12 @@ async def create_task_from_calc(
         task_type = TaskType.widget
     complexity_enum = Complexity(complexity_str) if complexity_str in ("S", "M", "L", "XL") else Complexity.S
     priority_enum = TaskPriority(request.priority) if request.priority in ("low", "medium", "high", "critical") else TaskPriority.medium
+    if task_type == TaskType.proactive and priority_enum in (TaskPriority.critical, TaskPriority.high):
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail="Проактивные задачи не могут иметь приоритет выше medium",
+        )
     league_enum = League(estimate.min_league) if estimate.min_league in ("C", "B", "A") else League.C
 
     estimation_details = {

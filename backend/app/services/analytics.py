@@ -126,12 +126,11 @@ async def get_team_summary(db: AsyncSession) -> TeamSummary:
         if user_id is not None:
             overdue_map[str(user_id)] = int(count or 0)
 
-    # Расчёт ожидаемого процента и статуса риска
+    # Расчёт ожидаемого процента и статуса риска (по рабочим дням)
     now = datetime.now(timezone.utc)
-    # Для упрощения считаем, что в месяце 22 рабочих дня
-    WORKING_DAYS = 22
-    day = now.day
-    expected_percent = (day / WORKING_DAYS) * 100
+    working_days = _working_days_in_month(now.year, now.month)
+    current_work_day = _working_day_index(now.year, now.month, now.day)
+    expected_percent = (current_work_day / working_days * 100) if working_days > 0 else 0.0
 
     for user in users:
         target = Decimal(str(user.mpw))

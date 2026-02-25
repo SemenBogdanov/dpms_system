@@ -10,6 +10,7 @@ from app.models.user import User
 from app.models.transaction import QTransaction, WalletType
 from app.schemas.dashboard import CapacityGauge, TeamSummary, PeriodStats, BurndownData
 from app.schemas.calibration import CalibrationReportNew, TeamleadAccuracy
+from app.schemas.task import FocusStatus
 from app.services.analytics import (
     get_capacity_gauge,
     get_team_summary,
@@ -17,7 +18,8 @@ from app.services.analytics import (
     get_burndown_data,
 )
 from app.services.calibration import get_teamlead_accuracy
-from app.services.queue import check_overdue_tasks
+from app.services.queue import check_overdue_tasks, check_stale_tasks
+from app.services.focus import auto_pause_stale_focuses, get_focus_statuses
 from app.models.task import Task, TaskStatus
 from app.models.catalog import CatalogItem
 
@@ -30,6 +32,7 @@ async def capacity(
 ):
     """Метрика «Стакан»: загрузка vs ёмкость команды."""
     await check_overdue_tasks(db)
+    await check_stale_tasks(db)
     return await get_capacity_gauge(db)
 
 
@@ -39,6 +42,7 @@ async def team_summary(
 ):
     """Сводка по команде (по лигам, earned vs target, in_progress_q, is_at_risk)."""
     await check_overdue_tasks(db)
+    await check_stale_tasks(db)
     return await get_team_summary(db)
 
 
@@ -48,6 +52,7 @@ async def plan_fact(
 ):
     """План/факт по сотрудникам (то же что team-summary)."""
     await check_overdue_tasks(db)
+    await check_stale_tasks(db)
     return await get_team_summary(db)
 
 
@@ -57,6 +62,7 @@ async def period_stats(
 ):
     """Статистика текущего месяца для дашборда руководителя."""
     await check_overdue_tasks(db)
+    await check_stale_tasks(db)
     return await get_period_stats(db)
 
 
@@ -66,6 +72,7 @@ async def burndown(
 ):
     """Данные для графика burn-down текущего месяца."""
     await check_overdue_tasks(db)
+    await check_stale_tasks(db)
     return await get_burndown_data(db)
 
 
@@ -118,6 +125,16 @@ async def capacity_history(
         })
 
     return {"weeks": points, "total_capacity": total_capacity}
+
+
+@router.get("/focus-status", response_model=list[FocusStatus])
+async def focus_status(
+    user: User = Depends(require_role("teamlead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Статусы фокуса всех исполнителей (для дашборда тимлида/админа)."""
+    await auto_pause_stale_focuses(db)
+    return await get_focus_statuses(db)
 
 
 @router.get("/calibration", response_model=CalibrationReportNew)
@@ -182,7 +199,11 @@ async def calibration(
 
     task_calibrations = []
     for t in done_list:
-        actual_hours = (t.completed_at - t.started_at).total_seconds() / 3600
+        # Продуктивное время: сначала active_seconds, для старых задач — wall-clock
+        if getattr(t, "active_seconds", 0) and t.active_seconds > 0:
+            actual_hours = t.active_seconds / 3600
+        else:
+            actual_hours = (t.completed_at - t.started_at).total_seconds() / 3600
         estimated_hours = float(t.estimated_q)
         deviation_pct = (
             round((actual_hours - estimated_hours) / estimated_hours * 100, 0)

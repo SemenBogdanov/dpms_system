@@ -1,5 +1,5 @@
 """Очередь: список с can_pull/locked, pull (FOR UPDATE), submit, validate."""
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -16,6 +16,7 @@ from app.schemas.task import compute_deadline_zone
 from app.services.wallet import credit_q
 
 _LEAGUE_ORDER = {League.C: 0, League.B: 1, League.A: 2}
+_PRIORITY_ORDER = {TaskPriority.low: 1, TaskPriority.medium: 2, TaskPriority.high: 3, TaskPriority.critical: 4}
 
 
 async def get_available_tasks(
@@ -27,6 +28,7 @@ async def get_available_tasks(
     Все задачи in_queue. category: "proactive" — только проактивные,
     "!proactive" — только обычные, None — все.
     """
+    now = datetime.now(timezone.utc)
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
@@ -53,17 +55,36 @@ async def get_available_tasks(
     wip_count = wip_count_result.scalar() or 0
     user_league_order = _LEAGUE_ORDER.get(user.league, 0)
     can_pull_by_wip = wip_count < user.wip_limit
+    is_manager = user.role in (UserRole.teamlead, UserRole.admin)
 
     estimator_ids = {t.estimator_id for t in tasks if t.estimator_id}
+    assigned_by_ids = {t.assigned_by_id for t in tasks if getattr(t, "assigned_by_id", None)}
     estimator_map: dict[UUID, str] = {}
     if estimator_ids:
         est_result = await db.execute(
             select(User.id, User.full_name).where(User.id.in_(estimator_ids))
         )
         estimator_map = {row.id: row.full_name for row in est_result.all()}
+    assigned_by_map: dict[UUID, str] = {}
+    if assigned_by_ids:
+        ab_result = await db.execute(
+            select(User.id, User.full_name).where(User.id.in_(assigned_by_ids))
+        )
+        assigned_by_map = {row.id: row.full_name for row in ab_result.all()}
+
+    available_priorities: list[TaskPriority] = []
+    for task in tasks:
+        task_league_order = _LEAGUE_ORDER.get(task.min_league, 0)
+        if user_league_order >= task_league_order and can_pull_by_wip:
+            available_priorities.append(task.priority)
+    top_priority = max(available_priorities, key=lambda p: _PRIORITY_ORDER.get(p, 0), default=None)
 
     out: list[QueueTaskResponse] = []
     for task in tasks:
+        hours_in_queue = (now - task.created_at).total_seconds() / 3600
+        is_stale = hours_in_queue > 48
+        can_assign = is_manager and hours_in_queue > 24
+
         task_league_order = _LEAGUE_ORDER.get(task.min_league, 0)
         league_ok = user_league_order >= task_league_order
         if not league_ok:
@@ -79,7 +100,14 @@ async def get_available_tasks(
             locked = False
             lock_reason = None
 
+        recommended = (
+            can_pull
+            and not locked
+            and top_priority is not None
+            and task.priority == top_priority
+        )
         estimator_name = estimator_map.get(task.estimator_id) if task.estimator_id else None
+        assigned_by_name = assigned_by_map.get(task.assigned_by_id) if getattr(task, "assigned_by_id", None) else None
 
         is_proactive = task.task_type == TaskType.proactive or getattr(task, "is_proactive", False)
         out.append(
@@ -101,6 +129,11 @@ async def get_available_tasks(
                 locked=locked,
                 lock_reason=lock_reason,
                 tags=getattr(task, "tags", None) or [],
+                is_stale=is_stale,
+                hours_in_queue=round(hours_in_queue, 1),
+                can_assign=can_assign,
+                recommended=recommended,
+                assigned_by_name=assigned_by_name,
             )
         )
     return out
@@ -158,6 +191,25 @@ async def pull_task(db: AsyncSession, user_id: UUID, task_id: UUID) -> Task:
             hours=remaining_hours,
         )
 
+    # Автофокус: у пользователя может быть только одна задача с активным фокусом
+    now = datetime.now(timezone.utc)
+    current_focus_result = await db.execute(
+        select(Task).where(
+            Task.assignee_id == user_id,
+            Task.status == TaskStatus.in_progress,
+            Task.focus_started_at.is_not(None),
+            Task.id != task.id,
+        )
+    )
+    current_focus = current_focus_result.scalar_one_or_none()
+    if current_focus and current_focus.focus_started_at is not None:
+        delta = (now - current_focus.focus_started_at).total_seconds()
+        if delta > 0:
+            current_focus.active_seconds += int(delta)
+        current_focus.focus_started_at = None
+
+    task.focus_started_at = now
+
     await db.flush()
     return task
 
@@ -178,6 +230,12 @@ async def submit_for_review(
         raise HTTPException(status_code=400, detail="Это не ваша задача")
     if task.status != TaskStatus.in_progress:
         raise HTTPException(status_code=400, detail="Задача не в работе")
+    # Если задача в фокусе — зафиксировать время и снять с фокуса
+    if task.focus_started_at:
+        delta = (datetime.now(timezone.utc) - task.focus_started_at).total_seconds()
+        if delta > 0:
+            task.active_seconds += int(delta)
+        task.focus_started_at = None
 
     task.status = TaskStatus.review
     task.completed_at = datetime.now(timezone.utc)
@@ -222,6 +280,8 @@ async def validate_task(
         task.validated_at = None
         task.completed_at = None
         task.rejection_comment = comment.strip()
+        # При возврате задача не должна оставаться в фокусе
+        task.focus_started_at = None
 
         # Quality Score: штраф за возврат
         if task.assignee_id:
@@ -474,4 +534,179 @@ async def check_overdue_tasks(db: AsyncSession) -> None:
                 "⏰ Задача просрочена",
                 message=f"«{task.title}» просрочена у {assignee_name}",
                 link="/queue",
+            )
+
+
+async def assign_task(
+    db: AsyncSession,
+    assigner_id: UUID,
+    task_id: UUID,
+    executor_id: UUID,
+    comment: str | None = None,
+) -> Task:
+    """
+    Тимлид/админ назначает задачу на исполнителя.
+    Задача должна быть in_queue > 24ч. Исполнитель: league >= task.min_league, WIP свободен.
+    """
+    assigner_result = await db.execute(select(User).where(User.id == assigner_id))
+    assigner = assigner_result.scalar_one_or_none()
+    if not assigner or assigner.role not in (UserRole.teamlead, UserRole.admin):
+        raise HTTPException(status_code=403, detail="Только тимлид или админ может назначать задачи")
+
+    task_result = await db.execute(select(Task).where(Task.id == task_id).with_for_update())
+    task = task_result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    if task.status != TaskStatus.in_queue:
+        raise HTTPException(status_code=400, detail="Задача не в очереди")
+
+    hours_in_queue = (datetime.now(timezone.utc) - task.created_at).total_seconds() / 3600
+    if hours_in_queue < 24:
+        raise HTTPException(
+            status_code=400,
+            detail="Назначить можно только задачу, которая в очереди более 24 часов",
+        )
+
+    executor_result = await db.execute(select(User).where(User.id == executor_id))
+    executor = executor_result.scalar_one_or_none()
+    if not executor:
+        raise HTTPException(status_code=404, detail="Исполнитель не найден")
+    if executor.role != UserRole.executor:
+        raise HTTPException(status_code=400, detail="Назначить можно только на исполнителя")
+    if _LEAGUE_ORDER.get(executor.league, 0) < _LEAGUE_ORDER.get(task.min_league, 0):
+        raise HTTPException(status_code=400, detail="У исполнителя недостаточный уровень лиги")
+
+    wip_count_result = await db.execute(
+        select(func.count(Task.id)).where(
+            Task.assignee_id == executor_id,
+            Task.status == TaskStatus.in_progress,
+        )
+    )
+    wip_count = wip_count_result.scalar() or 0
+    if wip_count >= executor.wip_limit:
+        raise HTTPException(status_code=400, detail="У исполнителя исчерпан WIP-лимит")
+
+    now = datetime.now(timezone.utc)
+    task.status = TaskStatus.in_progress
+    task.assignee_id = executor_id
+    task.assigned_by_id = assigner_id
+    task.started_at = now
+
+    if task.due_date is None:
+        league_value = executor.league.value if hasattr(executor.league, "value") else str(executor.league)
+        sla_multiplier = {"C": 3.0, "B": 2.0, "A": 1.5}.get(league_value, 3.0)
+        est_q = float(task.estimated_q)
+        sla_hours = int(est_q * sla_multiplier)
+        task.sla_hours = sla_hours
+        work_days_needed = max(1, sla_hours // 8)
+        remaining_hours = sla_hours % 8
+        task.due_date = now + timedelta(days=work_days_needed, hours=remaining_hours)
+
+    await db.flush()
+
+    from app.services.notifications import create_notification
+    await create_notification(
+        db,
+        executor_id,
+        "task_assigned",
+        "Вам назначена задача",
+        message=f"Вам назначена задача «{task.title}» тимлидом {assigner.full_name}",
+        link="/my-tasks",
+    )
+    return task
+
+
+async def get_assign_candidates(db: AsyncSession, task_id: UUID) -> list[dict]:
+    """
+    Список кандидатов для назначения задачи.
+    Активные исполнители с league >= task.min_league, с wip_current, wip_limit, is_available.
+    """
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    if task.status != TaskStatus.in_queue:
+        raise HTTPException(status_code=400, detail="Задача не в очереди")
+
+    task_league_order = _LEAGUE_ORDER.get(task.min_league, 0)
+    executors_result = await db.execute(
+        select(User).where(
+            User.role == UserRole.executor,
+            User.is_active.is_(True),
+        )
+    )
+    executors = list(executors_result.scalars().all())
+    out = []
+    for u in executors:
+        if _LEAGUE_ORDER.get(u.league, 0) < task_league_order:
+            continue
+        wip_result = await db.execute(
+            select(func.count(Task.id)).where(
+                Task.assignee_id == u.id,
+                Task.status == TaskStatus.in_progress,
+            )
+        )
+        wip_current = wip_result.scalar() or 0
+        wip_limit = u.wip_limit or 2
+        is_available = wip_current < wip_limit
+        out.append({
+            "id": u.id,
+            "full_name": u.full_name,
+            "league": u.league.value,
+            "wip_current": wip_current,
+            "wip_limit": wip_limit,
+            "is_available": is_available,
+        })
+    return out
+
+
+async def check_stale_tasks(db: AsyncSession) -> None:
+    """
+    Задачи в очереди > 48ч — уведомить тимлидов.
+    Не чаще 1 раза в 24ч на одну задачу.
+    """
+    from app.models.notification import Notification
+
+    now = datetime.now(timezone.utc)
+    since_48h = now - timedelta(hours=48)
+    since_24h = now - timedelta(hours=24)
+    result = await db.execute(
+        select(Task).where(
+            Task.status == TaskStatus.in_queue,
+            Task.created_at < since_48h,
+        )
+    )
+    stale_tasks = list(result.scalars().all())
+    if not stale_tasks:
+        return
+
+    from app.services.notifications import create_notification
+
+    teamleads_result = await db.execute(
+        select(User).where(
+            User.role.in_([UserRole.teamlead, UserRole.admin]),
+            User.is_active.is_(True),
+        )
+    )
+    teamleads = list(teamleads_result.scalars().all())
+    for task in stale_tasks:
+        hours = int((now - task.created_at).total_seconds() / 3600)
+        link = f"/queue?stale={task.id}"
+        recent = await db.execute(
+            select(Notification.id).where(
+                Notification.type == "task_stale",
+                Notification.link == link,
+                Notification.created_at >= since_24h,
+            ).limit(1)
+        )
+        if recent.scalar_one_or_none():
+            continue
+        for tl in teamleads:
+            await create_notification(
+                db,
+                tl.id,
+                "task_stale",
+                "⏳ Задача в очереди давно",
+                message=f"Задача «{task.title}» в очереди более {hours}ч, никто не берёт",
+                link=link,
             )

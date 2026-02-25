@@ -77,6 +77,11 @@ class Task(Base):
         ForeignKey("users.id"),
         nullable=True,
     )
+    assigned_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+    )
     estimator_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id"),
@@ -93,6 +98,15 @@ class Task(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    focus_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    active_seconds: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
     is_proactive: Mapped[bool] = mapped_column(Boolean, default=False)
     due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     sla_hours: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -111,6 +125,7 @@ class Task(Base):
     )
 
     assignee = relationship("User", back_populates="assigned_tasks", foreign_keys=[assignee_id])
+    assigned_by = relationship("User", foreign_keys=[assigned_by_id])
     estimator = relationship("User", back_populates="estimated_tasks", foreign_keys=[estimator_id])
     validator = relationship("User", back_populates="validated_tasks", foreign_keys=[validator_id])
     transactions = relationship("QTransaction", back_populates="task")

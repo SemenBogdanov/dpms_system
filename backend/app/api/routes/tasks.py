@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user, require_role
 from app.models.user import User
-from app.models.task import Task, TaskStatus
+from app.models.task import Task, TaskStatus, TaskType, TaskPriority
 from app.schemas.task import (
     TaskCreate,
     TaskRead,
@@ -17,8 +17,11 @@ from app.schemas.task import (
     TasksExport,
     SetDueDateRequest,
     CreateBugfixRequest,
+    FocusResponse,
+    TimeCorrection,
 )
 from app.services.queue import create_bugfix
+from app.services.focus import start_focus, pause_focus, correct_active_time
 
 router = APIRouter()
 
@@ -140,6 +143,11 @@ async def create_task(
     db: AsyncSession = Depends(get_db),
 ):
     """Создать задачу (с оценкой или без)."""
+    if body.task_type == TaskType.proactive and body.priority in (TaskPriority.critical, TaskPriority.high):
+        raise HTTPException(
+            status_code=400,
+            detail="Проактивные задачи не могут иметь приоритет выше medium",
+        )
     task = Task(
         title=body.title,
         description=body.description,
@@ -248,3 +256,54 @@ async def create_bugfix_task(
     )
     await db.refresh(task)
     return task
+
+
+@router.post("/{task_id}/focus", response_model=FocusResponse)
+async def focus_task(
+    task_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Поставить задачу в фокус. Автопауза другой задачи если есть."""
+    data = await start_focus(db, user.id, task_id)
+    return FocusResponse(
+        task_id=data["task_id"],
+        action=data["action"],
+        active_seconds=data["active_seconds"],
+        active_hours=data["active_hours"],
+        paused_task_id=data.get("paused_task_id"),
+    )
+
+
+@router.post("/{task_id}/pause", response_model=FocusResponse)
+async def pause_task(
+    task_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Снять задачу с фокуса (пауза)."""
+    data = await pause_focus(db, user.id, task_id)
+    return FocusResponse(
+        task_id=data["task_id"],
+        action=data["action"],
+        active_seconds=data["active_seconds"],
+        active_hours=data["active_hours"],
+        paused_task_id=data.get("paused_task_id"),
+    )
+
+
+@router.post("/{task_id}/correct-time")
+async def correct_time(
+    task_id: UUID,
+    body: TimeCorrection,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ручная коррекция продуктивного времени."""
+    return await correct_active_time(
+        db,
+        user.id,
+        task_id,
+        body.new_active_seconds,
+        body.reason,
+    )

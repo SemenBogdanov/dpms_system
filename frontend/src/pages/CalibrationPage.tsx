@@ -105,7 +105,7 @@ export function CalibrationPage() {
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Тип</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Слож.</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Оценка Q</th>
-                <th className="px-4 py-3 text-left font-medium text-slate-600">Факт (ч)</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Продуктивное время</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Откл.</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Оценщик</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Исполнитель</th>
@@ -119,7 +119,13 @@ export function CalibrationPage() {
                   <td className="px-4 py-2 text-slate-600">{tc.task_type}</td>
                   <td className="px-4 py-2 text-slate-600">{tc.complexity}</td>
                   <td className="px-4 py-2">{Number(tc.estimated_q).toFixed(1)}</td>
-                  <td className="px-4 py-2">{Number(tc.actual_hours).toFixed(1)}</td>
+                  <td className="px-4 py-2">
+                    {tc.actual_hours > 0 ? (
+                      `${Number(tc.actual_hours).toFixed(1)}ч`
+                    ) : (
+                      <span className="text-slate-500">⚠️ wall-clock</span>
+                    )}
+                  </td>
                   <td className={`px-4 py-2 font-semibold ${deviationColor(tc.deviation_pct)}`}>
                     {tc.deviation_pct > 0 ? '+' : ''}{tc.deviation_pct}%
                   </td>

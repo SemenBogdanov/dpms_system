@@ -54,10 +54,38 @@ class TaskRead(TaskBase):
     parent_task_id: UUID | None = None
     deadline_zone: str | None = None  # "green" | "yellow" | "red" | None
     tags: list[str] = Field(default_factory=list)
+    focus_started_at: datetime | None = None
+    active_seconds: int = 0
+    active_hours: float = 0.0
+    is_focused: bool = False
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class FocusResponse(BaseModel):
+    task_id: UUID
+    action: str  # "focused" | "paused"
+    active_seconds: int
+    active_hours: float
+    paused_task_id: UUID | None = None
+
+
+class TimeCorrection(BaseModel):
+    task_id: UUID
+    new_active_seconds: int
+    reason: str
+
+
+class FocusStatus(BaseModel):
+    user_id: UUID
+    full_name: str
+    league: str
+    focused_task_id: UUID | None = None
+    focused_task_title: str | None = None
+    focus_duration_minutes: float = 0.0
+    status: str  # "focused" | "idle" | "paused"
 
 
 class TaskExportRow(BaseModel):

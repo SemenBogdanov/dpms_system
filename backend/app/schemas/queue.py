@@ -27,9 +27,31 @@ class QueueTaskResponse(BaseModel):
     lock_reason: str | None
     is_proactive: bool = False
     tags: list[str] = []
+    is_stale: bool = False
+    hours_in_queue: float = 0.0
+    can_assign: bool = False
+    recommended: bool = False
+    assigned_by_name: str | None = None
 
     class Config:
         from_attributes = True
+
+
+class AssignRequest(BaseModel):
+    """Назначить задачу на исполнителя."""
+    task_id: UUID
+    executor_id: UUID
+    comment: str | None = None
+
+
+class AssignCandidate(BaseModel):
+    """Кандидат для назначения задачи."""
+    id: UUID
+    full_name: str
+    league: str
+    wip_current: int
+    wip_limit: int
+    is_available: bool
 
 
 class PullRequest(BaseModel):

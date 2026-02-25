@@ -1,13 +1,15 @@
-"""API очереди: список с can_pull/locked, pull, submit, validate. Все эндпоинты защищены JWT."""
+"""API очереди: список с can_pull/locked, pull, submit, validate, assign. Все эндпоинты защищены JWT."""
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_current_user
-from app.models.user import User
+from app.api.deps import get_db, get_current_user, require_role
+from app.models.user import User, UserRole
 from app.schemas.queue import (
+    AssignRequest,
+    AssignCandidate,
     QueueTaskResponse,
     PullRequest,
     SubmitRequest,
@@ -15,6 +17,8 @@ from app.schemas.queue import (
 )
 from app.schemas.task import TaskRead
 from app.services.queue import (
+    assign_task,
+    get_assign_candidates,
     get_available_tasks,
     pull_task,
     submit_for_review,
@@ -83,3 +87,27 @@ async def queue_validate(
     )
     await db.refresh(task)
     return task
+
+
+@router.post("/assign", response_model=TaskRead)
+async def queue_assign(
+    body: AssignRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Назначить задачу на исполнителя. Только teamlead/admin."""
+    if user.role not in (UserRole.teamlead, UserRole.admin):
+        raise HTTPException(403, "Только тимлид или админ может назначать задачи")
+    task = await assign_task(db, user.id, body.task_id, body.executor_id, body.comment)
+    await db.refresh(task)
+    return task
+
+
+@router.get("/candidates/{task_id}", response_model=list[AssignCandidate])
+async def queue_candidates(
+    task_id: UUID,
+    user: User = Depends(require_role("teamlead", "admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Список кандидатов для назначения задачи."""
+    return await get_assign_candidates(db, task_id)

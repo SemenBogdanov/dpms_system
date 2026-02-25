@@ -8,6 +8,7 @@ import type {
   BurndownData,
   Task,
   User,
+  FocusStatusItem,
 } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { MetricCard } from '@/components/MetricCard'
@@ -29,6 +30,7 @@ export function DashboardPage() {
   const [detailTask, setDetailTask] = useState<Task | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [focusStatuses, setFocusStatuses] = useState<FocusStatusItem[]>([])
 
   const isTeamleadOrAdmin = currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
 
@@ -51,6 +53,10 @@ export function DashboardPage() {
       if (currentUser?.role === 'teamlead' || currentUser?.role === 'admin') {
         const od = await api.get<Task[]>('/api/tasks?is_overdue=true').catch(() => [])
         setOverdueTasks(od)
+        const fs = await api
+          .get<FocusStatusItem[]>('/api/dashboard/focus-status')
+          .catch(() => [])
+        setFocusStatuses(fs)
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка загрузки')
@@ -181,13 +187,53 @@ export function DashboardPage() {
         </div>
       )}
 
+      {/* Строка 5 — Команда сейчас (только teamlead/admin) */}
+      {isTeamleadOrAdmin && (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <h2 className="mb-2 font-medium text-slate-800">👥 Команда сейчас</h2>
+          {focusStatuses.length === 0 ? (
+            <p className="text-sm text-slate-500">Нет активных исполнителей.</p>
+          ) : (
+            <ul className="space-y-1 text-sm">
+              {focusStatuses.map((s) => (
+                <li key={s.user_id} className="flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <span>
+                      {s.status === 'focused' ? '🟢' : s.status === 'paused' ? '⏸' : '💤'}
+                    </span>
+                    <span className="font-medium text-slate-900">{s.full_name}</span>
+                  </span>
+                  <span className="text-right text-slate-600">
+                    {s.status === 'focused' && s.focused_task_title
+                      ? `${s.focused_task_title} — ${Math.round(s.focus_duration_minutes)}м`
+                      : s.status === 'paused'
+                        ? 'на паузе'
+                        : 'нет задач в работе'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {focusStatuses.length > 0 && (
+            <p className="mt-3 text-xs text-slate-500">
+              В фокусе:{' '}
+              {
+                focusStatuses.filter((s) => s.status === 'focused')
+                  .length
+              }{' '}
+              из {focusStatuses.length} исполнителей
+            </p>
+          )}
+        </div>
+      )}
+
       <TaskDetailModal
         task={detailTask}
         onClose={() => setDetailTask(null)}
         users={users}
       />
 
-      {/* Строка 5 — Burn-down */}
+      {/* Строка 6 — Burn-down */}
       {burndown && burndown.points.length > 0 && (
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="mb-3 font-medium text-slate-800">Burn-down: План vs Факт</h2>

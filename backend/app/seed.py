@@ -20,15 +20,17 @@ from app.models.task import Task, TaskStatus, TaskType, TaskPriority
 from app.models.shop import ShopItem
 
 
-# --- Пользователи (7 штук) ---
+# --- Пользователи (6 штук) ---
 USERS = [
-    {"full_name": "Семёнова Ксения", "email": "semenova@ac.gov.ru", "league": League.A, "role": UserRole.teamlead, "mpw": 120, "quality_score": 95.0},
+    {"full_name": "Семёнова Ксения", "email": "semenova@ac.gov.ru", "league": League.A, "role": UserRole.teamlead, "mpw": 90, "quality_score": 95.0},
     {"full_name": "Орловская Валентина", "email": "orlovskaya@ac.gov.ru", "league": League.B, "role": UserRole.executor, "mpw": 80, "quality_score": 88.0},
     {"full_name": "Завьялова Екатерина", "email": "zavyalova@ac.gov.ru", "league": League.B, "role": UserRole.executor, "mpw": 80, "quality_score": 92.0},
-    {"full_name": "Скачков Егор", "email": "petrov@ac.gov.ru", "league": League.C, "role": UserRole.executor, "mpw": 40, "quality_score": 72.0},
+    {"full_name": "Скачков Егор", "email": "petrov@ac.gov.ru", "league": League.C, "role": UserRole.executor, "mpw": 70, "quality_score": 72.0},
     {"full_name": "Богданов Семён", "email": "bogdanov@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0, "quality_score": 100.0},
     {"full_name": "Админ Системы", "email": "admin@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0, "quality_score": 100.0},
 ]
+
+WIP_BY_LEAGUE = {"C": 2, "B": 3, "A": 4}
 
 # --- Каталог операций (cat, name, compl, cost, desc, min_league, sort_order) ---
 CATALOG = [
@@ -95,16 +97,22 @@ async def ensure_users(session: AsyncSession) -> dict[str, User]:
     result = await session.execute(select(User).where(User.email == "admin@ac.gov.ru"))
     if result.scalar_one_or_none():
         result = await session.execute(select(User))
-        users_list = result.scalars().all()
+        users_list = list(result.scalars().all())
         for u in users_list:
             if u.password_hash is None:
                 u.password_hash = get_password_hash("demo123")
-                session.add(u)
+            # Обновить WIP-лимит в соответствии с лигой, если он ещё не задан явно
+            league_value = getattr(u.league, "value", str(u.league))
+            if not getattr(u, "wip_limit", None):
+                u.wip_limit = WIP_BY_LEAGUE.get(league_value, 2)
+            session.add(u)
         return {u.email: u for u in users_list}
 
-    users_by_email = {}
+    users_by_email: dict[str, User] = {}
     for u in USERS:
         user = User(**u)
+        league_value = getattr(user.league, "value", str(user.league))
+        user.wip_limit = WIP_BY_LEAGUE.get(league_value, 2)
         user.password_hash = get_password_hash("demo123")
         session.add(user)
         await session.flush()
@@ -363,6 +371,15 @@ async def ensure_capacity_history(session: AsyncSession, users_by_email: dict[st
             )
 
 
+async def ensure_wallets_under_mpw(session: AsyncSession, users_by_email: dict[str, User]) -> None:
+    """Гарантировать, что wallet_main не превышает mpw после изменений MPW."""
+    for user in users_by_email.values():
+        # Для админов mpw=0 допускает любой wallet_main, т.к. они не выполняют задачи
+        if user.mpw > 0 and user.wallet_main > user.mpw:
+            user.wallet_main = user.mpw
+            session.add(user)
+
+
 async def ensure_karma_demo(session: AsyncSession, users_by_email: dict[str, User]) -> None:
     """Начислить карму для демо магазина."""
     maria = users_by_email.get("orlovskaya@ac.gov.ru")
@@ -477,6 +494,7 @@ async def run_seed() -> None:
             await ensure_capacity_history(session, users)
             await ensure_karma_demo(session, users)
             await ensure_demo_notifications(session, users)
+            await ensure_wallets_under_mpw(session, users)
             await session.commit()
             print("Seed выполнен успешно.")
         except Exception as e:
