@@ -118,12 +118,13 @@ export function MyTasksPage() {
 
   const tasksWithComputedTime = useMemo(() => {
     return tasks.map((t) => {
+      const isFocusedComputed = t.focus_started_at != null
       let elapsedSeconds = t.active_seconds ?? 0
-      if (t.is_focused && t.focus_started_at) {
+      if (isFocusedComputed && t.focus_started_at) {
         const started = new Date(t.focus_started_at).getTime()
         elapsedSeconds += Math.max(0, Math.floor((now - started) / 1000))
       }
-      return { ...t, _elapsedSeconds: elapsedSeconds }
+      return { ...t, is_focused: isFocusedComputed, _elapsedSeconds: elapsedSeconds }
     })
   }, [tasks, now])
 
@@ -352,17 +353,18 @@ export function MyTasksPage() {
                           {focusBusyId === t.id ? '...' : isNewAssigned ? '▶ Начать' : '▶ В фокус'}
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => handleSubmitReview(t.id)}
+                        disabled={busyTaskId === t.id}
+                        className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        {busyTaskId === t.id ? '...' : 'Сдать'}
+                      </button>
                     </div>
                   </div>
 
-                  <TaskCard
-                    task={t}
-                    showActions
-                    onSubmitReview={handleSubmitReview}
-                    busyTaskId={busyTaskId}
-                    onOpenDetail={setDetailTask}
-                    className="border-0 p-0 shadow-none"
-                  />
+                  <TaskCard task={t} onOpenDetail={setDetailTask} className="border-0 p-0 shadow-none" />
 
                   {isTeamleadOrAdmin && (
                     <button

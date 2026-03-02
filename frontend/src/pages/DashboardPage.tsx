@@ -52,7 +52,7 @@ export function DashboardPage() {
       setCapacityHistory(history.weeks ?? [])
       if (currentUser?.role === 'teamlead' || currentUser?.role === 'admin') {
         const od = await api.get<Task[]>('/api/tasks?is_overdue=true').catch(() => [])
-        setOverdueTasks(od)
+        setOverdueTasks(od.filter((t) => t.status === 'in_progress' || t.status === 'review'))
         const fs = await api
           .get<FocusStatusItem[]>('/api/dashboard/focus-status')
           .catch(() => [])

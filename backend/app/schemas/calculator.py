@@ -1,4 +1,5 @@
 """Схемы запроса/ответа калькулятора оценки (Фаза 2)."""
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -41,3 +42,4 @@ class CreateTaskFromCalcRequest(BaseModel):
     estimator_id: UUID
     items: list[CalcItemInput]
     tags: list[str] = []
+    due_date: datetime | None = None

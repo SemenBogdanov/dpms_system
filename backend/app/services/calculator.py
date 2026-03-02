@@ -143,6 +143,7 @@ async def create_task_from_calc(
         estimator_id=request.estimator_id,
         validator_id=None,
         estimation_details=estimation_details,
+        due_date=request.due_date,
         tags=tags_list,
     )
     db.add(task)

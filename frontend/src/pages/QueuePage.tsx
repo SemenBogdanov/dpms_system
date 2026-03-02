@@ -9,7 +9,6 @@ import { PriorityBadge } from '@/components/PriorityBadge'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { QBadge } from '@/components/QBadge'
 import { SkeletonTable } from '@/components/Skeleton'
-import { ProactiveBlock } from '@/components/ProactiveBlock'
 import { DeadlineBadge } from '@/components/DeadlineBadge'
 import { TaskDetailModal } from '@/components/TaskDetailModal'
 import { BugfixModal } from '@/components/BugfixModal'
@@ -30,7 +29,6 @@ export function QueuePage() {
   const [pullingId, setPullingId] = useState<string | null>(null)
   const [confirmPull, setConfirmPull] = useState<QueueTaskResponse | Task | null>(null)
   const [myTasks, setMyTasks] = useState<Task[]>([])
-  const [queueFilter, setQueueFilter] = useState<'default' | 'proactive'>('default')
   const [detailTask, setDetailTask] = useState<Task | null>(null)
   const [users, setUsers] = useState<User[]>([])
   const [searchQuery, setSearchQuery] = useState('')
@@ -48,12 +46,11 @@ export function QueuePage() {
   const [selectedExecutorId, setSelectedExecutorId] = useState<string | null>(null)
   const [assignBusy, setAssignBusy] = useState(false)
 
-  const loadQueue = (category: 'default' | 'proactive') => {
+  const loadQueue = () => {
     if (!currentUser) return
     setLoading(true)
-    const params = category === 'proactive' ? { category: 'proactive' } : undefined
     api
-      .get<QueueTaskResponse[]>('/api/queue', params)
+      .get<QueueTaskResponse[]>('/api/queue')
       .then(setTasks)
       .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка'))
       .finally(() => setLoading(false))
@@ -61,15 +58,8 @@ export function QueuePage() {
 
   useEffect(() => {
     if (!currentUser) return
-    loadQueue(queueFilter)
-  }, [currentUser, queueFilter])
-
-  const handleShowProactive = () => {
-    setQueueFilter('proactive')
-  }
-  const handleShowDefault = () => {
-    setQueueFilter('default')
-  }
+    loadQueue()
+  }, [currentUser])
 
   useEffect(() => {
     if (!currentUser) return
@@ -112,11 +102,21 @@ export function QueuePage() {
     : filteredBySearch
 
   const priorityOrder: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 }
-  const priorityLabels: Record<string, string> = { critical: '🔴 Критические', high: '🟠 Высокие', medium: '🟡 Средние', low: '🟢 Низкие' }
+  const priorityLabels: Record<string, string> = {
+    critical: '🔴 Критические',
+    high: '🟠 Высокие',
+    medium: '🟡 Средние',
+    low: '🟢 Низкие',
+    proactive: '🔄 Проактивные',
+  }
   const sortedTasks = [...filteredByTag].sort((a, b) => {
     const aBug = (a as QueueTaskResponse).task_type === 'bugfix' || (a as Task).task_type === 'bugfix'
     const bBug = (b as QueueTaskResponse).task_type === 'bugfix' || (b as Task).task_type === 'bugfix'
     if (aBug !== bBug) return aBug ? -1 : 1
+    // Проактивные — после обычных задач
+    const aProactive = isProactive(a as RowItem)
+    const bProactive = isProactive(b as RowItem)
+    if (aProactive !== bProactive) return aProactive ? 1 : -1
     const aStatus = (a as Task).status ?? 'in_queue'
     const bStatus = (b as Task).status ?? 'in_queue'
     const aPri = priorityOrder[(a as QueueTaskResponse).priority ?? (a as Task).priority] ?? 0
@@ -180,7 +180,7 @@ export function QueuePage() {
       if (includeArchived) {
         api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
       } else {
-        loadQueue(queueFilter)
+        loadQueue()
       }
     } finally {
       setPullingId(null)
@@ -219,7 +219,7 @@ export function QueuePage() {
       if (includeArchived) {
         api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
       } else {
-        loadQueue(queueFilter)
+        loadQueue()
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось создать баг-фикс')
@@ -238,7 +238,7 @@ export function QueuePage() {
         if (includeArchived) {
           api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
         } else {
-          loadQueue(queueFilter)
+          loadQueue()
         }
       })
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
@@ -250,7 +250,9 @@ export function QueuePage() {
   const lockReason = (t: RowItem) => (t as QueueTaskResponse).lock_reason
   const taskTags = (t: RowItem) => (t as QueueTaskResponse).tags ?? (t as Task).tags ?? []
   const taskType = (t: RowItem) => (t as QueueTaskResponse).task_type ?? (t as Task).task_type
-  const isProactive = (t: RowItem) => (t as QueueTaskResponse).is_proactive === true || (t as Task).task_type === 'proactive'
+  function isProactive(t: RowItem): boolean {
+    return (t as QueueTaskResponse).is_proactive === true || (t as Task).task_type === 'proactive'
+  }
 
   return (
     <div className="space-y-6">
@@ -273,16 +275,6 @@ export function QueuePage() {
           </div>
         )}
       </div>
-
-      {queueFilter === 'proactive' && !includeArchived && (
-        <button
-          type="button"
-          onClick={handleShowDefault}
-          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-        >
-          ← Обычная очередь
-        </button>
-      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
@@ -340,18 +332,9 @@ export function QueuePage() {
       )}
 
       {displayList.length === 0 && !loading ? (
-        queueFilter === 'default' && !includeArchived ? (
-          <div className="space-y-2">
-            <ProactiveBlock onShowProactive={handleShowProactive} loading={loading} />
-            <p className="text-center text-sm text-slate-500">
-              Очередь задач пуста. Создайте задачу через калькулятор.
-            </p>
-          </div>
-        ) : (
-          <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-slate-500">
-            {includeArchived ? 'Нет задач' : 'Нет проактивных задач в очереди'}
-          </div>
-        )
+        <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-slate-500">
+          Очередь пуста. Создайте задачу через калькулятор.
+        </div>
       ) : sortedTasks.length === 0 ? (
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-500">
           {searchQuery.trim()
@@ -390,12 +373,22 @@ export function QueuePage() {
             <tbody className="divide-y divide-slate-200">
               {(() => {
                 let lastPriority: string | null = null
+                let proactiveSectionShown = false
                 const rows: Array<{ type: 'section'; priority: string } | { type: 'task'; task: RowItem }> = []
                 sortedTasks.forEach((t) => {
-                  const p = (t as QueueTaskResponse).priority ?? (t as Task).priority ?? 'medium'
-                  if (p !== lastPriority) {
-                    rows.push({ type: 'section', priority: p })
-                    lastPriority = p
+                  const isProact = isProactive(t as RowItem)
+                  // Разделитель «Проактивные» перед первой проактивной задачей
+                  if (isProact && !proactiveSectionShown) {
+                    rows.push({ type: 'section', priority: 'proactive' })
+                    proactiveSectionShown = true
+                  }
+                  // Разделители по приоритету только для обычных задач
+                  if (!isProact) {
+                    const p = (t as QueueTaskResponse).priority ?? (t as Task).priority ?? 'medium'
+                    if (p !== lastPriority) {
+                      rows.push({ type: 'section', priority: p })
+                      lastPriority = p
+                    }
                   }
                   rows.push({ type: 'task', task: t })
                 })
@@ -464,7 +457,7 @@ export function QueuePage() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-xs text-slate-600">
+                  <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">
                     {taskStatus(row.task) === 'in_queue' && 'В очереди'}
                     {taskStatus(row.task) === 'in_progress' && 'В работе'}
                     {taskStatus(row.task) === 'review' && 'На проверке'}
@@ -497,6 +490,9 @@ export function QueuePage() {
                             minute: '2-digit',
                           })}
                         </span>
+                      )}
+                      {!((row.task as QueueTaskResponse).due_date ?? (row.task as Task).due_date) && (
+                        <span className="text-xs text-slate-400">—</span>
                       )}
                     </div>
                   </td>
@@ -684,7 +680,7 @@ export function QueuePage() {
                     const name = assignCandidates.find((c) => c.id === selectedExecutorId)?.full_name ?? ''
                     toast.success(`Задача назначена на ${name}`)
                     setAssignTask(null)
-                    loadQueue(queueFilter)
+                    loadQueue()
                   } catch (e) {
                     toast.error(e instanceof Error ? e.message : 'Ошибка назначения')
                   } finally {

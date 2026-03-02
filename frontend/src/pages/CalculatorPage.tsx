@@ -21,6 +21,7 @@ export function CalculatorPage() {
   const [createPriority, setCreatePriority] = useState('medium')
   const [createTags, setCreateTags] = useState<string[]>([])
   const [createEstimatorId, setCreateEstimatorId] = useState('')
+  const [dueDate, setDueDate] = useState('')
   const [creating, setCreating] = useState(false)
   const [categoryTab, setCategoryTab] = useState<'all' | 'widget' | 'etl' | 'api' | 'docs' | 'proactive'>('all')
 
@@ -83,6 +84,7 @@ export function CalculatorPage() {
     setCreatePriority('medium')
     setCreateTags([])
     setCreateEstimatorId(teamleads[0]?.id ?? '')
+    setDueDate('')
     setCreateModalOpen(true)
   }
 
@@ -105,6 +107,7 @@ export function CalculatorPage() {
           estimator_id: createEstimatorId,
           items: cart.map((r) => ({ catalog_id: r.catalog.id, quantity: r.quantity })),
           tags: createTags,
+          due_date: dueDate ? new Date(dueDate).toISOString() : undefined,
         }
       )
       toast.success(`Задача создана, ${task.estimated_q} Q, в очереди`)
@@ -280,6 +283,17 @@ export function CalculatorPage() {
                   </>
                 )
               })()}
+              <div>
+                <label className="block text-sm font-medium text-slate-700">
+                  Крайний срок <span className="text-slate-400">(необязательно)</span>
+                </label>
+                <input
+                  type="datetime-local"
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                />
+              </div>
               <label className="block text-sm font-medium text-slate-700">
                 Теги
               </label>

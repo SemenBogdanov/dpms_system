@@ -333,6 +333,7 @@ async def validate_task(
     task.validator_id = validator_id
     task.validated_at = datetime.now(timezone.utc)
     task.rejection_comment = None
+    task.is_overdue = False
 
     assignee = None
     if task.assignee_id:

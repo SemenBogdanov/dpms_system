@@ -236,6 +236,7 @@ async def cancel_task(
 
     old_assignee = task.assignee_id
     task.status = TaskStatus.cancelled
+    task.is_overdue = False
 
     if old_assignee:
         from app.services.notifications import create_notification
