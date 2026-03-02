@@ -66,3 +66,17 @@ class BurndownData(BaseModel):
     total_capacity: float
     working_days: int
     points: list[BurndownPoint]
+
+
+class RunRate(BaseModel):
+    """Прогноз выполнения плана (Run Rate)."""
+    rate_daily: float          # темп Q/день
+    projected: float           # прогноз Q на конец месяца
+    mpw: int                   # план
+    run_rate_percent: float    # projected / mpw * 100
+    required_rate: float | None  # нужный темп (None если план выполнен)
+    status: str                # on_track | slightly_behind | at_risk | critical
+    days_elapsed: int
+    days_total: int
+    days_remaining: int
+    earned: float              # текущий wallet_main

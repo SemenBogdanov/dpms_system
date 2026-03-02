@@ -434,6 +434,21 @@ export interface QTransactionRead {
   created_at: string
 }
 
+export type RunRateStatus = 'on_track' | 'slightly_behind' | 'at_risk' | 'critical'
+
+export interface RunRate {
+  rate_daily: number
+  projected: number
+  mpw: number
+  run_rate_percent: number
+  required_rate: number | null
+  status: RunRateStatus
+  days_elapsed: number
+  days_total: number
+  days_remaining: number
+  earned: number
+}
+
 /** Позиция в запросе калькулятора */
 export interface CalcItemInput {
   catalog_id: string

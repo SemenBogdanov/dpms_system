@@ -14,6 +14,7 @@ from app.schemas.dashboard import (
     BurndownData,
     BurndownPoint,
     CapacityGauge,
+    RunRate,
     TeamMemberSummary,
     TeamSummary,
     UserProgress,
@@ -254,6 +255,59 @@ def _working_day_index(year: int, month: int, day: int) -> int:
         if date(year, month, d).weekday() < 5:
             idx += 1
     return idx
+
+
+async def get_run_rate(db: AsyncSession, user_id: UUID) -> RunRate | None:
+    """Прогноз выполнения плана (Run Rate) для сотрудника."""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        return None
+
+    now = datetime.now(timezone.utc)
+    days_total = _working_days_in_month(now.year, now.month)
+    days_elapsed = _working_day_index(now.year, now.month, now.day)
+    days_remaining = days_total - days_elapsed
+
+    earned = float(user.wallet_main)
+    mpw = user.mpw
+
+    if days_elapsed > 0:
+        rate_daily = earned / days_elapsed
+    else:
+        rate_daily = 0.0
+
+    projected = rate_daily * days_total
+    run_rate_percent = (projected / mpw * 100) if mpw > 0 else 0.0
+
+    if earned >= mpw:
+        required_rate = None
+    elif days_remaining > 0:
+        required_rate = round((mpw - earned) / days_remaining, 2)
+    else:
+        required_rate = None
+
+    if run_rate_percent >= 100:
+        status = "on_track"
+    elif run_rate_percent >= 80:
+        status = "slightly_behind"
+    elif run_rate_percent >= 60:
+        status = "at_risk"
+    else:
+        status = "critical"
+
+    return RunRate(
+        rate_daily=round(rate_daily, 2),
+        projected=round(projected, 1),
+        mpw=mpw,
+        run_rate_percent=round(run_rate_percent, 1),
+        required_rate=required_rate,
+        status=status,
+        days_elapsed=days_elapsed,
+        days_total=days_total,
+        days_remaining=days_remaining,
+        earned=round(earned, 1),
+    )
 
 
 async def get_burndown_data(db: AsyncSession) -> BurndownData:

@@ -8,10 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, get_current_user, require_role
 from app.models.user import User, League, UserRole
 from app.schemas.user import UserCreate, UserRead, UserUpdate
-from app.schemas.dashboard import UserProgress
+from app.schemas.dashboard import UserProgress, RunRate
 from app.schemas.transaction import QTransactionRead
 from app.schemas.leagues import LeagueProgress
-from app.services.analytics import get_user_progress
+from app.services.analytics import get_user_progress, get_run_rate
 from app.services.leagues import get_league_progress as get_league_progress_svc
 
 router = APIRouter()
@@ -131,6 +131,21 @@ async def get_league_progress_route(
     if not progress:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
     return progress
+
+
+@router.get("/{user_id}/run-rate", response_model=RunRate)
+async def get_user_run_rate(
+    user_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run Rate — прогноз выполнения плана. Свои данные — всегда; чужие — admin/teamlead."""
+    if current_user.id != user_id and current_user.role not in (UserRole.admin, UserRole.teamlead):
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
+    run_rate = await get_run_rate(db, user_id)
+    if not run_rate:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    return run_rate
 
 
 @router.get("/{user_id}/transactions", response_model=list[QTransactionRead])

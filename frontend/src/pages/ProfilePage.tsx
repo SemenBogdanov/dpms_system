@@ -2,10 +2,11 @@ import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '@/api/client'
 //import type { User, UserProgress, Task, QTransactionRead, LeagueEvaluation, LeagueProgress } from '@/api/types'
-import type { User, UserProgress, Task, QTransactionRead, LeagueProgress } from '@/api/types'
+import type { User, UserProgress, Task, QTransactionRead, LeagueProgress, RunRate } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { LeagueProgressCard } from '@/components/LeagueProgressCard'
+import { RunRateCard } from '@/components/RunRateCard'
 import { SkeletonCard } from '@/components/Skeleton'
 import { cn } from '@/lib/utils'
 
@@ -31,6 +32,9 @@ export function ProfilePage() {
   const [leagueProgress, setLeagueProgress] = useState<LeagueProgress | null>(null)
   const [leagueProgressLoading, setLeagueProgressLoading] = useState(false)
   const [leagueProgressError, setLeagueProgressError] = useState<string | null>(null)
+  const [runRate, setRunRate] = useState<RunRate | null>(null)
+  const [runRateLoading, setRunRateLoading] = useState(false)
+  const [runRateError, setRunRateError] = useState<string | null>(null)
 
   const loadProfile = useCallback(async () => {
     if (!currentId) {
@@ -75,6 +79,15 @@ export function ProfilePage() {
         .then(setLeagueProgress)
         .catch((e) => setLeagueProgressError(e instanceof Error ? e.message : 'Ошибка загрузки'))
         .finally(() => setLeagueProgressLoading(false))
+
+      setRunRate(null)
+      setRunRateError(null)
+      setRunRateLoading(true)
+      api
+        .get<RunRate>(`/api/users/${currentId}/run-rate`)
+        .then(setRunRate)
+        .catch((e) => setRunRateError(e instanceof Error ? e.message : 'Ошибка загрузки'))
+        .finally(() => setRunRateLoading(false))
     } catch (e) {
       setUser(null)
       setProgress(null)
@@ -82,6 +95,7 @@ export function ProfilePage() {
       setTransactions([])
       // setLeagueEval(null)
       setLeagueProgress(null)
+      setRunRate(null)
       setProfileError(e instanceof Error ? e.message : 'Ошибка загрузки профиля')
     } finally {
       setProfileLoading(false)
@@ -176,6 +190,12 @@ export function ProfilePage() {
               </div>
             </div>
           </div>
+
+          <RunRateCard
+            data={runRate}
+            loading={runRateLoading}
+            error={runRateError}
+          />
 
           <LeagueProgressCard
             data={leagueProgress}

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '@/api/client'
-import type { Task, User } from '@/api/types'
+import type { Task, User, RunRate } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
+import { RunRateCard } from '@/components/RunRateCard'
 import { TaskCard } from '@/components/TaskCard'
 import { TaskDetailModal } from '@/components/TaskDetailModal'
 import toast from 'react-hot-toast'
@@ -27,6 +28,7 @@ export function MyTasksPage() {
   const [bugfixTitle, setBugfixTitle] = useState('')
   const [bugfixDescription, setBugfixDescription] = useState('')
   const [bugfixBusy, setBugfixBusy] = useState(false)
+  const [runRate, setRunRate] = useState<RunRate | null>(null)
 
   const [deadlineTask, setDeadlineTask] = useState<Task | null>(null)
   const [deadlineValue, setDeadlineValue] = useState('')
@@ -43,6 +45,7 @@ export function MyTasksPage() {
     if (!currentUser) return
     let cancelled = false
     api.get<Task[]>(`/api/tasks?assignee_id=${currentUser.id}`).then((list) => !cancelled && setTasks(list)).catch(() => !cancelled && setTasks([]))
+    api.get<RunRate>(`/api/users/${currentUser.id}/run-rate`).then((r) => !cancelled && setRunRate(r)).catch(() => !cancelled && setRunRate(null))
     return () => { cancelled = true }
   }, [currentUser])
 
@@ -293,6 +296,11 @@ export function MyTasksPage() {
             <p className="mt-2 text-sm text-slate-600">
               <span className="whitespace-nowrap">⭐ Karma: {currentUser.wallet_karma} Q</span>
             </p>
+          )}
+          {runRate && (
+            <div className="mt-3 pt-3 border-t border-slate-200">
+              <RunRateCard data={runRate} compact />
+            </div>
           )}
         </div>
       )}
