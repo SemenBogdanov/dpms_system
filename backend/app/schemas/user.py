@@ -45,6 +45,7 @@ class UserRead(UserBase):
     wallet_main: float = 0
     wallet_karma: float = 0
     quality_score: float = 100.0
+    needs_password_change: bool = False
     created_at: datetime
     updated_at: datetime
 

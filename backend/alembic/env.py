@@ -2,7 +2,7 @@
 import asyncio
 from logging.config import fileConfig
 
-from sqlalchemy import pool
+from sqlalchemy import pool, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
@@ -11,43 +11,53 @@ from alembic import context
 from app.config import settings
 from app.models import Base
 
-# Конфиг Alembic
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Метаданные для autogenerate
 target_metadata = Base.metadata
 
-# URL из настроек приложения (async)
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+
+_version_table_schema = settings.DB_SCHEMA or None
 
 
 def run_migrations_offline() -> None:
-    """Офлайн-режим: только генерация SQL."""
     url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        version_table_schema=_version_table_schema,
+        include_schemas=True,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    if _version_table_schema:
+        connection.execute(text(f"SET search_path TO {_version_table_schema}, public"))
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        version_table_schema=_version_table_schema,
+        include_schemas=True,
+    )
     with context.begin_transaction():
         context.run_migrations()
 
 
 async def run_async_migrations() -> None:
-    """Онлайн-режим: подключение к БД и миграции (async)."""
+    _connect_args = {}
+    if _version_table_schema:
+        _connect_args["server_settings"] = {"search_path": f"{_version_table_schema},public"}
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=_connect_args,
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

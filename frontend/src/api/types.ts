@@ -29,6 +29,7 @@ export interface User {
   wallet_karma: number
   quality_score: number
   is_active: boolean
+  needs_password_change: boolean
   created_at: string
   updated_at: string
 }

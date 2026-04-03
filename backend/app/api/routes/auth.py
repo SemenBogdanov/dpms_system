@@ -1,16 +1,18 @@
-"""API аутентификации: login, set-password, me."""
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user
-from app.core.security import verify_password, get_password_hash, create_access_token
+from app.core.security import verify_password, get_password_hash, create_access_token, validate_password_strength
 from app.models.user import User
-from app.schemas.auth import LoginRequest, TokenResponse, SetPasswordRequest
+from app.schemas.auth import LoginRequest, TokenResponse, SetPasswordRequest, ChangePasswordRequest
 from app.schemas.user import UserRead
 
 router = APIRouter()
+limiter = Limiter(key_func=get_remote_address)
 
 
 def _user_to_read(user: User) -> UserRead:
@@ -25,13 +27,16 @@ def _user_to_read(user: User) -> UserRead:
         is_active=user.is_active,
         wallet_main=float(user.wallet_main),
         wallet_karma=float(user.wallet_karma),
+        needs_password_change=(user.password_hash is None),
         created_at=user.created_at,
         updated_at=user.updated_at,
     )
 
 
 @router.post("/login", response_model=TokenResponse)
+@limiter.limit("5/minute")
 async def login(
+    request: Request,
     body: LoginRequest,
     db: AsyncSession = Depends(get_db),
 ):
@@ -68,16 +73,60 @@ async def login(
 
 
 @router.post("/set-password")
+@limiter.limit("5/minute")
 async def set_password(
+    request: Request,
     body: SetPasswordRequest,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Установить пароль (для пользователей с password_hash=NULL или смена пароля)."""
+    """Установить пароль (только для пользователей без пароля — первый вход)."""
+    if user.password_hash is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Пароль уже установлен. Используйте смену пароля.",
+        )
+    errors = validate_password_strength(body.new_password)
+    if errors:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=errors,
+        )
     user.password_hash = get_password_hash(body.new_password)
     db.add(user)
     await db.flush()
     return {"message": "Пароль установлен"}
+
+
+@router.post("/change-password")
+@limiter.limit("5/minute")
+async def change_password(
+    request: Request,
+    body: ChangePasswordRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Сменить пароль (только для пользователей с установленным паролем)."""
+    if user.password_hash is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Сначала установите пароль через форму первого входа.",
+        )
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Неверный текущий пароль",
+        )
+    errors = validate_password_strength(body.new_password)
+    if errors:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=errors,
+        )
+    user.password_hash = get_password_hash(body.new_password)
+    db.add(user)
+    await db.flush()
+    return {"message": "Пароль успешно изменён"}
 
 
 @router.get("/me", response_model=UserRead)

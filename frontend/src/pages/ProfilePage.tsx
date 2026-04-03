@@ -9,6 +9,7 @@ import { LeagueProgressCard } from '@/components/LeagueProgressCard'
 import { RunRateCard } from '@/components/RunRateCard'
 import { SkeletonCard } from '@/components/Skeleton'
 import { cn } from '@/lib/utils'
+import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 
 const PAGE_SIZE = 20
 
@@ -35,6 +36,9 @@ export function ProfilePage() {
   const [runRate, setRunRate] = useState<RunRate | null>(null)
   const [runRateLoading, setRunRateLoading] = useState(false)
   const [runRateError, setRunRateError] = useState<string | null>(null)
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+
+  const isOwnProfile = !urlUserId || urlUserId === currentUser?.id
 
   const loadProfile = useCallback(async () => {
     if (!currentId) {
@@ -129,6 +133,15 @@ export function ProfilePage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-slate-900">Профиль</h1>
+        {isOwnProfile && (
+          <button
+            type="button"
+            onClick={() => setChangePasswordOpen(true)}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Сменить пароль
+          </button>
+        )}
       </div>
 
       {profileError && <div className="text-red-600">{profileError}</div>}
@@ -300,6 +313,11 @@ export function ProfilePage() {
       {!user && !profileError && !loading && !profileLoading && (
         <p className="text-slate-500">Выберите сотрудника в списке выше.</p>
       )}
+
+      <ChangePasswordModal
+        open={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+      />
     </div>
   )
 }

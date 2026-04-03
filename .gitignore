@@ -11,6 +11,8 @@ build/
 venv/
 env/
 .env
+*.env.prod
+deploy/.env.prod
 
 # IDE
 .vscode/

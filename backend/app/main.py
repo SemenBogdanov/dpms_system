@@ -1,8 +1,12 @@
-"""FastAPI приложение DPMS: CORS, lifespan, роуты."""
+"""FastAPI приложение DPMS: CORS, lifespan, роуты, rate limiting."""
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.api.routes import users, catalog, calculator, tasks, queue, dashboard, shop, admin, auth, notifications, reports
@@ -15,15 +19,30 @@ async def lifespan(app: FastAPI):
     # shutdown при необходимости
 
 
+limiter = Limiter(key_func=get_remote_address)
+
 app = FastAPI(
     title=settings.APP_TITLE,
     version=settings.APP_VERSION,
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Слишком много попыток. Подождите минуту."},
+    )
+
+
+import os
+_cors_origins = os.getenv("CORS_ORIGINS", "*").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

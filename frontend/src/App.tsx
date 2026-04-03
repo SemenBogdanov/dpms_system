@@ -14,6 +14,7 @@ import { CatalogPage } from '@/pages/CatalogPage'
 import { CalibrationPage } from '@/pages/CalibrationPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { ReportsPage } from '@/pages/ReportsPage'
+import { SetPasswordPage } from '@/pages/SetPasswordPage'
 
 function DashboardRoute() {
   const { user } = useAuth()
@@ -27,6 +28,7 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/set-password" element={<SetPasswordPage />} />
       <Route
         path="/"
         element={

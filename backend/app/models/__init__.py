@@ -1,10 +1,15 @@
 """Модели SQLAlchemy. Импорт всех моделей для Alembic и Base.metadata."""
+from sqlalchemy import MetaData
 from sqlalchemy.orm import DeclarativeBase
 
+from app.config import settings
+
+_metadata_kwargs = {}
+if settings.DB_SCHEMA:
+    _metadata_kwargs["schema"] = settings.DB_SCHEMA
 
 class Base(DeclarativeBase):
-    """Базовый класс для всех моделей."""
-    pass
+    metadata = MetaData(**_metadata_kwargs)
 
 
 from app.models.user import User

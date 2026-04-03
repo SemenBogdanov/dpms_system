@@ -19,4 +19,10 @@ class TokenResponse(BaseModel):
 
 class SetPasswordRequest(BaseModel):
     """Установка пароля (для пользователей с password_hash=NULL)."""
-    new_password: str = Field(..., min_length=6)
+    new_password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    """Смена пароля (для пользователей с установленным паролем)."""
+    current_password: str
+    new_password: str

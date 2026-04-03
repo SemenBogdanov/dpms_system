@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     APP_VERSION: str = "0.1.0"
     DEBUG: bool = False
 
+    # Database schema (optional, default: public)
+    DB_SCHEMA: str | None = None
+
     # JWT
     DPMS_SECRET_KEY: str = "dev-secret-key-change-me"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 часов
