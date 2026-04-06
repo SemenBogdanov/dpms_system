@@ -92,9 +92,9 @@ async def set_password(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=errors,
         )
-    user.password_hash = get_password_hash(body.new_password)
-    db.add(user)
-    await db.flush()
+    merged = await db.merge(user)
+    merged.password_hash = get_password_hash(body.new_password)
+    await db.commit()
     return {"message": "Пароль установлен"}
 
 
@@ -123,9 +123,9 @@ async def change_password(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=errors,
         )
-    user.password_hash = get_password_hash(body.new_password)
-    db.add(user)
-    await db.flush()
+    merged = await db.merge(user)
+    merged.password_hash = get_password_hash(body.new_password)
+    await db.commit()
     return {"message": "Пароль успешно изменён"}
 
 
