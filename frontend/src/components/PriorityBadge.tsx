@@ -2,10 +2,10 @@ import { cn } from '@/lib/utils'
 import type { TaskPriority } from '@/api/types'
 
 const styles: Record<TaskPriority, string> = {
-  critical: 'bg-red-100 text-red-800',
-  high: 'bg-orange-100 text-orange-800',
-  medium: 'bg-amber-100 text-amber-800',
-  low: 'bg-slate-100 text-slate-600',
+  critical: 'bg-red-50 text-red-600 ring-1 ring-red-100',
+  high: 'bg-orange-50 text-orange-600 ring-1 ring-orange-100',
+  medium: 'bg-accent-lighter text-accent-dark',
+  low: 'bg-gray-50 text-gray-400 ring-1 ring-gray-100',
 }
 
 const labels: Record<TaskPriority, string> = {
@@ -25,8 +25,8 @@ export function PriorityBadge({ priority, className }: PriorityBadgeProps) {
   return (
     <span
       className={cn(
-        'inline-flex rounded px-2 py-0.5 text-xs font-medium',
-        styles[p] ?? 'bg-slate-100 text-slate-600',
+        'inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium',
+        styles[p] ?? 'bg-gray-50 text-gray-400',
         className
       )}
     >

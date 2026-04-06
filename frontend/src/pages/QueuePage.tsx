@@ -14,10 +14,10 @@ import { TaskDetailModal } from '@/components/TaskDetailModal'
 import { BugfixModal } from '@/components/BugfixModal'
 
 const complexityStyles: Record<string, string> = {
-  S: 'bg-slate-100 text-slate-700',
-  M: 'bg-blue-100 text-blue-800',
-  L: 'bg-orange-100 text-orange-800',
-  XL: 'bg-red-100 text-red-800',
+  S: 'bg-gray-50 text-gray-400 ring-1 ring-gray-100',
+  M: 'bg-accent-lighter text-accent-dark',
+  L: 'bg-orange-50 text-orange-500',
+  XL: 'bg-red-50 text-red-500',
 }
 
 export function QueuePage() {
@@ -103,11 +103,11 @@ export function QueuePage() {
 
   const priorityOrder: Record<string, number> = { critical: 4, high: 3, medium: 2, low: 1 }
   const priorityLabels: Record<string, string> = {
-    critical: '🔴 Критические',
-    high: '🟠 Высокие',
-    medium: '🟡 Средние',
-    low: '🟢 Низкие',
-    proactive: '🔄 Проактивные',
+    critical: 'Критические',
+    high: 'Высокие',
+    medium: 'Средние',
+    low: 'Низкие',
+    proactive: 'Проактивные',
   }
   const sortedTasks = [...filteredByTag].sort((a, b) => {
     const aBug = (a as QueueTaskResponse).task_type === 'bugfix' || (a as Task).task_type === 'bugfix'
@@ -258,18 +258,18 @@ export function QueuePage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-semibold text-slate-900">Глобальная очередь</h1>
+          <h1 className="text-2xl font-semibold text-gray-700">Глобальная очередь</h1>
           {isTeamleadOrAdmin && (
             <Link
               to="/calculator"
-              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+              className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-dark transition-colors"
             >
               ➕ Создать задачу
             </Link>
           )}
         </div>
         {currentUser && (
-          <div className="text-sm text-slate-600 whitespace-nowrap">
+          <div className="text-sm text-gray-600 whitespace-nowrap">
             Лига {currentUser.league} · WIP: {wipCount} из {currentUser.wip_limit} ·{' '}
             {Number(currentUser.wallet_main).toFixed(1)}/{currentUser.mpw} Q
           </div>
@@ -278,33 +278,33 @@ export function QueuePage() {
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
+          <span className="absolute left-3 top-1/2 -trangray-y-1/2 text-gray-400">🔍</span>
           <input
             type="text"
             placeholder="Поиск по названию или тегу..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-10 pr-4 text-sm"
+            className="w-full rounded-lg border border-gray-200 bg-white py-2 pl-10 pr-4 text-sm"
           />
         </div>
-        <label className="flex items-center gap-2 whitespace-nowrap text-sm text-slate-600">
+        <label className="flex items-center gap-2 whitespace-nowrap text-sm text-gray-600">
           <input
             type="checkbox"
             checked={includeArchived}
             onChange={(e) => setIncludeArchived(e.target.checked)}
-            className="rounded border-slate-300"
+            className="rounded border-gray-300"
           />
           Включая закрытые
         </label>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-slate-500">Проекты:</span>
+        <span className="text-xs font-medium text-gray-500">Проекты:</span>
         <button
           type="button"
           onClick={() => setActiveTag(null)}
           className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-            activeTag === null ? 'bg-primary text-primary-foreground' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            activeTag === null ? 'bg-accent text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
           }`}
         >
           Все
@@ -315,7 +315,7 @@ export function QueuePage() {
             type="button"
             onClick={() => setActiveTag(activeTag === tag ? null : tag)}
             className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-              activeTag === tag ? 'bg-primary text-primary-foreground' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+              activeTag === tag ? 'bg-accent text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
             }`}
           >
             {tag}
@@ -323,7 +323,7 @@ export function QueuePage() {
         ))}
       </div>
       {activeTag && (
-        <div className="text-sm text-slate-600">
+        <div className="text-sm text-gray-600">
           Проект <span className="font-semibold">{activeTag}</span>: {filteredByTag.length} задач,{' '}
           <span className="whitespace-nowrap font-semibold">
             {Number(filteredByTag.reduce((sum, t) => sum + Number(t.estimated_q), 0)).toFixed(1)} Q
@@ -332,11 +332,11 @@ export function QueuePage() {
       )}
 
       {displayList.length === 0 && !loading ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-12 text-center text-slate-500">
+        <div className="rounded-xl border border-gray-200 bg-white p-12 text-center text-gray-500">
           Очередь пуста. Создайте задачу через калькулятор.
         </div>
       ) : sortedTasks.length === 0 ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-500">
+        <div className="rounded-xl border border-gray-200 bg-white p-8 text-center text-gray-500">
           {searchQuery.trim()
             ? `По запросу «${searchQuery}» задач не найдено`
             : activeTag
@@ -344,33 +344,33 @@ export function QueuePage() {
               : 'Нет задач'}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="min-w-full divide-y divide-slate-200">
-            <thead className="bg-slate-50">
+        <div className="overflow-x-auto rounded-2xl border border-gray-100 bg-white">
+          <table className="min-w-full divide-y divide-gray-100">
+            <thead className="bg-gray-50/50">
               <tr>
-                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-slate-600" onClick={() => handleSort('title')}>
+                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-gray-600" onClick={() => handleSort('title')}>
                   Название {sortField === 'title' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
                 </th>
-                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-slate-600" onClick={() => handleSort('status')}>
+                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-gray-600" onClick={() => handleSort('status')}>
                   Статус {sortField === 'status' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Тип</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Сложность</th>
-                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-slate-600 min-w-[60px]" onClick={() => handleSort('estimated_q')}>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600">Тип</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600">Сложность</th>
+                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-gray-600 min-w-[60px]" onClick={() => handleSort('estimated_q')}>
                   Q {sortField === 'estimated_q' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
                 </th>
-                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-slate-600" onClick={() => handleSort('due_date')}>
+                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-gray-600" onClick={() => handleSort('due_date')}>
                   Срок {sortField === 'due_date' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
                 </th>
-                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-slate-600" onClick={() => handleSort('priority')}>
+                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-gray-600" onClick={() => handleSort('priority')}>
                   Приоритет {sortField === 'priority' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
                 </th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Мин. лига</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">Дата</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-slate-600">Действие</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600">Мин. лига</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600">Дата</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-600">Действие</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200">
+            <tbody className="divide-y divide-gray-50">
               {(() => {
                 let lastPriority: string | null = null
                 let proactiveSectionShown = false
@@ -394,70 +394,70 @@ export function QueuePage() {
                 })
                 return rows.map((row, idx) =>
                   row.type === 'section' ? (
-                    <tr key={`section-${row.priority}-${idx}`} className="bg-slate-100">
-                      <td colSpan={10} className="px-4 py-1.5 text-xs font-medium text-slate-600">
-                        ─── {priorityLabels[row.priority] ?? row.priority} ───
+                    <tr key={`section-${row.priority}-${idx}`} className="bg-gray-50/50">
+                      <td colSpan={10} className="px-4 py-2 text-xs font-medium text-gray-400 tracking-wide uppercase">
+                        {priorityLabels[row.priority] ?? row.priority}
                       </td>
                     </tr>
                   ) : (
                     <tr
                       key={(row.task as Task).id}
-                      className={`${locked(row.task) ? 'bg-slate-50 opacity-75' : ''} ${taskType(row.task) === 'bugfix' ? 'border-l-4 border-red-400 bg-red-50/50' : ''}`}
+                      className={`${locked(row.task) ? 'opacity-60' : ''} ${taskType(row.task) === 'bugfix' ? 'border-l-3 border-red-300 bg-red-50/30' : ''}`}
                     >
-                      <td className="px-4 py-3 text-sm text-slate-900">
+                      <td className="px-4 py-3 text-sm text-gray-700">
                     <button
                       type="button"
                       onClick={() => openDetail(row.task.id)}
-                      className="cursor-pointer text-left text-primary hover:underline"
+                       className="cursor-pointer text-left text-gray-700 font-medium hover:text-accent-dark transition-colors"
                     >
                       {row.task.title}
                     </button>
                     {taskType(row.task) === 'bugfix' && (
-                      <span className="ml-2 inline rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
-                        🐛 Гарантийный
+                      <span className="ml-2 inline rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-500">
+                        Гарантийный
                       </span>
                     )}
                     {isProactive(row.task) && (
-                      <span className="ml-2 inline rounded bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800">
-                        🔄 Проактивная
+                      <span className="ml-2 inline rounded-full bg-accent-lighter px-2.5 py-0.5 text-xs font-medium text-accent-dark">
+                        Проактивная
                       </span>
                     )}
                     {taskTags(row.task).length > 0 && (
                       <div className="mt-0.5 flex flex-wrap gap-1">
                         {taskTags(row.task).map((tag) => (
-                          <span key={tag} className="inline-block rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                          <span key={tag} className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
                             {tag}
                           </span>
                         ))}
                       </div>
                     )}
                     {(row.task as Task).rejection_count > 0 && (
-                      <span className="ml-2 inline rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-                        🔄 {(row.task as Task).rejection_count}
+                      <span className="ml-2 inline rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-500">
+                        ↩ {(row.task as Task).rejection_count}
                       </span>
                     )}
                     {(row.task as QueueTaskResponse).is_stale && (
-                      <span className="ml-2 inline rounded bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
-                        🔥 Застряла {Math.round((row.task as QueueTaskResponse).hours_in_queue ?? 0)}ч
+                      <span className="ml-2 inline rounded-full bg-orange-50 px-2.5 py-0.5 text-xs font-medium text-orange-500">
+                        Застряла {Math.round((row.task as QueueTaskResponse).hours_in_queue ?? 0)}ч
                       </span>
                     )}
                     {!(row.task as QueueTaskResponse).is_stale && ((row.task as QueueTaskResponse).hours_in_queue ?? 0) > 24 && (
-                      <span className="ml-2 inline rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
-                        ⏳ {Math.round((row.task as QueueTaskResponse).hours_in_queue ?? 0)}ч в очереди
+                      <span className="ml-2 inline rounded-full bg-gray-50 px-2.5 py-0.5 text-xs font-medium text-gray-400">
+                        {Math.round((row.task as QueueTaskResponse).hours_in_queue ?? 0)}ч в очереди
                       </span>
                     )}
                     {(row.task as QueueTaskResponse).recommended && (
-                      <span className="ml-2 inline rounded bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
-                        ⚡ Рекомендуем
+                      <span className="ml-2 inline rounded-full bg-accent-lighter px-2.5 py-0.5 text-xs font-medium text-accent-dark">
+                        Рекомендуем
                       </span>
                     )}
                     {(row.task as QueueTaskResponse).assigned_by_name && (
-                      <span className="ml-2 text-xs text-slate-500">
+                      <span className="ml-2 text-xs text-gray-500">
                         Назначил: {(row.task as QueueTaskResponse).assigned_by_name}
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">
+                  <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
                     {taskStatus(row.task) === 'in_queue' && 'В очереди'}
                     {taskStatus(row.task) === 'in_progress' && 'В работе'}
                     {taskStatus(row.task) === 'review' && 'На проверке'}
@@ -466,9 +466,9 @@ export function QueuePage() {
                     {taskStatus(row.task) === 'new' && 'Новая'}
                     {taskStatus(row.task) === 'estimated' && 'Оценена'}
                   </td>
-                  <td className="px-4 py-3 text-sm text-slate-600">{taskType(row.task)}</td>
+                  <td className="px-4 py-3 text-sm text-gray-600">{taskType(row.task)}</td>
                   <td className="px-4 py-3">
-                    <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${complexityStyles[(row.task as QueueTaskResponse).complexity ?? (row.task as Task).complexity] ?? 'bg-slate-100'}`}>
+                    <span className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${complexityStyles[(row.task as QueueTaskResponse).complexity ?? (row.task as Task).complexity] ?? 'bg-gray-100'}`}>
                       {(row.task as QueueTaskResponse).complexity ?? (row.task as Task).complexity}
                     </span>
                   </td>
@@ -482,7 +482,7 @@ export function QueuePage() {
                         zone={(row.task as QueueTaskResponse).deadline_zone ?? (row.task as Task).deadline_zone}
                       />
                       {((row.task as QueueTaskResponse).due_date ?? (row.task as Task).due_date) && (
-                        <span className="whitespace-nowrap text-xs text-slate-500">
+                        <span className="whitespace-nowrap text-xs text-gray-500">
                           {new Date(((row.task as QueueTaskResponse).due_date ?? (row.task as Task).due_date)!).toLocaleDateString('ru', {
                             day: 'numeric',
                             month: 'short',
@@ -492,7 +492,7 @@ export function QueuePage() {
                         </span>
                       )}
                       {!((row.task as QueueTaskResponse).due_date ?? (row.task as Task).due_date) && (
-                        <span className="text-xs text-slate-400">—</span>
+                        <span className="text-xs text-gray-400">—</span>
                       )}
                     </div>
                   </td>
@@ -502,7 +502,7 @@ export function QueuePage() {
                   <td className="px-4 py-3 whitespace-nowrap">
                     <LeagueBadge league={(row.task as QueueTaskResponse).min_league ?? (row.task as Task).min_league} />
                   </td>
-                  <td className="px-4 py-3 text-sm text-slate-500">
+                  <td className="px-4 py-3 text-sm text-gray-500">
                     {new Date((row.task as QueueTaskResponse).created_at ?? (row.task as Task).created_at).toLocaleDateString('ru')}
                   </td>
                   <td className="px-4 py-3 text-right">
@@ -511,7 +511,7 @@ export function QueuePage() {
                         <button
                           type="button"
                           onClick={() => handleDelete(row.task)}
-                          className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                          className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
                           title="Отменить задачу"
                         >
                           🗑️
@@ -525,13 +525,13 @@ export function QueuePage() {
                             setSelectedExecutorId(null)
                             api.get<AssignCandidate[]>(`/api/queue/candidates/${row.task.id}`).then(setAssignCandidates).catch(() => setAssignCandidates([]))
                           }}
-                          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
                         >
                           Назначить
                         </button>
                       )}
                       {locked(row.task) ? (
-                        <span className="inline-flex items-center gap-1 text-sm text-slate-500">
+                        <span className="inline-flex items-center gap-1 text-sm text-gray-500">
                           <Lock className="h-4 w-4" />
                           <span className="hidden sm:inline">{lockReason(row.task) ?? `Лига ${(row.task as QueueTaskResponse).min_league}`}</span>
                         </span>
@@ -540,12 +540,12 @@ export function QueuePage() {
                           type="button"
                           onClick={() => setConfirmPull(row.task)}
                           disabled={!!pullingId}
-                          className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                        >
-                          Взять
+                        className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-dark disabled:opacity-50 transition-colors"
+                      >
+                        Взять
                         </button>
                       ) : taskStatus(row.task) === 'in_queue' ? (
-                        <span title={lockReason(row.task) ?? 'WIP-лимит исчерпан'} className="cursor-help text-sm text-slate-400">
+                        <span title={lockReason(row.task) ?? 'WIP-лимит исчерпан'} className="cursor-help text-sm text-gray-400">
                           WIP
                         </span>
                       ) : null}
@@ -608,14 +608,14 @@ export function QueuePage() {
           onKeyDown={(e) => e.key === 'Escape' && setConfirmPull(null)}
         >
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
-            <p className="text-slate-800">
+            <p className="text-gray-800">
               Взять задачу «{confirmPull.title}» за {confirmPull.estimated_q} Q?
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setConfirmPull(null)}
-                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 Отмена
               </button>
@@ -623,7 +623,7 @@ export function QueuePage() {
                 type="button"
                 onClick={doPull}
                 disabled={!!pullingId}
-                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-dark disabled:opacity-50 transition-colors"
               >
                 {pullingId ? '...' : 'Взять'}
               </button>
@@ -640,32 +640,32 @@ export function QueuePage() {
           onKeyDown={(e) => e.key === 'Escape' && setAssignTask(null)}
         >
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
-            <h3 className="text-lg font-semibold text-slate-900">Назначить задачу</h3>
-            <p className="mt-1 text-sm text-slate-600">«{assignTask.title}»</p>
-            <p className="mt-3 text-sm font-medium text-slate-700">Выберите исполнителя:</p>
-            <ul className="mt-2 max-h-60 overflow-y-auto rounded border border-slate-200">
+            <h3 className="text-lg font-semibold text-gray-700">Назначить задачу</h3>
+            <p className="mt-1 text-sm text-gray-600">«{assignTask.title}»</p>
+            <p className="mt-3 text-sm font-medium text-gray-700">Выберите исполнителя:</p>
+            <ul className="mt-2 max-h-60 overflow-y-auto rounded border border-gray-200">
               {assignCandidates.map((c) => (
                 <li key={c.id}>
                   <button
                     type="button"
                     disabled={!c.is_available}
                     onClick={() => c.is_available && setSelectedExecutorId(c.id)}
-                    className={`w-full px-4 py-2 text-left text-sm ${c.is_available ? 'hover:bg-slate-50' : 'cursor-not-allowed bg-slate-50 text-slate-400'}`}
+                    className={`w-full px-4 py-2 text-left text-sm ${c.is_available ? 'hover:bg-gray-50' : 'cursor-not-allowed bg-gray-50 text-gray-400'}`}
                   >
                     <span className="font-medium">{c.full_name}</span>
-                    <span className="ml-2 text-slate-500">Лига {c.league}</span>
-                    <span className="ml-2 text-slate-500">WIP: {c.wip_current}/{c.wip_limit}</span>
+                    <span className="ml-2 text-gray-500">Лига {c.league}</span>
+                    <span className="ml-2 text-gray-500">WIP: {c.wip_current}/{c.wip_limit}</span>
                     {!c.is_available && <span className="ml-2 text-xs">(занят)</span>}
                   </button>
                 </li>
               ))}
             </ul>
-            {assignCandidates.length === 0 && <p className="py-4 text-center text-sm text-slate-500">Нет доступных кандидатов</p>}
+            {assignCandidates.length === 0 && <p className="py-4 text-center text-sm text-gray-500">Нет доступных кандидатов</p>}
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setAssignTask(null)}
-                className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 Отмена
               </button>
@@ -687,7 +687,7 @@ export function QueuePage() {
                     setAssignBusy(false)
                   }
                 }}
-                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-dark disabled:opacity-50 transition-colors"
               >
                 {assignBusy ? '...' : 'Назначить'}
               </button>
