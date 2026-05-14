@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '@/api/client'
-import type { Task, User, RunRate } from '@/api/types'
+import type { Task, User, RunRate, UserProgress } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { RunRateCard } from '@/components/RunRateCard'
 import { TaskCard } from '@/components/TaskCard'
 import { TaskDetailModal } from '@/components/TaskDetailModal'
 import toast from 'react-hot-toast'
 import { BugfixModal } from '@/components/BugfixModal'
+
+const MAX_FOCUS_SECONDS = 4 * 3600
+
+type TaskWithComputedTime = Task & {
+  is_focused: boolean
+  _elapsedSeconds: number
+}
 
 export function MyTasksPage() {
   const { user: currentUser } = useAuth()
@@ -20,6 +27,8 @@ export function MyTasksPage() {
   const [submitTaskId, setSubmitTaskId] = useState<string | null>(null)
   const [submitResultUrl, setSubmitResultUrl] = useState('')
   const [submitComment, setSubmitComment] = useState('')
+  const [submitBriefRating, setSubmitBriefRating] = useState<number | null>(null)
+  const [submitBriefFeedback, setSubmitBriefFeedback] = useState('')
 
   const [rejectTask, setRejectTask] = useState<Task | null>(null)
   const [rejectComment, setRejectComment] = useState('')
@@ -29,6 +38,7 @@ export function MyTasksPage() {
   const [bugfixDescription, setBugfixDescription] = useState('')
   const [bugfixBusy, setBugfixBusy] = useState(false)
   const [runRate, setRunRate] = useState<RunRate | null>(null)
+  const [progress, setProgress] = useState<UserProgress | null>(null)
 
   const [deadlineTask, setDeadlineTask] = useState<Task | null>(null)
   const [deadlineValue, setDeadlineValue] = useState('')
@@ -46,6 +56,7 @@ export function MyTasksPage() {
     let cancelled = false
     api.get<Task[]>(`/api/tasks?assignee_id=${currentUser.id}`).then((list) => !cancelled && setTasks(list)).catch(() => !cancelled && setTasks([]))
     api.get<RunRate>(`/api/users/${currentUser.id}/run-rate`).then((r) => !cancelled && setRunRate(r)).catch(() => !cancelled && setRunRate(null))
+    api.get<UserProgress>(`/api/users/${currentUser.id}/progress`).then((p) => !cancelled && setProgress(p)).catch(() => !cancelled && setProgress(null))
     return () => { cancelled = true }
   }, [currentUser])
 
@@ -67,6 +78,12 @@ export function MyTasksPage() {
     const [newTasks] = await Promise.all([
       api.get<Task[]>(`/api/tasks?assignee_id=${currentUser.id}`),
       loadReviewTasks(),
+      api.get<UserProgress>(`/api/users/${currentUser.id}/progress`)
+        .then((p) => setProgress(p))
+        .catch(() => setProgress(null)),
+      api.get<RunRate>(`/api/users/${currentUser.id}/run-rate`)
+        .then((r) => setRunRate(r))
+        .catch(() => setRunRate(null)),
       api.get<User[]>('/api/users')
         .then((u) => setUsers(u))
         .catch(() => {}),
@@ -119,7 +136,7 @@ export function MyTasksPage() {
     return () => clearInterval(id)
   }, [])
 
-  const tasksWithComputedTime = useMemo(() => {
+  const tasksWithComputedTime = useMemo<TaskWithComputedTime[]>(() => {
     return tasks.map((t) => {
       const isFocusedComputed = t.focus_started_at != null
       let elapsedSeconds = t.active_seconds ?? 0
@@ -127,6 +144,7 @@ export function MyTasksPage() {
         const started = new Date(t.focus_started_at).getTime()
         elapsedSeconds += Math.max(0, Math.floor((now - started) / 1000))
       }
+      elapsedSeconds = Math.min(elapsedSeconds, MAX_FOCUS_SECONDS)
       return { ...t, is_focused: isFocusedComputed, _elapsedSeconds: elapsedSeconds }
     })
   }, [tasks, now])
@@ -135,16 +153,24 @@ export function MyTasksPage() {
     setSubmitTaskId(taskId)
     setSubmitResultUrl('')
     setSubmitComment('')
+    setSubmitBriefRating(null)
+    setSubmitBriefFeedback('')
   }
 
   const handleSubmitModalOk = async () => {
     if (!currentUser || !submitTaskId) return
+    if (!submitBriefRating) {
+      toast.error('Поставьте оценку постановки задачи')
+      return
+    }
     setBusyTaskId(submitTaskId)
     try {
       await api.post('/api/queue/submit', {
         task_id: submitTaskId,
         result_url: submitResultUrl || undefined,
         comment: submitComment || undefined,
+        brief_rating: submitBriefRating,
+        brief_feedback: submitBriefFeedback.trim() || undefined,
       })
       toast.success('Отправлено на проверку')
       setSubmitTaskId(null)
@@ -266,8 +292,10 @@ export function MyTasksPage() {
   const review = tasksWithComputedTime.filter((t) => t.status === 'review')
   const done = tasksWithComputedTime.filter((t) => t.status === 'done')
 
+  const progressEarned = progress?.earned ?? currentUser?.wallet_main ?? 0
+  const progressTarget = progress?.target ?? currentUser?.mpw ?? 0
   const progressPercent = currentUser
-    ? (currentUser.mpw > 0 ? (Number(currentUser.wallet_main) / currentUser.mpw) * 100 : 0)
+    ? (progressTarget > 0 ? (Number(progressEarned) / progressTarget) * 100 : 0)
     : 0
   const progressColor =
     progressPercent < 50 ? 'bg-red-500' : progressPercent < 80 ? 'bg-yellow-500' : 'bg-emerald-500'
@@ -281,9 +309,9 @@ export function MyTasksPage() {
       {currentUser && (
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <div className="mb-2 flex items-center justify-between text-sm">
-            <span className="text-slate-600">Кошелёк / MPW</span>
+            <span className="text-slate-600">Кошелёк / план</span>
             <span className="whitespace-nowrap font-medium text-slate-900">
-              {currentUser.wallet_main} / {currentUser.mpw} Q
+              {Number(progressEarned).toFixed(1)} / {Number(progressTarget).toFixed(1)} Q
             </span>
           </div>
           <div className="h-3 overflow-hidden rounded-full bg-slate-200">
@@ -310,7 +338,7 @@ export function MyTasksPage() {
           <h2 className="mb-3 font-medium text-slate-700">В работе</h2>
           <div className="space-y-2">
             {inProgress.map((t) => {
-              const elapsedLabel = formatDuration((t as any)._elapsedSeconds ?? 0)
+              const elapsedLabel = formatDuration(t._elapsedSeconds)
               const isFocused = t.is_focused
               const hasActive = !t.is_focused && (t.active_seconds ?? 0) > 0
               const isNewAssigned = !t.is_focused && (t.active_seconds ?? 0) === 0
@@ -328,6 +356,7 @@ export function MyTasksPage() {
                       {isFocused && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-emerald-700">
                           🟢 В фокусе · ⏱ {elapsedLabel}
+                          {t._elapsedSeconds >= MAX_FOCUS_SECONDS && ' · лимит'}
                         </span>
                       )}
                       {!isFocused && hasActive && (
@@ -523,6 +552,40 @@ export function MyTasksPage() {
                   placeholder="Необязательно"
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700">
+                  Корректность постановки <span className="text-red-600">*</span>
+                </label>
+                <div className="mt-2 flex gap-1">
+                  {[1, 2, 3, 4, 5].map((rating) => (
+                    <button
+                      key={rating}
+                      type="button"
+                      onClick={() => setSubmitBriefRating(rating)}
+                      className={`rounded px-1 text-2xl leading-none ${
+                        submitBriefRating && rating <= submitBriefRating
+                          ? 'text-amber-400'
+                          : 'text-slate-300 hover:text-amber-300'
+                      }`}
+                      aria-label={`${rating} из 5`}
+                    >
+                      ★
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700">
+                  Комментарий к постановке
+                </label>
+                <textarea
+                  value={submitBriefFeedback}
+                  onChange={(e) => setSubmitBriefFeedback(e.target.value)}
+                  rows={2}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  placeholder="Необязательно"
+                />
+              </div>
             </div>
             <div className="mt-6 flex justify-end gap-2">
               <button
@@ -535,9 +598,10 @@ export function MyTasksPage() {
               <button
                 type="button"
                 onClick={handleSubmitModalOk}
-                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+                disabled={!submitBriefRating || busyTaskId === submitTaskId}
+                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
               >
-                Сдать
+                {busyTaskId === submitTaskId ? '...' : 'Сдать'}
               </button>
             </div>
           </div>
@@ -557,7 +621,7 @@ export function MyTasksPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold text-slate-900">Вернуть задачу</h3>
-            <p className="mt-1 text-sm text-slate-500">{rejectTask.title}</p>
+            <p className="mt-1 text-sm text-slate-500">#{rejectTask.task_number} {rejectTask.title}</p>
             <div className="mt-4">
               <label className="block text-sm font-medium text-slate-700">
                 Причина возврата <span className="text-red-600">*</span>
@@ -606,7 +670,7 @@ export function MyTasksPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold text-slate-900">📅 Установить дедлайн</h3>
-            <p className="mt-1 text-sm text-slate-500">{deadlineTask.title}</p>
+            <p className="mt-1 text-sm text-slate-500">#{deadlineTask.task_number} {deadlineTask.title}</p>
             <div className="mt-4">
               <label className="block text-sm font-medium text-slate-700">Дата и время</label>
               <input

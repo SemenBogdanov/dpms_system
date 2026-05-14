@@ -49,6 +49,7 @@ export interface CatalogItem {
 
 export interface Task {
   id: string
+  task_number: number
   title: string
   description: string | null
   task_type: TaskType
@@ -62,6 +63,9 @@ export interface Task {
   validator_id: string | null
   estimation_details: Record<string, unknown> | null
   result_url: string | null
+  result_comment: string | null
+  brief_rating: number | null
+  brief_feedback: string | null
   rejection_comment: string | null
   started_at: string | null
   completed_at: string | null
@@ -85,6 +89,7 @@ export interface Task {
 /** Задача в очереди с флагами can_pull, locked */
 export interface QueueTaskResponse {
   id: string
+  task_number: number
   title: string
   description: string | null
   task_type: string

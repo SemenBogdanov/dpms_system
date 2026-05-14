@@ -1,4 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
+import type { ReactElement } from 'react'
 import { Layout } from '@/components/Layout'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { useAuth } from '@/contexts/AuthContext'
@@ -24,6 +25,14 @@ function DashboardRoute() {
   return <DashboardPage />
 }
 
+function TeamleadAdminRoute({ children }: { children: ReactElement }) {
+  const { user } = useAuth()
+  if (user?.role !== 'teamlead' && user?.role !== 'admin') {
+    return <Navigate to="/queue" replace />
+  }
+  return children
+}
+
 function App() {
   return (
     <Routes>
@@ -41,7 +50,14 @@ function App() {
         <Route path="calibration" element={<CalibrationPage />} />
         <Route path="queue" element={<QueuePage />} />
         <Route path="my-tasks" element={<MyTasksPage />} />
-        <Route path="calculator" element={<CalculatorPage />} />
+        <Route
+          path="calculator"
+          element={
+            <TeamleadAdminRoute>
+              <CalculatorPage />
+            </TeamleadAdminRoute>
+          }
+        />
         <Route path="profile" element={<ProfilePage />} />
         <Route path="shop" element={<ShopPage />} />
         <Route path="admin/users" element={<AdminUsersPage />} />

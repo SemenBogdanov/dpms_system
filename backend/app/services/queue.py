@@ -13,10 +13,23 @@ from app.models.user import User, League, UserRole
 from app.models.transaction import QTransaction, WalletType
 from app.schemas.queue import QueueTaskResponse
 from app.schemas.task import compute_deadline_zone
+from app.services.focus import add_bounded_focus_time
 from app.services.wallet import credit_q
 
 _LEAGUE_ORDER = {League.C: 0, League.B: 1, League.A: 2}
 _PRIORITY_ORDER = {TaskPriority.low: 1, TaskPriority.medium: 2, TaskPriority.high: 3, TaskPriority.critical: 4}
+CRITICAL_BLOCK_REASON = "Сначала нужно взять или назначить критическую задачу"
+
+
+async def _critical_queue_exists(db: AsyncSession, exclude_task_id: UUID | None = None) -> bool:
+    stmt = select(Task.id).where(
+        Task.status == TaskStatus.in_queue,
+        Task.priority == TaskPriority.critical,
+    )
+    if exclude_task_id is not None:
+        stmt = stmt.where(Task.id != exclude_task_id)
+    result = await db.execute(stmt.limit(1))
+    return result.scalar_one_or_none() is not None
 
 
 async def get_available_tasks(
@@ -45,6 +58,7 @@ async def get_available_tasks(
         stmt = stmt.where(Task.task_type != TaskType.proactive)
     result = await db.execute(stmt)
     tasks = list(result.scalars().all())
+    has_critical_queue = await _critical_queue_exists(db)
 
     wip_count_result = await db.execute(
         select(func.count(Task.id)).where(
@@ -75,7 +89,11 @@ async def get_available_tasks(
     available_priorities: list[TaskPriority] = []
     for task in tasks:
         task_league_order = _LEAGUE_ORDER.get(task.min_league, 0)
-        if user_league_order >= task_league_order and can_pull_by_wip:
+        if (
+            user_league_order >= task_league_order
+            and can_pull_by_wip
+            and (not has_critical_queue or task.priority == TaskPriority.critical)
+        ):
             available_priorities.append(task.priority)
     top_priority = max(available_priorities, key=lambda p: _PRIORITY_ORDER.get(p, 0), default=None)
 
@@ -83,11 +101,20 @@ async def get_available_tasks(
     for task in tasks:
         hours_in_queue = (now - task.created_at).total_seconds() / 3600
         is_stale = hours_in_queue > 48
-        can_assign = is_manager and hours_in_queue > 24
+        critical_blocked = has_critical_queue and task.priority != TaskPriority.critical
+        can_assign = (
+            is_manager
+            and (task.priority == TaskPriority.critical or hours_in_queue > 24)
+            and not critical_blocked
+        )
 
         task_league_order = _LEAGUE_ORDER.get(task.min_league, 0)
         league_ok = user_league_order >= task_league_order
-        if not league_ok:
+        if critical_blocked:
+            can_pull = False
+            locked = True
+            lock_reason = CRITICAL_BLOCK_REASON
+        elif not league_ok:
             can_pull = False
             locked = True
             lock_reason = f"Требуется Лига {task.min_league.value}"
@@ -113,6 +140,7 @@ async def get_available_tasks(
         out.append(
             QueueTaskResponse(
                 id=task.id,
+                task_number=task.task_number,
                 title=task.title,
                 description=task.description,
                 task_type=task.task_type.value,
@@ -154,6 +182,8 @@ async def pull_task(db: AsyncSession, user_id: UUID, task_id: UUID) -> Task:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     if task.status != TaskStatus.in_queue:
         raise HTTPException(status_code=400, detail="Задача уже взята другим")
+    if task.priority != TaskPriority.critical and await _critical_queue_exists(db, exclude_task_id=task.id):
+        raise HTTPException(status_code=400, detail=CRITICAL_BLOCK_REASON)
     if _LEAGUE_ORDER.get(user.league, 0) < _LEAGUE_ORDER.get(task.min_league, 0):
         raise HTTPException(status_code=400, detail="Недостаточный уровень лиги")
     wip_count_result = await db.execute(
@@ -203,10 +233,7 @@ async def pull_task(db: AsyncSession, user_id: UUID, task_id: UUID) -> Task:
     )
     current_focus = current_focus_result.scalar_one_or_none()
     if current_focus and current_focus.focus_started_at is not None:
-        delta = (now - current_focus.focus_started_at).total_seconds()
-        if delta > 0:
-            current_focus.active_seconds += int(delta)
-        current_focus.focus_started_at = None
+        add_bounded_focus_time(current_focus, now)
 
     task.focus_started_at = now
 
@@ -220,6 +247,8 @@ async def submit_for_review(
     task_id: UUID,
     result_url: str | None = None,
     comment: str | None = None,
+    brief_rating: int | None = None,
+    brief_feedback: str | None = None,
 ) -> Task:
     """Сдать задачу на проверку."""
     result = await db.execute(select(Task).where(Task.id == task_id))
@@ -230,17 +259,22 @@ async def submit_for_review(
         raise HTTPException(status_code=400, detail="Это не ваша задача")
     if task.status != TaskStatus.in_progress:
         raise HTTPException(status_code=400, detail="Задача не в работе")
+    if brief_rating is None:
+        raise HTTPException(status_code=400, detail="Оценка постановки задачи обязательна")
     # Если задача в фокусе — зафиксировать время и снять с фокуса
     if task.focus_started_at:
-        delta = (datetime.now(timezone.utc) - task.focus_started_at).total_seconds()
-        if delta > 0:
-            task.active_seconds += int(delta)
-        task.focus_started_at = None
+        add_bounded_focus_time(task, datetime.now(timezone.utc))
 
     task.status = TaskStatus.review
     task.completed_at = datetime.now(timezone.utc)
     if result_url is not None:
         task.result_url = result_url
+    if comment is not None:
+        task.result_comment = comment.strip() or None
+    if brief_rating is not None:
+        task.brief_rating = brief_rating
+    if brief_feedback is not None:
+        task.brief_feedback = brief_feedback.strip() or None
     await db.flush()
     return task
 
@@ -502,13 +536,25 @@ async def check_overdue_tasks(db: AsyncSession) -> None:
     Вызывается периодически (например, при запросах дашборда).
     """
     now = datetime.now(timezone.utc)
+    stale_result = await db.execute(
+        select(Task).where(
+            Task.is_overdue.is_(True),
+            (
+                Task.due_date.is_(None)
+                | ~Task.status.in_([TaskStatus.in_queue, TaskStatus.in_progress])
+            ),
+        )
+    )
+    for task in stale_result.scalars().all():
+        task.is_overdue = False
+
     result = await db.execute(
         select(Task)
         .where(
             Task.due_date.is_not(None),
             Task.due_date < now,
             Task.is_overdue.is_(False),
-            Task.status.in_([TaskStatus.in_progress, TaskStatus.review]),
+            Task.status.in_([TaskStatus.in_queue, TaskStatus.in_progress]),
         )
         .options(selectinload(Task.assignee))
     )
@@ -549,7 +595,8 @@ async def assign_task(
 ) -> Task:
     """
     Тимлид/админ назначает задачу на исполнителя.
-    Задача должна быть in_queue > 24ч. Исполнитель: league >= task.min_league, WIP свободен.
+    Задача должна быть in_queue; non-critical назначается после 24ч в очереди.
+    Исполнитель: league >= task.min_league, WIP свободен.
     """
     assigner_result = await db.execute(select(User).where(User.id == assigner_id))
     assigner = assigner_result.scalar_one_or_none()
@@ -562,9 +609,11 @@ async def assign_task(
         raise HTTPException(status_code=404, detail="Задача не найдена")
     if task.status != TaskStatus.in_queue:
         raise HTTPException(status_code=400, detail="Задача не в очереди")
+    if task.priority != TaskPriority.critical and await _critical_queue_exists(db, exclude_task_id=task.id):
+        raise HTTPException(status_code=400, detail=CRITICAL_BLOCK_REASON)
 
     hours_in_queue = (datetime.now(timezone.utc) - task.created_at).total_seconds() / 3600
-    if hours_in_queue < 24:
+    if task.priority != TaskPriority.critical and hours_in_queue < 24:
         raise HTTPException(
             status_code=400,
             detail="Назначить можно только задачу, которая в очереди более 24 часов",

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -52,6 +52,12 @@ class Task(Base):
         primary_key=True,
         default=uuid.uuid4,
     )
+    task_number: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        unique=True,
+        server_default=text("nextval('tasks_task_number_seq'::regclass)"),
+    )
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     task_type: Mapped[TaskType] = mapped_column(Enum(TaskType), nullable=False)
@@ -94,6 +100,9 @@ class Task(Base):
     )
     estimation_details: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     result_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    result_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    brief_rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    brief_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     rejection_count: Mapped[int] = mapped_column(
         Integer,

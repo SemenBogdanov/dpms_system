@@ -29,21 +29,26 @@ class TaskCreate(TaskBase):
 
 
 class TaskUpdate(BaseModel):
-    """Обновление задачи (описание, приоритет)."""
+    """Обновление заявки без изменения оценки Q и workflow-статуса."""
     title: str | None = Field(None, max_length=500)
     description: str | None = None
     priority: TaskPriority | None = None
+    tags: list[str] | None = None
 
 
 class TaskRead(TaskBase):
     """Чтение задачи."""
     id: UUID
+    task_number: int
     status: TaskStatus
     assignee_id: UUID | None = None
     estimator_id: UUID
     validator_id: UUID | None = None
     estimation_details: dict | None = None
     result_url: str | None = None
+    result_comment: str | None = None
+    brief_rating: int | None = None
+    brief_feedback: str | None = None
     rejection_comment: str | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None

@@ -22,6 +22,7 @@ async def list_users(
     league: League | None = Query(None),
     is_active: bool | None = Query(None),
     role: UserRole | None = Query(None),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Список сотрудников с фильтрами по лиге, is_active и роли."""
@@ -37,8 +38,14 @@ async def list_users(
 
 
 @router.get("/{user_id}", response_model=UserRead)
-async def get_user(user_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_user(
+    user_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Профиль пользователя."""
+    if current_user.id != user_id and current_user.role not in (UserRole.admin, UserRole.teamlead):
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
@@ -109,9 +116,12 @@ async def update_user(
 @router.get("/{user_id}/progress", response_model=UserProgress)
 async def get_user_progress_route(
     user_id: UUID,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Прогресс пользователя: earned/target/karma."""
+    if current_user.id != user_id and current_user.role not in (UserRole.admin, UserRole.teamlead):
+        raise HTTPException(status_code=403, detail="Недостаточно прав")
     progress = await get_user_progress(db, user_id)
     if not progress:
         raise HTTPException(status_code=404, detail="User not found")

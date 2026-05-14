@@ -37,6 +37,11 @@ async def list_tasks(
     db: AsyncSession = Depends(get_db),
 ):
     """Список задач с фильтрами."""
+    from app.services.focus import auto_pause_stale_focuses
+    from app.services.queue import check_overdue_tasks
+
+    await auto_pause_stale_focuses(db)
+    await check_overdue_tasks(db)
     stmt = select(Task).order_by(Task.created_at.desc())
     if status is not None:
         stmt = stmt.where(Task.status == status)
@@ -51,6 +56,8 @@ async def list_tasks(
             pass
     if is_overdue is not None:
         stmt = stmt.where(Task.is_overdue == is_overdue)
+        if is_overdue:
+            stmt = stmt.where(Task.status.in_([TaskStatus.in_queue, TaskStatus.in_progress]))
     result = await db.execute(stmt)
     tasks = list(result.scalars().all())
     out: list[TaskRead] = []
@@ -137,6 +144,11 @@ async def get_task(
     db: AsyncSession = Depends(get_db),
 ):
     """Детали задачи."""
+    from app.services.focus import auto_pause_stale_focuses
+    from app.services.queue import check_overdue_tasks
+
+    await auto_pause_stale_focuses(db)
+    await check_overdue_tasks(db)
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
@@ -150,7 +162,7 @@ async def get_task(
 @router.post("", response_model=TaskRead)
 async def create_task(
     body: TaskCreate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Создать задачу (с оценкой или без)."""
@@ -181,10 +193,10 @@ async def create_task(
 async def update_task(
     task_id: UUID,
     body: TaskUpdate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Обновить описание/приоритет задачи."""
+    """Обновить заявку без изменения оценки Q и workflow-статуса."""
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
     if not task:
@@ -195,6 +207,8 @@ async def update_task(
         task.description = body.description
     if body.priority is not None:
         task.priority = body.priority
+    if body.tags is not None:
+        task.tags = [tag.strip() for tag in body.tags if tag.strip()]
     await db.flush()
     await db.refresh(task)
     return task

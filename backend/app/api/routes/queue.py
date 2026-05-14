@@ -28,6 +28,13 @@ from app.services.queue import (
 router = APIRouter()
 
 
+def _jwt_actor_id(user: User, body_user_id: UUID | None) -> UUID:
+    """Deprecated body actor id must match JWT to prevent acting as another user."""
+    if body_user_id is not None and body_user_id != user.id:
+        raise HTTPException(status_code=403, detail="Нельзя действовать от имени другого пользователя")
+    return user.id
+
+
 @router.get("", response_model=list[QueueTaskResponse])
 async def queue_list(
     category: str | None = Query(None, description="proactive | !proactive | все"),
@@ -45,7 +52,7 @@ async def queue_pull(
     db: AsyncSession = Depends(get_db),
 ):
     """Взять задачу из очереди (с блокировкой FOR UPDATE)."""
-    user_id = body.user_id or user.id
+    user_id = _jwt_actor_id(user, body.user_id)
     task = await pull_task(db, user_id, body.task_id)
     await db.refresh(task)
     return task
@@ -58,13 +65,15 @@ async def queue_submit(
     db: AsyncSession = Depends(get_db),
 ):
     """Сдать задачу на проверку (result_url, comment опционально)."""
-    user_id = body.user_id or user.id
+    user_id = _jwt_actor_id(user, body.user_id)
     task = await submit_for_review(
         db,
         user_id,
         body.task_id,
         result_url=body.result_url,
         comment=body.comment,
+        brief_rating=body.brief_rating,
+        brief_feedback=body.brief_feedback,
     )
     await db.refresh(task)
     return task
@@ -77,7 +86,7 @@ async def queue_validate(
     db: AsyncSession = Depends(get_db),
 ):
     """Принять или отклонить задачу (при reject comment обязателен)."""
-    validator_id = body.validator_id or user.id
+    validator_id = _jwt_actor_id(user, body.validator_id)
     task = await validate_task(
         db,
         validator_id,

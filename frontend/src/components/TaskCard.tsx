@@ -67,6 +67,9 @@ export function TaskCard({
   const isBusy = busyTaskId === task.id
   const validateDisabled = Boolean(isBusy || isSelfTask)
   const days = daysSince(task.started_at)
+  const briefStars = task.brief_rating
+    ? '★'.repeat(task.brief_rating) + '☆'.repeat(5 - task.brief_rating)
+    : null
 
   return (
     <div
@@ -77,17 +80,22 @@ export function TaskCard({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          {onOpenDetail ? (
-            <button
-              type="button"
-              onClick={() => onOpenDetail(task)}
-              className="text-left font-medium text-slate-900 truncate block w-full cursor-pointer text-primary hover:underline"
-            >
-              {task.title}
-            </button>
-          ) : (
-            <h3 className="font-medium text-slate-900 truncate">{task.title}</h3>
-          )}
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="shrink-0 font-mono text-xs font-semibold text-slate-400">
+              #{task.task_number}
+            </span>
+            {onOpenDetail ? (
+              <button
+                type="button"
+                onClick={() => onOpenDetail(task)}
+                className="block min-w-0 flex-1 cursor-pointer truncate text-left font-medium text-primary hover:underline"
+              >
+                {task.title}
+              </button>
+            ) : (
+              <h3 className="min-w-0 flex-1 truncate font-medium text-slate-900">{task.title}</h3>
+            )}
+          </div>
           {task.description && (
             <p className="mt-1 text-sm text-slate-500 line-clamp-2">{task.description}</p>
           )}
@@ -123,6 +131,26 @@ export function TaskCard({
           )}
           {inReview && !task.rejection_comment && (
             <p className="mt-2 text-sm text-slate-500">⏳ Ожидает проверки</p>
+          )}
+          {(inReview || isDone) && (task.result_url || task.result_comment || task.brief_rating) && (
+            <div className="mt-2 rounded-md border border-slate-100 bg-slate-50 p-2 text-sm text-slate-600">
+              {briefStars && (
+                <p className="mb-1 text-xs font-medium text-slate-500">Постановка: {briefStars}</p>
+              )}
+              {task.result_comment && (
+                <p className="line-clamp-2 whitespace-pre-wrap">{task.result_comment}</p>
+              )}
+              {task.result_url && (
+                <a
+                  href={task.result_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 block truncate text-primary hover:underline"
+                >
+                  {task.result_url}
+                </a>
+              )}
+            </div>
           )}
           {isDone && (
             <p className="mt-2 flex items-center gap-1 text-sm text-emerald-700">

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 class QueueTaskResponse(BaseModel):
     """Задача в очереди с флагами доступности."""
     id: UUID
+    task_number: int
     title: str
     description: str | None
     task_type: str
@@ -66,6 +67,8 @@ class SubmitRequest(BaseModel):
     task_id: UUID
     result_url: str | None = None
     comment: str | None = None
+    brief_rating: int | None = Field(default=None, ge=1, le=5)
+    brief_feedback: str | None = None
 
 
 class ValidateRequest(BaseModel):

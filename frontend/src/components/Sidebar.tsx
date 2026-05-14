@@ -26,7 +26,7 @@ const nav: Array<
   { to: '/calibration', label: 'Калибровка', icon: Scale, roles: ['teamlead', 'admin'] },
   { to: '/queue', label: 'Очередь', icon: ListTodo },
   { to: '/my-tasks', label: 'Мои задачи', icon: ClipboardList },
-  { to: '/calculator', label: 'Калькулятор', icon: Calculator },
+  { to: '/calculator', label: 'Калькулятор', icon: Calculator, roles: ['teamlead', 'admin'] },
   { to: '/profile', label: 'Профиль', icon: User },
   { to: '/shop', label: 'Магазин', icon: ShoppingBag },
   { to: '/reports', label: 'Отчёты', icon: BarChart3, roles: ['teamlead', 'admin'] },

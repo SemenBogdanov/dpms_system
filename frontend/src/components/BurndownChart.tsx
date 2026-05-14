@@ -14,9 +14,23 @@ interface BurndownChartProps {
   data: BurndownData
 }
 
+type BurndownChartPoint = {
+  day: string
+  fullDay: string
+  ideal: number
+  actual: number | null
+  isFuture: boolean
+}
+
+type ActualDotProps = {
+  cx?: number
+  cy?: number
+  payload?: BurndownChartPoint
+}
+
 /** График burn-down: идеал vs факт по дням месяца. */
 export function BurndownChart({ data }: BurndownChartProps) {
-  const chartData = data.points.map((p) => ({
+  const chartData: BurndownChartPoint[] = data.points.map((p) => ({
     day: p.day.slice(8, 10),
     fullDay: p.day,
     ideal: p.ideal,
@@ -89,14 +103,13 @@ export function BurndownChart({ data }: BurndownChartProps) {
             name="Факт"
             stroke="#10b981"
             strokeWidth={2}
-            dot={(props: any) => {
-              const { cx, cy, payload, key } = props
-              if (payload.actual == null)
-                return <circle key={key} cx={0} cy={0} r={0} fill="none" />
+            dot={(props: ActualDotProps) => {
+              const { cx = 0, cy = 0, payload } = props
+              if (!payload || payload.actual == null)
+                return <circle cx={0} cy={0} r={0} fill="none" />
               const behind = payload.actual < payload.ideal
               return (
                 <circle
-                  key={key}
                   cx={cx}
                   cy={cy}
                   r={3}

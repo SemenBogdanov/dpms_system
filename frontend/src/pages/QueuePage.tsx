@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Lock } from 'lucide-react'
+import { Lock, Pencil } from 'lucide-react'
 import { api } from '@/api/client'
 import type { AssignCandidate, QueueTaskResponse, Task, User, TaskStatus } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
@@ -19,6 +19,29 @@ const complexityStyles: Record<string, string> = {
   L: 'bg-orange-50 text-orange-500',
   XL: 'bg-red-50 text-red-500',
 }
+
+function formatQueueDuration(hours: number | undefined): string {
+  const totalMinutes = Math.max(0, Math.round((hours ?? 0) * 60))
+  if (totalMinutes < 60) return `${totalMinutes} мин`
+
+  const totalHours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  if (totalHours < 24) {
+    return minutes > 0 ? `${totalHours} ч ${minutes} мин` : `${totalHours} ч`
+  }
+
+  const totalDays = Math.floor(totalHours / 24)
+  const hoursRest = totalHours % 24
+  if (totalDays < 14) {
+    return hoursRest > 0 ? `${totalDays} д ${hoursRest} ч` : `${totalDays} д`
+  }
+
+  const weeks = Math.floor(totalDays / 7)
+  const daysRest = totalDays % 7
+  return daysRest > 0 ? `${weeks} нед ${daysRest} д` : `${weeks} нед`
+}
+
+type RowItem = (QueueTaskResponse & { status?: TaskStatus }) | Task
 
 export function QueuePage() {
   const navigate = useNavigate()
@@ -45,6 +68,12 @@ export function QueuePage() {
   const [assignCandidates, setAssignCandidates] = useState<AssignCandidate[]>([])
   const [selectedExecutorId, setSelectedExecutorId] = useState<string | null>(null)
   const [assignBusy, setAssignBusy] = useState(false)
+  const [editTask, setEditTask] = useState<RowItem | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editPriority, setEditPriority] = useState<'low' | 'medium' | 'high' | 'critical'>('medium')
+  const [editTags, setEditTags] = useState('')
+  const [editBusy, setEditBusy] = useState(false)
 
   const loadQueue = () => {
     if (!currentUser) return
@@ -78,7 +107,6 @@ export function QueuePage() {
     api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
   }, [includeArchived])
 
-  type RowItem = (QueueTaskResponse & { status?: TaskStatus }) | Task
   const displayList: RowItem[] = includeArchived
     ? allTasks
     : tasks.map((t) => ({ ...t, status: 'in_queue' as TaskStatus }))
@@ -87,9 +115,10 @@ export function QueuePage() {
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toUpperCase()
       const matchTitle = t.title.toUpperCase().includes(q)
+      const matchNumber = `#${t.task_number}`.includes(q) || String(t.task_number).includes(q)
       const tags = (t as QueueTaskResponse).tags ?? (t as Task).tags ?? []
       const matchTag = tags.some((tag: string) => tag.toUpperCase().includes(q))
-      return matchTitle || matchTag
+      return matchTitle || matchNumber || matchTag
     }
     return true
   })
@@ -244,8 +273,46 @@ export function QueuePage() {
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
   }
 
+  const handleOpenEdit = (t: RowItem) => {
+    setEditTask(t)
+    setEditTitle(t.title)
+    setEditDescription(t.description ?? '')
+    setEditPriority(((t as QueueTaskResponse).priority ?? (t as Task).priority) as 'low' | 'medium' | 'high' | 'critical')
+    setEditTags(taskTags(t).join(', '))
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editTask || !editTitle.trim()) return
+    setEditBusy(true)
+    try {
+      const updated = await api.patch<Task>(`/api/tasks/${editTask.id}`, {
+        title: editTitle.trim(),
+        description: editDescription.trim() || null,
+        priority: editPriority,
+        tags: editTags
+          .split(',')
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+      })
+      toast.success('Заявка обновлена')
+      setEditTask(null)
+      if (detailTask?.id === updated.id) {
+        setDetailTask(updated)
+      }
+      if (includeArchived) {
+        api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
+      } else {
+        loadQueue()
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Не удалось сохранить заявку')
+    } finally {
+      setEditBusy(false)
+    }
+  }
+
   const taskStatus = (t: RowItem): TaskStatus => (t as Task).status ?? 'in_queue'
-  const canPull = (t: RowItem) => (t as QueueTaskResponse).can_pull === true || (taskStatus(t) === 'in_queue' && (t as QueueTaskResponse).locked !== true)
+  const canPull = (t: RowItem) => (t as QueueTaskResponse).can_pull === true
   const locked = (t: RowItem) => (t as QueueTaskResponse).locked === true
   const lockReason = (t: RowItem) => (t as QueueTaskResponse).lock_reason
   const taskTags = (t: RowItem) => (t as QueueTaskResponse).tags ?? (t as Task).tags ?? []
@@ -405,13 +472,18 @@ export function QueuePage() {
                       className={`${locked(row.task) ? 'opacity-60' : ''} ${taskType(row.task) === 'bugfix' ? 'border-l-3 border-red-300 bg-red-50/30' : ''}`}
                     >
                       <td className="px-4 py-3 text-sm text-gray-700">
-                    <button
-                      type="button"
-                      onClick={() => openDetail(row.task.id)}
-                       className="cursor-pointer text-left text-gray-700 font-medium hover:text-accent-dark transition-colors"
-                    >
-                      {row.task.title}
-                    </button>
+                    <div className="flex min-w-0 items-start gap-2">
+                      <span className="shrink-0 font-mono text-xs font-semibold text-gray-400">
+                        #{row.task.task_number}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => openDetail(row.task.id)}
+                        className="min-w-0 cursor-pointer text-left font-medium text-gray-700 transition-colors hover:text-accent-dark"
+                      >
+                        {row.task.title}
+                      </button>
+                    </div>
                     {taskType(row.task) === 'bugfix' && (
                       <span className="ml-2 inline rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-500">
                         Гарантийный
@@ -438,12 +510,12 @@ export function QueuePage() {
                     )}
                     {(row.task as QueueTaskResponse).is_stale && (
                       <span className="ml-2 inline rounded-full bg-orange-50 px-2.5 py-0.5 text-xs font-medium text-orange-500">
-                        Застряла {Math.round((row.task as QueueTaskResponse).hours_in_queue ?? 0)}ч
+                        Застряла {formatQueueDuration((row.task as QueueTaskResponse).hours_in_queue)}
                       </span>
                     )}
                     {!(row.task as QueueTaskResponse).is_stale && ((row.task as QueueTaskResponse).hours_in_queue ?? 0) > 24 && (
                       <span className="ml-2 inline rounded-full bg-gray-50 px-2.5 py-0.5 text-xs font-medium text-gray-400">
-                        {Math.round((row.task as QueueTaskResponse).hours_in_queue ?? 0)}ч в очереди
+                        {formatQueueDuration((row.task as QueueTaskResponse).hours_in_queue)} в очереди
                       </span>
                     )}
                     {(row.task as QueueTaskResponse).recommended && (
@@ -505,17 +577,27 @@ export function QueuePage() {
                   <td className="px-4 py-3 text-sm text-gray-500">
                     {new Date((row.task as QueueTaskResponse).created_at ?? (row.task as Task).created_at).toLocaleDateString('ru')}
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-2 whitespace-nowrap">
-                      {isTeamleadOrAdmin && taskStatus(row.task) !== 'done' && taskStatus(row.task) !== 'cancelled' && (
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(row.task)}
-                          className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
-                          title="Отменить задачу"
-                        >
-                          🗑️
-                        </button>
+	                  <td className="px-4 py-3 text-right">
+	                    <div className="flex items-center justify-end gap-2 whitespace-nowrap">
+	                      {isTeamleadOrAdmin && taskStatus(row.task) !== 'done' && taskStatus(row.task) !== 'cancelled' && (
+	                        <button
+	                          type="button"
+	                          onClick={() => handleOpenEdit(row.task)}
+	                          className="rounded p-1 text-gray-400 hover:bg-gray-50 hover:text-gray-700"
+	                          title="Редактировать заявку"
+	                        >
+	                          <Pencil className="h-4 w-4" />
+	                        </button>
+	                      )}
+	                      {isTeamleadOrAdmin && taskStatus(row.task) !== 'done' && taskStatus(row.task) !== 'cancelled' && (
+	                        <button
+	                          type="button"
+	                          onClick={() => handleDelete(row.task)}
+	                          className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
+	                          title="Отменить задачу"
+	                        >
+	                          🗑️
+	                        </button>
                       )}
                       {isTeamleadOrAdmin && taskStatus(row.task) === 'in_queue' && (row.task as QueueTaskResponse).can_assign && (
                         <button
@@ -536,14 +618,14 @@ export function QueuePage() {
                           <span className="hidden sm:inline">{lockReason(row.task) ?? `Лига ${(row.task as QueueTaskResponse).min_league}`}</span>
                         </span>
                       ) : canPull(row.task) ? (
-                        <button
-                          type="button"
-                          onClick={() => setConfirmPull(row.task)}
-                          disabled={!!pullingId}
-                        className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-dark disabled:opacity-50 transition-colors"
-                      >
-                        Взять
-                        </button>
+	                        <button
+	                          type="button"
+	                          onClick={() => setConfirmPull(row.task)}
+	                          disabled={!!pullingId}
+	                          className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-dark disabled:opacity-50 transition-colors"
+	                        >
+	                          Взять
+	                        </button>
                       ) : taskStatus(row.task) === 'in_queue' ? (
                         <span title={lockReason(row.task) ?? 'WIP-лимит исчерпан'} className="cursor-help text-sm text-gray-400">
                           WIP
@@ -600,6 +682,84 @@ export function QueuePage() {
         />
       )}
 
+      {editTask && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          onKeyDown={(e) => e.key === 'Escape' && setEditTask(null)}
+        >
+          <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-lg">
+            <h3 className="text-lg font-semibold text-gray-700">Редактировать заявку</h3>
+            <p className="mt-1 text-sm text-gray-500">#{editTask.task_number}</p>
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">
+                  Название <span className="text-red-600">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Описание</label>
+                <textarea
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  rows={3}
+                  className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Приоритет</label>
+                  <select
+                    value={editPriority}
+                    onChange={(e) => setEditPriority(e.target.value as 'low' | 'medium' | 'high' | 'critical')}
+                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                  >
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                    <option value="critical">critical</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700">Теги</label>
+                  <input
+                    type="text"
+                    value={editTags}
+                    onChange={(e) => setEditTags(e.target.value)}
+                    className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+                    placeholder="через запятую"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditTask(null)}
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveEdit}
+                disabled={editBusy || !editTitle.trim()}
+                className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-dark disabled:opacity-50"
+              >
+                {editBusy ? '...' : 'Сохранить'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {confirmPull && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
@@ -609,7 +769,7 @@ export function QueuePage() {
         >
           <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-lg">
             <p className="text-gray-800">
-              Взять задачу «{confirmPull.title}» за {confirmPull.estimated_q} Q?
+              Взять задачу #{confirmPull.task_number} «{confirmPull.title}» за {confirmPull.estimated_q} Q?
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -641,7 +801,7 @@ export function QueuePage() {
         >
           <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg">
             <h3 className="text-lg font-semibold text-gray-700">Назначить задачу</h3>
-            <p className="mt-1 text-sm text-gray-600">«{assignTask.title}»</p>
+            <p className="mt-1 text-sm text-gray-600">#{assignTask.task_number} «{assignTask.title}»</p>
             <p className="mt-3 text-sm font-medium text-gray-700">Выберите исполнителя:</p>
             <ul className="mt-2 max-h-60 overflow-y-auto rounded border border-gray-200">
               {assignCandidates.map((c) => (

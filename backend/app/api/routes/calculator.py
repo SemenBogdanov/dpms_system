@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db
+from app.api.deps import get_db, require_role
+from app.models.user import User
 from app.schemas.calculator import (
     EstimateRequest,
     EstimateResponse,
@@ -27,6 +28,7 @@ async def estimate(
 @router.post("/create-task", response_model=TaskRead)
 async def create_task(
     body: CreateTaskFromCalcRequest,
+    user: User = Depends(require_role("teamlead", "admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """Создать задачу из калькулятора и отправить в очередь (in_queue)."""

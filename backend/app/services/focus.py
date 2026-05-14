@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -12,10 +12,25 @@ from app.models.user import User, UserRole
 from app.schemas.task import FocusStatus
 from app.services.notifications import create_notification
 
+MAX_FOCUS_SECONDS = 4 * 3600
+
 
 async def _get_user(db: AsyncSession, user_id) -> User | None:
     result = await db.execute(select(User).where(User.id == user_id))
     return result.scalar_one_or_none()
+
+
+def add_bounded_focus_time(task: Task, now: datetime) -> int:
+    """Accrue focus time up to the hard 4h task limit and stop the timer."""
+    if task.focus_started_at is None:
+        return 0
+    current = max(int(task.active_seconds or 0), 0)
+    remaining = max(MAX_FOCUS_SECONDS - current, 0)
+    delta = (now - task.focus_started_at).total_seconds()
+    added = min(max(int(delta), 0), remaining)
+    task.active_seconds = min(current + added, MAX_FOCUS_SECONDS)
+    task.focus_started_at = None
+    return added
 
 
 async def start_focus(db: AsyncSession, user_id, task_id) -> dict[str, Any]:
@@ -34,6 +49,8 @@ async def start_focus(db: AsyncSession, user_id, task_id) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="В фокус можно поставить только задачу в работе")
     if task.focus_started_at is not None:
         raise HTTPException(status_code=400, detail="Задача уже в фокусе")
+    if int(task.active_seconds or 0) >= MAX_FOCUS_SECONDS:
+        raise HTTPException(status_code=400, detail="Лимит фокуса 4 часа исчерпан")
 
     paused_task_id = None
 
@@ -48,10 +65,7 @@ async def start_focus(db: AsyncSession, user_id, task_id) -> dict[str, Any]:
     )
     current_focus = current_focus_result.scalar_one_or_none()
     if current_focus:
-        delta = (now - current_focus.focus_started_at).total_seconds()
-        if delta > 0:
-            current_focus.active_seconds += int(delta)
-        current_focus.focus_started_at = None
+        add_bounded_focus_time(current_focus, now)
         paused_task_id = current_focus.id
 
     # Первый фокус: при необходимости запустить SLA от момента фокуса
@@ -89,10 +103,7 @@ async def pause_focus(db: AsyncSession, user_id, task_id) -> dict[str, Any]:
     if task.focus_started_at is None:
         raise HTTPException(status_code=400, detail="Задача уже на паузе")
 
-    delta = (now - task.focus_started_at).total_seconds()
-    if delta > 0:
-        task.active_seconds += int(delta)
-    task.focus_started_at = None
+    add_bounded_focus_time(task, now)
 
     await db.flush()
     active_hours = task.active_seconds / 3600
@@ -107,25 +118,22 @@ async def pause_focus(db: AsyncSession, user_id, task_id) -> dict[str, Any]:
 
 async def auto_pause_stale_focuses(db: AsyncSession) -> int:
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(hours=4)
-
     result = await db.execute(
         select(Task).where(
             Task.focus_started_at.is_not(None),
-            Task.focus_started_at < cutoff,
         )
     )
     tasks = list(result.scalars().all())
     count = 0
-    max_delta = 4 * 3600
 
     for task in tasks:
         if not task.focus_started_at:
             continue
         delta = (now - task.focus_started_at).total_seconds()
-        bounded = min(max(int(delta), 0), max_delta)
-        task.active_seconds += bounded
-        task.focus_started_at = None
+        current = max(int(task.active_seconds or 0), 0)
+        if delta < MAX_FOCUS_SECONDS and current + int(max(delta, 0)) < MAX_FOCUS_SECONDS:
+            continue
+        add_bounded_focus_time(task, now)
         count += 1
 
         if task.assignee_id:
@@ -235,7 +243,7 @@ async def get_focus_statuses(db: AsyncSession) -> list[dict[str, Any]]:
             elapsed = task.active_seconds
             if task.focus_started_at:
                 elapsed += int((now - task.focus_started_at).total_seconds())
-            minutes = round(elapsed / 60, 1)
+            minutes = round(min(elapsed, MAX_FOCUS_SECONDS) / 60, 1)
             status = FocusStatus(
                 user_id=u.id,
                 full_name=u.full_name,
@@ -269,4 +277,3 @@ async def get_focus_statuses(db: AsyncSession) -> list[dict[str, Any]]:
         statuses.append(status.model_dump())
 
     return statuses
-

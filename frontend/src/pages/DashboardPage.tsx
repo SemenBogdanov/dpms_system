@@ -179,7 +179,7 @@ export function DashboardPage() {
                   onClick={() => setDetailTask(t)}
                   className="text-left text-sm text-red-800 hover:underline"
                 >
-                  🔴 «{t.title}» — {users.find((u) => u.id === t.assignee_id)?.full_name ?? '—'} — просрочено
+                  🔴 #{t.task_number} «{t.title}» — {users.find((u) => u.id === t.assignee_id)?.full_name ?? '—'} — просрочено
                 </button>
               </li>
             ))}

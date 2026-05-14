@@ -2,7 +2,8 @@ import type { FC } from 'react'
 import type { Task, User, CatalogItem } from '@/api/types'
 import { DeadlineBadge } from './DeadlineBadge'
 import { PriorityBadge } from './PriorityBadge'
-import { X } from 'lucide-react'
+import { Copy, X } from 'lucide-react'
+import toast from 'react-hot-toast'
 
 interface TaskDetailModalProps {
   task: Task | null
@@ -71,9 +72,33 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
   const breakdown = task.estimation_details && typeof task.estimation_details === 'object' && 'breakdown' in task.estimation_details
     ? (task.estimation_details as { breakdown?: Array<{ catalog_id?: string; name?: string; subtotal_q: number }> }).breakdown
     : undefined
+  const taskLabel = `#${task.task_number} ${task.title}`
+  const briefStars = task.brief_rating
+    ? '★'.repeat(task.brief_rating) + '☆'.repeat(5 - task.brief_rating)
+    : null
 
   const handleOverlayClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose()
+  }
+
+  const handleCopyTaskLabel = async () => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(taskLabel)
+      } else {
+        const textarea = document.createElement('textarea')
+        textarea.value = taskLabel
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+      }
+      toast.success('Номер и название скопированы')
+    } catch {
+      toast.error('Не удалось скопировать')
+    }
   }
 
   return (
@@ -91,7 +116,16 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
       >
         <div className="flex items-start justify-between border-b border-slate-200 p-4">
           <h2 id="task-detail-title" className="text-lg font-semibold text-slate-900 pr-8">
-            📋 {task.title}
+            <button
+              type="button"
+              onClick={handleCopyTaskLabel}
+              className="group flex min-w-0 items-start gap-2 text-left hover:text-primary"
+              title="Скопировать номер и название"
+            >
+              <span className="shrink-0 font-mono text-sm text-slate-400">#{task.task_number}</span>
+              <span className="min-w-0">{task.title}</span>
+              <Copy className="mt-1 h-4 w-4 shrink-0 text-slate-300 group-hover:text-primary" />
+            </button>
           </h2>
           <button
             type="button"
@@ -199,17 +233,38 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
           </div>
 
           {/* Результат */}
-          {task.result_url && (
+          {(task.result_url || task.result_comment) && (
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Результат</p>
-              <a
-                href={task.result_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-1 block text-sm text-primary hover:underline"
-              >
-                🔗 {task.result_url}
-              </a>
+              {task.result_comment && (
+                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">
+                  {task.result_comment}
+                </p>
+              )}
+              {task.result_url && (
+                <a
+                  href={task.result_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 block text-sm text-primary hover:underline"
+                >
+                  🔗 {task.result_url}
+                </a>
+              )}
+            </div>
+          )}
+
+          {briefStars && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Оценка постановки</p>
+              <p className="mt-1 text-sm font-medium text-slate-700">
+                {briefStars} <span className="text-slate-400">({task.brief_rating}/5)</span>
+              </p>
+              {task.brief_feedback && (
+                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600">
+                  {task.brief_feedback}
+                </p>
+              )}
             </div>
           )}
 
