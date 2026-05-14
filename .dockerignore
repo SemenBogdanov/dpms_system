@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+.env.*
+*.env.prod
+deploy/.env*
+.claude
+**/*secret*
+**/*key*
+**/*token*
+**/*credential*
+node_modules
+frontend/node_modules
+__pycache__
+*.pyc
+.DS_Store
+status.json

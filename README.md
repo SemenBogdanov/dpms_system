@@ -60,3 +60,38 @@ npm run dev
 
 - Нет авторизации: в запросах передаётся `user_id` (query/body).
 - CRUD пользователей, каталога, задач; калькулятор оценки; очередь (pull/submit/validate); дашборд (Стакан, план/факт).
+
+
+## Production deploy
+
+Production на VPS разворачивается artifact-based, без `git pull` в `/opt/dpms` и без переноса runtime `.env.prod` в git/release tar. Release создается только из committed git files через `git archive HEAD`; сверху добавляется свежий `frontend/dist`.
+
+Обычный безопасный цикл из проектной сессии:
+
+```bash
+scripts/dpms-release.sh
+```
+
+Скрипт требует clean working tree, собирает `frontend/dist`, создает release tar без `.env*`, секретных имен, `.git`, `node_modules` и runtime-файлов, загружает его на VPS, запускает stage и preflight. Production deploy по умолчанию не выполняется.
+
+Production deploy запускается только после review preflight:
+
+```bash
+scripts/dpms-release.sh --deploy
+```
+
+Если preflight показывает новые Alembic migrations, сначала нужен проверенный backup внешней production DB и явное approval. Миграции запускает VPS deploy tool отдельным шагом; backend image не запускает Alembic из container `CMD`.
+
+```bash
+scripts/dpms-release.sh --deploy --allow-migrations
+```
+
+Rollback на VPS:
+
+```bash
+/opt/dpms-tools/dpms-rollback.sh /opt/dpms-backups/<backup-id>
+```
+
+Rollback восстанавливает app/frontend/container image state. Для migration releases отдельно оценивай DB rollback или forward-fix, потому что application rollback не откатывает внешнюю production DB автоматически.
+
+Operational safety note: do not run `docker compose config` on production output without redaction; Compose expands `env_file` values into stdout. Use targeted `docker inspect --format ...` queries or sanitized output instead.

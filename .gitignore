@@ -31,3 +31,5 @@ Thumbs.db
 # Docker
 *.log
 
+# Local agent/runtime state
+status.json
