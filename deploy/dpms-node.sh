@@ -560,8 +560,24 @@ backup_app_state() {
   [[ -f "$DPMS_COMPOSE_FILE" ]] && cp "$DPMS_COMPOSE_FILE" "$backup_dir/docker-compose.prod.yml"
   cp /etc/nginx/sites-enabled/dpms "$backup_dir/nginx-dpms.conf" 2>/dev/null || true
   [[ -d "$DPMS_LIVE_ROOT/frontend/dist" || -L "$DPMS_LIVE_ROOT/frontend/dist" ]] && tar -czf "$backup_dir/frontend-dist.tar.gz" -C "$DPMS_LIVE_ROOT/frontend" dist
-  [[ -d "$DPMS_LIVE_ROOT/backend" ]] && tar -czf "$backup_dir/backend-source.tar.gz" -C "$DPMS_LIVE_ROOT" backend --exclude='__pycache__' --exclude='*.pyc' --exclude='.env*' --exclude='*secret*' --exclude='*key*' --exclude='*token*' --exclude='*credential*'
-  [[ -d "$DPMS_LIVE_ROOT/deploy" ]] && tar -czf "$backup_dir/deploy-source.tar.gz" -C "$DPMS_LIVE_ROOT" deploy --exclude='.env*' --exclude='*secret*' --exclude='*key*' --exclude='*token*' --exclude='*credential*'
+  [[ -d "$DPMS_LIVE_ROOT/backend" ]] && tar \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    --exclude='.env*' \
+    --exclude='*secret*' \
+    --exclude='*key*' \
+    --exclude='*token*' \
+    --exclude='*credential*' \
+    -czf "$backup_dir/backend-source.tar.gz" \
+    -C "$DPMS_LIVE_ROOT" backend
+  [[ -d "$DPMS_LIVE_ROOT/deploy" ]] && tar \
+    --exclude='.env*' \
+    --exclude='*secret*' \
+    --exclude='*key*' \
+    --exclude='*token*' \
+    --exclude='*credential*' \
+    -czf "$backup_dir/deploy-source.tar.gz" \
+    -C "$DPMS_LIVE_ROOT" deploy
   docker inspect deploy-backend-1 --format '{{.Image}}' > "$backup_dir/previous-backend-image-id.txt" 2>/dev/null || true
   current_release_id > "$backup_dir/current-release-before.txt"
   log "$backup_dir"
