@@ -531,9 +531,15 @@ copy_runtime_files_from_release() {
 
 install_nginx_config_from_release() {
   local release_dir="$1"
+  local current=/etc/nginx/sites-available/dpms
   [[ -f "$release_dir/deploy/nginx.conf" ]] || die "release missing deploy/nginx.conf"
-  install -m 0644 "$release_dir/deploy/nginx.conf" /etc/nginx/sites-available/dpms
-  ln -sfn /etc/nginx/sites-available/dpms /etc/nginx/sites-enabled/dpms
+  if [[ -f "$current" ]] && grep -qE 'listen 443 ssl|managed by Certbot|/etc/letsencrypt/' "$current"; then
+    log "nginx_config_preserved=$current"
+    ln -sfn "$current" /etc/nginx/sites-enabled/dpms
+    return
+  fi
+  install -m 0644 "$release_dir/deploy/nginx.conf" "$current"
+  ln -sfn "$current" /etc/nginx/sites-enabled/dpms
 }
 
 install_tool_from_release() {
