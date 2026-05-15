@@ -9,6 +9,7 @@ import {
   User,
   Users,
   BookOpen,
+  Library,
   ShoppingBag,
   BarChart3,
   LogOut,
@@ -31,7 +32,8 @@ const nav: Array<
   { to: '/shop', label: 'Магазин', icon: ShoppingBag },
   { to: '/reports', label: 'Отчёты', icon: BarChart3, roles: ['teamlead', 'admin'] },
   { to: '/admin/users', label: 'Админ', icon: Users, roles: ['admin'] },
-  { to: '/catalog', label: 'Справочник', icon: BookOpen },
+  { to: '/catalog', label: 'Каталог операций', icon: Library },
+  { to: '/knowledge', label: 'База знаний', icon: BookOpen },
 ]
 
 export function Sidebar() {

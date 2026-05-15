@@ -12,6 +12,7 @@ import { ProfilePage } from '@/pages/ProfilePage'
 import { ShopPage } from '@/pages/ShopPage'
 import { AdminUsersPage } from '@/pages/AdminUsersPage'
 import { CatalogPage } from '@/pages/CatalogPage'
+import { KnowledgePage } from '@/pages/KnowledgePage'
 import { CalibrationPage } from '@/pages/CalibrationPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { ReportsPage } from '@/pages/ReportsPage'
@@ -62,6 +63,7 @@ function App() {
         <Route path="shop" element={<ShopPage />} />
         <Route path="admin/users" element={<AdminUsersPage />} />
         <Route path="catalog" element={<CatalogPage />} />
+        <Route path="knowledge" element={<KnowledgePage />} />
         <Route path="reports" element={<ReportsPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

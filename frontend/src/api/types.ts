@@ -16,6 +16,7 @@ export type TaskStatus =
   | 'done'
   | 'cancelled'
 export type TaskPriority = 'low' | 'medium' | 'high' | 'critical'
+export type KnowledgeStatus = 'draft' | 'published'
 
 export interface User {
   id: string
@@ -94,6 +95,42 @@ export interface TaskAttachment {
   size_bytes: number
   uploaded_by_id: string
   created_at: string
+}
+
+export interface KnowledgeArticle {
+  id: string
+  slug: string
+  title: string
+  summary: string
+  section: string
+  body: string
+  status: KnowledgeStatus
+  sort_order: number
+  created_by_id: string | null
+  updated_by_id: string | null
+  created_at: string
+  updated_at: string
+  published_at: string | null
+}
+
+export interface KnowledgeArticleCreate {
+  slug?: string | null
+  title: string
+  summary: string
+  section: string
+  body: string
+  status: KnowledgeStatus
+  sort_order: number
+}
+
+export interface KnowledgeArticleUpdate {
+  slug?: string
+  title?: string
+  summary?: string
+  section?: string
+  body?: string
+  status?: KnowledgeStatus
+  sort_order?: number
 }
 
 /** Задача в очереди с флагами can_pull, locked */
