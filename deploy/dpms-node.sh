@@ -18,7 +18,7 @@ DPMS_COMPOSE_FILE="${DPMS_COMPOSE_FILE:-/opt/dpms/deploy/docker-compose.prod.yml
 DPMS_COMPOSE_PROJECT="${DPMS_COMPOSE_PROJECT:-deploy}"
 DPMS_DOMAIN_PUNY="${DPMS_DOMAIN_PUNY:-xn--80ahdybnagjlbk.xn--p1ai}"
 DPMS_LOCK_FILE="${DPMS_LOCK_FILE:-/opt/dpms-tools/deploy.lock}"
-DPMS_NODE_MAJOR="${DPMS_NODE_MAJOR:-20}"
+DPMS_NODE_IMAGE="${DPMS_NODE_IMAGE:-node:20-bookworm-slim}"
 DPMS_MIN_FREE_MB="${DPMS_MIN_FREE_MB:-1024}"
 
 usage() {
@@ -96,17 +96,6 @@ install_host_dependencies() {
       "$(dpkg --print-architecture)" "${VERSION_CODENAME}" > /etc/apt/sources.list.d/docker.list
     apt-get update
     apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  fi
-
-  if ! command -v node >/dev/null 2>&1 || [[ "$(node -p 'process.versions.node.split(`.`)[0]' 2>/dev/null || echo 0)" -lt "$DPMS_NODE_MAJOR" ]]; then
-    install -d -m 0755 /etc/apt/keyrings
-    curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-      | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-    chmod 644 /etc/apt/keyrings/nodesource.gpg
-    printf 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_%s.x nodistro main\n' "$DPMS_NODE_MAJOR" \
-      > /etc/apt/sources.list.d/nodesource.list
-    apt-get update
-    apt-get install -y nodejs
   fi
 
   systemctl enable --now docker >/dev/null 2>&1 || true
@@ -229,7 +218,11 @@ free_mb_on_opt() {
 
 build_frontend() {
   local release_dir="$1"
-  (cd "$release_dir/frontend" && npm ci && npm run build)
+  docker run --rm \
+    -v "$release_dir/frontend:/work" \
+    -w /work \
+    "$DPMS_NODE_IMAGE" \
+    sh -lc 'npm ci && npm run build'
   rm -rf "$release_dir/frontend/node_modules"
 }
 
