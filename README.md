@@ -64,34 +64,54 @@ npm run dev
 
 ## Production deploy
 
-Production на VPS разворачивается artifact-based, без `git pull` в `/opt/dpms` и без переноса runtime `.env.prod` в git/release tar. Release создается только из committed git files через `git archive HEAD`; сверху добавляется свежий `frontend/dist`.
+Production управляется VPS-first release manager: source of truth — GitHub, а VPS сам
+fetch/checkout/build/preflight делает на своей стороне. Локальная машина не собирает и не
+копирует production-релиз.
 
-Обычный безопасный цикл из проектной сессии:
-
-```bash
-scripts/dpms-release.sh
-```
-
-Скрипт требует clean working tree, собирает `frontend/dist`, создает release tar без `.env*`, секретных имен, `.git`, `node_modules` и runtime-файлов, загружает его на VPS, запускает stage и preflight. Production deploy по умолчанию не выполняется.
-
-Production deploy запускается только после review preflight:
+Новый VPS bootstrap:
 
 ```bash
-scripts/dpms-release.sh --deploy
+sudo bash deploy/dpms-node.sh bootstrap main
 ```
 
-Если preflight показывает новые Alembic migrations, сначала нужен проверенный backup внешней production DB и явное approval. Миграции запускает VPS deploy tool отдельным шагом; backend image не запускает Alembic из container `CMD`.
+Bootstrap ставит host-зависимости, клонирует GitHub repo, готовит release и печатает
+approval sheet. Runtime env остается вне git и должен существовать на VPS как
+`/opt/dpms/deploy/.env.prod` или путь из `DPMS_ENV_FILE`. Скрипт не создает secret-файлы
+из example и не печатает значения env.
+
+Обычный update существующего VPS:
 
 ```bash
-scripts/dpms-release.sh --deploy --allow-migrations
+scripts/dpms-release.sh prepare main
 ```
 
-Rollback на VPS:
+Команда запускает `/opt/dpms-tools/dpms-node.sh prepare main` на VPS. VPS делает
+`git fetch`, resolve exact commit SHA, build frontend/backend, DB connectivity check,
+staging container check, migration delta и approval sheet. Production при этом не
+переключается.
+
+Production promote запускается отдельной командой из approval sheet:
 
 ```bash
-/opt/dpms-tools/dpms-rollback.sh /opt/dpms-backups/<backup-id>
+scripts/dpms-release.sh promote <release-id> --approval <approval-phrase>
 ```
 
-Rollback восстанавливает app/frontend/container image state. Для migration releases отдельно оценивай DB rollback или forward-fix, потому что application rollback не откатывает внешнюю production DB автоматически.
+Если есть новые Alembic migrations, promote блокируется без внешнего DB backup id:
 
-Operational safety note: do not run `docker compose config` on production output without redaction; Compose expands `env_file` values into stdout. Use targeted `docker inspect --format ...` queries or sanitized output instead.
+```bash
+scripts/dpms-release.sh promote <release-id> --approval <approval-phrase> \
+  --allow-migrations --backup-id <external-db-backup-id>
+```
+
+Rollback app/frontend/container state:
+
+```bash
+scripts/dpms-release.sh rollback /opt/dpms-backups/<backup-id>
+```
+
+Rollback не откатывает внешнюю production DB. Для migration releases отдельно нужен DB
+rollback или forward-fix plan.
+
+Operational safety note: do not run `docker compose config` on production output without
+redaction; Compose expands `env_file` values into stdout. Use targeted
+`docker inspect --format ...` queries or sanitized output instead.
