@@ -526,7 +526,12 @@ copy_runtime_files_from_release() {
   mkdir -p "$DPMS_LIVE_ROOT/frontend/releases/$(basename "$release_dir")"
   rm -rf "$DPMS_LIVE_ROOT/frontend/releases/$(basename "$release_dir")/dist"
   cp -a "$release_dir/frontend/dist" "$DPMS_LIVE_ROOT/frontend/releases/$(basename "$release_dir")/dist"
-  ln -sfn "$DPMS_LIVE_ROOT/frontend/releases/$(basename "$release_dir")/dist" "$DPMS_LIVE_ROOT/frontend/dist"
+  local live_dist="$DPMS_LIVE_ROOT/frontend/dist"
+  local release_dist="$DPMS_LIVE_ROOT/frontend/releases/$(basename "$release_dir")/dist"
+  if [[ -e "$live_dist" && ! -L "$live_dist" ]]; then
+    mv "$live_dist" "$DPMS_LIVE_ROOT/frontend/dist.previous.$(date -u +%Y%m%dT%H%M%SZ)"
+  fi
+  ln -sfnT "$release_dist" "$live_dist"
 }
 
 install_nginx_config_from_release() {
