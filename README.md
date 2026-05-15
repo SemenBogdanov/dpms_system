@@ -82,13 +82,16 @@ approval sheet. Runtime env остается вне git и должен суще
 Обычный update существующего VPS:
 
 ```bash
-scripts/dpms-release.sh prepare main
+git fetch origin main
+release_sha=$(git rev-parse origin/main)
+scripts/dpms-release.sh prepare "$release_sha"
 ```
 
-Команда запускает `/opt/dpms-tools/dpms-node.sh prepare main` на VPS. VPS делает
-`git fetch`, resolve exact commit SHA, build frontend/backend, DB connectivity check,
+Команда запускает `/opt/dpms-tools/dpms-node.sh prepare <exact-sha>` на VPS. VPS делает
+`git fetch`, проверяет exact commit SHA, build frontend/backend, DB connectivity check,
 staging container check, migration delta и approval sheet. Production при этом не
-переключается.
+переключается. Для production approval сверяйте `commit_sha` из approval sheet с тем SHA,
+который был reviewed и pushed.
 
 Production promote запускается отдельной командой из approval sheet:
 

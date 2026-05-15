@@ -84,7 +84,7 @@ install_host_dependencies() {
 
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y ca-certificates curl gnupg git jq nginx rsync tar gzip lsof
+  apt-get install -y ca-certificates curl gnupg git nginx rsync tar gzip lsof python3
 
   if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
     install -d -m 0755 /etc/apt/keyrings
@@ -161,6 +161,63 @@ approval_phrase() {
   local release_id="$1"
   local sha="$2"
   printf 'promote:%s:%s\n' "$release_id" "${sha:0:12}"
+}
+
+manifest_get() {
+  local manifest="$1" field="$2"
+  python3 - "$manifest" "$field" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    value = json.load(f)
+for part in sys.argv[2].split("."):
+    if isinstance(value, dict) and part in value:
+        value = value[part]
+    else:
+        raise SystemExit(f"manifest field not found: {sys.argv[2]}")
+if isinstance(value, bool):
+    print("true" if value else "false")
+elif isinstance(value, (dict, list)):
+    print(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+else:
+    print(value)
+PY
+}
+
+manifest_summary() {
+  local manifest="$1"
+  python3 - "$manifest" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    data = json.load(f)
+print(f"- {data['release_id']} {data.get('status', 'unknown')} {data['short_sha']} migrations={data.get('migrations_count', 0)}")
+PY
+}
+
+manifest_mark_promoted() {
+  local manifest="$1" backup_dir="$2" backup_id="$3"
+  python3 - "$manifest" "$backup_dir" "$backup_id" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+path, backup_dir, backup_id = sys.argv[1:4]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+data["status"] = "promoted"
+data["promoted_at_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+data["app_backup_dir"] = backup_dir
+data["external_db_backup_id"] = backup_id
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+PY
 }
 
 docker_network_args() {
@@ -308,9 +365,7 @@ migration_delta() {
 
 write_manifest() {
   local release_dir="$1" release_id="$2" sha="$3" ref="$4" image_tag="$5" migrations_file="$6"
-  local migrations_json
-  migrations_json=$(jq -R -s 'split("\n") | map(select(length > 0))' "$migrations_file")
-  local frontend_hash npm_lock_hash image_id phrase current_release free_mb now
+  local frontend_hash npm_lock_hash image_id phrase current_release free_mb now manifest
   frontend_hash=$(find "$release_dir/frontend/dist" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
   npm_lock_hash=$(sha256sum "$release_dir/frontend/package-lock.json" | awk '{print $1}')
   image_id=$(docker image inspect "$image_tag" --format '{{.Id}}')
@@ -318,30 +373,56 @@ write_manifest() {
   current_release=$(current_release_id)
   free_mb=$(free_mb_on_opt)
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  jq -n \
-    --arg release_id "$release_id" \
-    --arg repo_url "$DPMS_REPO_URL" \
-    --arg ref "$ref" \
-    --arg sha "$sha" \
-    --arg short_sha "${sha:0:12}" \
-    --arg prepared_at_utc "$now" \
-    --arg release_dir "$release_dir" \
-    --arg image_tag "$image_tag" \
-    --arg image_id "$image_id" \
-    --arg frontend_hash "$frontend_hash" \
-    --arg npm_lock_hash "$npm_lock_hash" \
-    --arg env_file_path "$DPMS_ENV_FILE" \
-    --arg current_release "$current_release" \
-    --arg approval_phrase "$phrase" \
-    --argjson migrations "$migrations_json" \
-    --arg free_mb "$free_mb" \
-    '{release_id:$release_id, repo_url:$repo_url, ref:$ref, commit_sha:$sha,
-      short_sha:$short_sha, prepared_at_utc:$prepared_at_utc, release_dir:$release_dir,
-      image_tag:$image_tag, image_id:$image_id, frontend_hash:$frontend_hash,
-      npm_lock_hash:$npm_lock_hash, env_file_path:$env_file_path,
-      current_release_before_prepare:$current_release, approval_phrase:$approval_phrase,
-      migrations:$migrations, migrations_count:($migrations|length), free_mb_on_opt:($free_mb|tonumber),
-      status:"prepared"}' > "$(manifest_path "$release_dir")"
+  manifest="$(manifest_path "$release_dir")"
+  python3 - "$manifest" "$migrations_file" "$release_id" "$DPMS_REPO_URL" "$ref" "$sha" "${sha:0:12}" "$now" "$release_dir" "$image_tag" "$image_id" "$frontend_hash" "$npm_lock_hash" "$DPMS_ENV_FILE" "$current_release" "$phrase" "$free_mb" <<'PY'
+import json
+import sys
+
+(
+    manifest,
+    migrations_file,
+    release_id,
+    repo_url,
+    ref,
+    sha,
+    short_sha,
+    prepared_at_utc,
+    release_dir,
+    image_tag,
+    image_id,
+    frontend_hash,
+    npm_lock_hash,
+    env_file_path,
+    current_release,
+    approval_phrase,
+    free_mb,
+) = sys.argv[1:18]
+with open(migrations_file, "r", encoding="utf-8") as f:
+    migrations = [line.rstrip("\n") for line in f if line.rstrip("\n")]
+data = {
+    "release_id": release_id,
+    "repo_url": repo_url,
+    "ref": ref,
+    "commit_sha": sha,
+    "short_sha": short_sha,
+    "prepared_at_utc": prepared_at_utc,
+    "release_dir": release_dir,
+    "image_tag": image_tag,
+    "image_id": image_id,
+    "frontend_hash": frontend_hash,
+    "npm_lock_hash": npm_lock_hash,
+    "env_file_path": env_file_path,
+    "current_release_before_prepare": current_release,
+    "approval_phrase": approval_phrase,
+    "migrations": migrations,
+    "migrations_count": len(migrations),
+    "free_mb_on_opt": int(free_mb),
+    "status": "prepared",
+}
+with open(manifest, "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
 }
 
 print_approval_sheet() {
@@ -349,23 +430,36 @@ print_approval_sheet() {
   local manifest
   manifest="$(manifest_path "$release_dir")"
   log "== DPMS approval sheet =="
-  jq -r '
-    "release_id=" + .release_id,
-    "commit_sha=" + .commit_sha,
-    "ref=" + .ref,
-    "current_release_before_prepare=" + .current_release_before_prepare,
-    "release_dir=" + .release_dir,
-    "image_tag=" + .image_tag,
-    "image_id=" + .image_id,
-    "frontend_hash=" + .frontend_hash,
-    "npm_lock_hash=" + .npm_lock_hash,
-    "env_file_path=" + .env_file_path,
-    "migrations_count=" + (.migrations_count|tostring),
-    "migrations=" + ((.migrations // []) | join(",")),
-    "db_backup_required=" + (if .migrations_count > 0 then "yes" else "no" end),
-    "approval_phrase=" + .approval_phrase,
-    "promote_command=/opt/dpms-tools/dpms-node.sh promote " + .release_id + " --approval " + .approval_phrase + (if .migrations_count > 0 then " --allow-migrations --backup-id <external-db-backup-id>" else "" end)
-  ' "$manifest"
+  python3 - "$manifest" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as f:
+    data = json.load(f)
+migrations = data.get("migrations") or []
+migrations_count = data.get("migrations_count", len(migrations))
+lines = [
+    f"release_id={data['release_id']}",
+    f"commit_sha={data['commit_sha']}",
+    f"ref={data['ref']}",
+    f"current_release_before_prepare={data['current_release_before_prepare']}",
+    f"release_dir={data['release_dir']}",
+    f"image_tag={data['image_tag']}",
+    f"image_id={data['image_id']}",
+    f"frontend_hash={data['frontend_hash']}",
+    f"npm_lock_hash={data['npm_lock_hash']}",
+    f"env_file_path={data['env_file_path']}",
+    f"migrations_count={migrations_count}",
+    f"migrations={','.join(migrations)}",
+    f"db_backup_required={'yes' if migrations_count > 0 else 'no'}",
+    f"approval_phrase={data['approval_phrase']}",
+]
+promote = f"/opt/dpms-tools/dpms-node.sh promote {data['release_id']} --approval {data['approval_phrase']}"
+if migrations_count > 0:
+    promote += " --allow-migrations --backup-id <external-db-backup-id>"
+lines.append(f"promote_command={promote}")
+print("\n".join(lines))
+PY
 }
 
 prepare_release() {
@@ -382,9 +476,9 @@ prepare_release() {
   release_dir="$(release_dir_for_id "$release_id")"
   image_tag="dpms-backend:${sha:0:12}"
   if [[ -d "$release_dir" ]]; then
-    if [[ -f "$(manifest_path "$release_dir")" && "$(jq -r '.commit_sha' "$(manifest_path "$release_dir")")" == "$sha" ]]; then
+    if [[ -f "$(manifest_path "$release_dir")" && "$(manifest_get "$(manifest_path "$release_dir")" commit_sha)" == "$sha" ]]; then
       local existing_image
-      existing_image="$(jq -r '.image_tag' "$(manifest_path "$release_dir")")"
+      existing_image="$(manifest_get "$(manifest_path "$release_dir")" image_tag)"
       [[ -f "$release_dir/frontend/dist/index.html" ]] || die "existing release is missing frontend/dist"
       docker image inspect "$existing_image" >/dev/null || die "existing release image is missing: $existing_image"
       print_approval_sheet "$release_dir"
@@ -481,11 +575,11 @@ promote_release() {
   release_dir="$(release_dir_for_id "$release_id")"
   manifest="$(manifest_path "$release_dir")"
   [[ -f "$manifest" ]] || die "manifest missing for release: $release_id"
-  expected_approval="$(jq -r '.approval_phrase' "$manifest")"
+  expected_approval="$(manifest_get "$manifest" approval_phrase)"
   [[ "$approval" == "$expected_approval" ]] || die "approval phrase mismatch; run prepare and copy exact approval_phrase"
-  sha="$(jq -r '.commit_sha' "$manifest")"
-  image_tag="$(jq -r '.image_tag' "$manifest")"
-  migrations_count="$(jq -r '.migrations_count' "$manifest")"
+  sha="$(manifest_get "$manifest" commit_sha)"
+  image_tag="$(manifest_get "$manifest" image_tag)"
+  migrations_count="$(manifest_get "$manifest" migrations_count)"
   [[ -d "$release_dir" ]] || die "release dir missing: $release_dir"
   [[ "$(resolve_ref "$sha")" == "$sha" ]] || die "repo cannot verify prepared commit sha"
   docker image inspect "$image_tag" >/dev/null || die "prepared image is missing: $image_tag"
@@ -520,9 +614,7 @@ promote_release() {
   systemctl reload nginx
   healthcheck
   printf '%s\n' "$release_id" > "$DPMS_LIVE_ROOT/current-release"
-  jq --arg status promoted --arg promoted_at_utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg backup_dir "$backup_dir" --arg backup_id "$backup_id" \
-    '.status=$status | .promoted_at_utc=$promoted_at_utc | .app_backup_dir=$backup_dir | .external_db_backup_id=$backup_id' \
-    "$manifest" > "$manifest.tmp" && mv "$manifest.tmp" "$manifest"
+  manifest_mark_promoted "$manifest" "$backup_dir" "$backup_id"
   log "promote_ok=1"
   log "release_id=$release_id"
   log "rollback_command=/opt/dpms-tools/dpms-node.sh rollback $backup_dir"
@@ -593,7 +685,7 @@ status_report() {
   log "env_file_present=$([[ -f "$DPMS_ENV_FILE" ]] && echo yes || echo no)"
   log "prepared_releases:"
   find "$DPMS_RELEASES_DIR" -maxdepth 2 -name manifest.json -print 2>/dev/null | sort | while read -r m; do
-    jq -r '"- " + .release_id + " " + .status + " " + .short_sha + " migrations=" + (.migrations_count|tostring)' "$m"
+    manifest_summary "$m"
   done
   healthcheck || true
 }
