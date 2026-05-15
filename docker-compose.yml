@@ -21,9 +21,12 @@ services:
       - "8000:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://dpms_user:dpms_pass@db:5432/dpms
+      UPLOAD_DIR: /app/uploads
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - ./uploads:/app/uploads
 
   frontend:
     build: ./frontend

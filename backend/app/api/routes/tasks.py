@@ -2,17 +2,20 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user, require_role
+from app.models.attachment import TaskAttachment
 from app.models.user import User
 from app.models.task import Task, TaskStatus, TaskType, TaskPriority
 from app.schemas.task import (
     TaskCreate,
     TaskRead,
     TaskUpdate,
+    TaskAttachmentRead,
     TaskExportRow,
     TasksExport,
     SetDueDateRequest,
@@ -21,10 +24,19 @@ from app.schemas.task import (
     TimeCorrection,
     compute_deadline_zone,
 )
+from app.services.attachments import attachment_path, save_task_attachment
 from app.services.queue import create_bugfix
 from app.services.focus import start_focus, pause_focus, correct_active_time
 
 router = APIRouter()
+
+
+async def _get_task_or_404(db: AsyncSession, task_id: UUID) -> Task:
+    result = await db.execute(select(Task).where(Task.id == task_id))
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return task
 
 
 @router.get("", response_model=list[TaskRead])
@@ -149,14 +161,63 @@ async def get_task(
 
     await auto_pause_stale_focuses(db)
     await check_overdue_tasks(db)
-    result = await db.execute(select(Task).where(Task.id == task_id))
-    task = result.scalar_one_or_none()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = await _get_task_or_404(db, task_id)
     data = TaskRead.model_validate(task, from_attributes=True)
     if task.due_date:
         data.deadline_zone = compute_deadline_zone(task)
     return data
+
+
+@router.get("/{task_id}/attachments", response_model=list[TaskAttachmentRead])
+async def list_task_attachments(
+    task_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Список вложений задачи."""
+    await _get_task_or_404(db, task_id)
+    result = await db.execute(
+        select(TaskAttachment)
+        .where(TaskAttachment.task_id == task_id)
+        .order_by(TaskAttachment.created_at.asc())
+    )
+    return list(result.scalars().all())
+
+
+@router.post("/{task_id}/attachments", response_model=TaskAttachmentRead)
+async def upload_task_attachment(
+    task_id: UUID,
+    file: UploadFile = File(...),
+    user: User = Depends(require_role("admin", "teamlead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Загрузить изображение/скриншот к задаче до взятия её в работу."""
+    task = await _get_task_or_404(db, task_id)
+    return await save_task_attachment(db, task=task, uploader=user, upload=file)
+
+
+@router.get("/{task_id}/attachments/{attachment_id}/content")
+async def get_task_attachment_content(
+    task_id: UUID,
+    attachment_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Вернуть файл вложения задачи."""
+    await _get_task_or_404(db, task_id)
+    result = await db.execute(
+        select(TaskAttachment).where(
+            TaskAttachment.id == attachment_id,
+            TaskAttachment.task_id == task_id,
+        )
+    )
+    attachment = result.scalar_one_or_none()
+    if not attachment:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    file_path = attachment_path(attachment)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Attachment file not found")
+    return FileResponse(str(file_path), media_type=attachment.content_type)
 
 
 @router.post("", response_model=TaskRead)

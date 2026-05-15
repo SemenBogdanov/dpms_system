@@ -143,6 +143,11 @@ class Task(Base):
     estimator = relationship("User", back_populates="estimated_tasks", foreign_keys=[estimator_id])
     validator = relationship("User", back_populates="validated_tasks", foreign_keys=[validator_id])
     transactions = relationship("QTransaction", back_populates="task")
+    attachments = relationship(
+        "TaskAttachment",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def deadline_zone(self) -> str | None:

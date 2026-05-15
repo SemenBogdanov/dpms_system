@@ -8,6 +8,8 @@ services:
       - "127.0.0.1:8000:8000"
     env_file:
       - ${DPMS_ENV_FILE:-/opt/dpms/deploy/.env.prod}
+    volumes:
+      - ${DPMS_UPLOAD_DIR:-/opt/dpms/uploads}:/app/uploads
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

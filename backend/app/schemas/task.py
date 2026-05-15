@@ -70,6 +70,20 @@ class TaskRead(TaskBase):
     model_config = {"from_attributes": True}
 
 
+class TaskAttachmentRead(BaseModel):
+    """Метаданные вложения задачи."""
+
+    id: UUID
+    task_id: UUID
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    uploaded_by_id: UUID
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class FocusResponse(BaseModel):
     task_id: UUID
     action: str  # "focused" | "paused"

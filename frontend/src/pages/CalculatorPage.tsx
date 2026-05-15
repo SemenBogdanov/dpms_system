@@ -1,12 +1,24 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
-import type { CatalogItem, User, EstimateResponse } from '@/api/types'
+import type { CatalogItem, User, EstimateResponse, Task, TaskAttachment } from '@/api/types'
 import type { CartRow } from '@/components/EstimateCart'
 import { CatalogPicker } from '@/components/CatalogPicker'
 import { EstimateCart } from '@/components/EstimateCart'
 import { TagInput } from '@/components/TagInput'
+import { Paperclip, X } from 'lucide-react'
+
+const MAX_TASK_ATTACHMENTS = 5
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+const ATTACHMENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+const ATTACHMENT_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif'
+
+function formatAttachmentSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} Б`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`
+  return `${(bytes / 1024 / 1024).toFixed(1)} МБ`
+}
 
 export function CalculatorPage() {
   const navigate = useNavigate()
@@ -20,6 +32,7 @@ export function CalculatorPage() {
   const [createDescription, setCreateDescription] = useState('')
   const [createPriority, setCreatePriority] = useState('medium')
   const [createTags, setCreateTags] = useState<string[]>([])
+  const [createAttachments, setCreateAttachments] = useState<File[]>([])
   const [createEstimatorId, setCreateEstimatorId] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [creating, setCreating] = useState(false)
@@ -83,9 +96,59 @@ export function CalculatorPage() {
     setCreateDescription('')
     setCreatePriority('medium')
     setCreateTags([])
+    setCreateAttachments([])
     setCreateEstimatorId(teamleads[0]?.id ?? '')
     setDueDate('')
     setCreateModalOpen(true)
+  }
+
+  const handleAttachmentSelect = (event: ChangeEvent<HTMLInputElement>) => {
+    const selected = Array.from(event.target.files ?? [])
+    if (selected.length === 0) return
+    const next = [...createAttachments]
+    for (const file of selected) {
+      if (next.length >= MAX_TASK_ATTACHMENTS) {
+        toast.error(`Можно прикрепить не более ${MAX_TASK_ATTACHMENTS} файлов`)
+        break
+      }
+      if (!ATTACHMENT_TYPES.has(file.type)) {
+        toast.error(`Формат не поддерживается: ${file.name}`)
+        continue
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        toast.error(`Файл больше 10 МБ: ${file.name}`)
+        continue
+      }
+      const duplicate = next.some(
+        (item) =>
+          item.name === file.name &&
+          item.size === file.size &&
+          item.lastModified === file.lastModified
+      )
+      if (!duplicate) next.push(file)
+    }
+    setCreateAttachments(next)
+    event.target.value = ''
+  }
+
+  const removeAttachment = (index: number) => {
+    setCreateAttachments((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const uploadAttachments = async (taskId: string) => {
+    let uploaded = 0
+    let lastError = ''
+    for (const file of createAttachments) {
+      const formData = new FormData()
+      formData.append('file', file)
+      try {
+        await api.upload<TaskAttachment>(`/api/tasks/${taskId}/attachments`, formData)
+        uploaded += 1
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : 'ошибка загрузки'
+      }
+    }
+    return { uploaded, lastError }
   }
 
   const handleCreateTask = async () => {
@@ -98,7 +161,7 @@ export function CalculatorPage() {
     const priorityToSend = hasProactive && (createPriority === 'critical' || createPriority === 'high') ? 'medium' : createPriority
     setCreating(true)
     try {
-      const task = await api.post<{ id: string; title: string; estimated_q: number }>(
+      const task = await api.post<Task>(
         '/api/calculator/create-task',
         {
           title: createTitle.trim(),
@@ -110,7 +173,21 @@ export function CalculatorPage() {
           due_date: dueDate ? new Date(dueDate).toISOString() : undefined,
         }
       )
-      toast.success(`Задача создана, ${task.estimated_q} Q, в очереди`)
+      let uploaded = 0
+      if (createAttachments.length > 0) {
+        const result = await uploadAttachments(task.id)
+        uploaded = result.uploaded
+        if (uploaded < createAttachments.length) {
+          toast.error(
+            result.lastError
+              ? `Задача создана, часть вложений не загружена: ${result.lastError}`
+              : 'Задача создана, часть вложений не загружена'
+          )
+        }
+      }
+      if (createAttachments.length === 0 || uploaded === createAttachments.length) {
+        toast.success(`Задача создана, ${Number(task.estimated_q).toFixed(1)} Q, в очереди`)
+      }
       setCreateModalOpen(false)
       navigate('/queue')
     } catch (e) {
@@ -212,7 +289,7 @@ export function CalculatorPage() {
           onKeyDown={(e) => e.key === 'Escape' && setCreateModalOpen(false)}
         >
           <div
-            className="w-full max-w-md rounded-xl bg-white p-6 shadow-lg"
+            className="max-h-[calc(100vh-3rem)] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 shadow-lg"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold text-slate-900">
@@ -298,6 +375,54 @@ export function CalculatorPage() {
                 Теги
               </label>
               <TagInput tags={createTags} onChange={setCreateTags} className="mt-1" />
+              <div>
+                <label className="block text-sm font-medium text-slate-700">
+                  Скриншоты и изображения
+                </label>
+                <label className="mt-1 flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-sm font-medium text-slate-600 hover:border-primary hover:bg-primary/5">
+                  <Paperclip className="h-4 w-4" />
+                  <span>Прикрепить файл</span>
+                  <input
+                    type="file"
+                    accept={ATTACHMENT_ACCEPT}
+                    multiple
+                    className="sr-only"
+                    onChange={handleAttachmentSelect}
+                    disabled={creating}
+                  />
+                </label>
+                <p className="mt-1 text-xs text-slate-400">
+                  PNG, JPG, WEBP или GIF. До 10 МБ, максимум {MAX_TASK_ATTACHMENTS} файлов.
+                </p>
+                {createAttachments.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {createAttachments.map((file, index) => (
+                      <li
+                        key={`${file.name}-${file.size}-${file.lastModified}`}
+                        className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm"
+                      >
+                        <Paperclip className="h-4 w-4 shrink-0 text-slate-400" />
+                        <span className="min-w-0 flex-1 truncate text-slate-700">
+                          {file.name}
+                        </span>
+                        <span className="shrink-0 text-xs text-slate-400">
+                          {formatAttachmentSize(file.size)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(index)}
+                          className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                          title="Удалить вложение"
+                          aria-label={`Удалить ${file.name}`}
+                          disabled={creating}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
               <label className="block text-sm font-medium text-slate-700">
                 Оценщик (тимлид)
               </label>

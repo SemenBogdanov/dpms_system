@@ -15,6 +15,7 @@ class Base(DeclarativeBase):
 from app.models.user import User
 from app.models.catalog import CatalogItem
 from app.models.task import Task
+from app.models.attachment import TaskAttachment
 from app.models.transaction import QTransaction
 from app.models.shop import ShopItem, Purchase, PeriodSnapshot
 from app.models.notification import Notification
@@ -25,6 +26,7 @@ __all__ = [
     "User",
     "CatalogItem",
     "Task",
+    "TaskAttachment",
     "QTransaction",
     "ShopItem",
     "Purchase",

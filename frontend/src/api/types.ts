@@ -86,6 +86,16 @@ export interface Task {
   is_focused: boolean
 }
 
+export interface TaskAttachment {
+  id: string
+  task_id: string
+  original_filename: string
+  content_type: string
+  size_bytes: number
+  uploaded_by_id: string
+  created_at: string
+}
+
 /** Задача в очереди с флагами can_pull, locked */
 export interface QueueTaskResponse {
   id: string

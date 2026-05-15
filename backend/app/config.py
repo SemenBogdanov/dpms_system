@@ -26,5 +26,10 @@ class Settings(BaseSettings):
     DPMS_SECRET_KEY: str = "dev-secret-key-change-me"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 часов
 
+    # Attachments
+    UPLOAD_DIR: str = "/app/uploads"
+    MAX_TASK_ATTACHMENT_BYTES: int = 10 * 1024 * 1024
+    MAX_TASK_ATTACHMENTS: int = 5
+
 
 settings = Settings()

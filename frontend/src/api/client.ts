@@ -10,14 +10,15 @@ const API_BASE =
 
 async function request<T>(
   path: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  jsonRequest = true
 ): Promise<T> {
   const url = path.startsWith('http') ? path : `${API_BASE}${path}`
   const token = getToken()
   const res = await fetch(url, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
+      ...(jsonRequest && { 'Content-Type': 'application/json' }),
       ...(token && { Authorization: `Bearer ${token}` }),
       ...options.headers,
     },
@@ -38,6 +39,29 @@ async function request<T>(
   return (text ? JSON.parse(text) : null) as T
 }
 
+async function requestBlob(path: string): Promise<Blob> {
+  const url = path.startsWith('http') ? path : `${API_BASE}${path}`
+  const token = getToken()
+  const res = await fetch(url, {
+    headers: {
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+  })
+  if (res.status === 401) {
+    clearToken()
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      window.location.href = '/login'
+    }
+    const err = await res.json().catch(() => ({ detail: 'Требуется авторизация' }))
+    throw new Error(err.detail || 'Требуется авторизация')
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || String(err))
+  }
+  return res.blob()
+}
+
 export const api = {
   get: <T>(path: string, params?: Record<string, string>) => {
     const url = params && Object.keys(params).length
@@ -47,8 +71,11 @@ export const api = {
   },
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
+  upload: <T>(path: string, body: FormData) =>
+    request<T>(path, { method: 'POST', body }, false),
   patch: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
   delete: <T>(path: string) =>
     request<T>(path, { method: 'DELETE' }),
+  blob: (path: string) => requestBlob(path),
 }

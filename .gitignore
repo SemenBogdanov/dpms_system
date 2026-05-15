@@ -30,6 +30,7 @@ Thumbs.db
 
 # Docker
 *.log
+uploads/
 
 # Local agent/runtime state
 status.json

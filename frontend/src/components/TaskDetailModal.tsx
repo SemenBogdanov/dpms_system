@@ -1,5 +1,6 @@
-import type { FC } from 'react'
-import type { Task, User, CatalogItem } from '@/api/types'
+import { useEffect, useState, type FC } from 'react'
+import { api } from '@/api/client'
+import type { Task, User, CatalogItem, TaskAttachment } from '@/api/types'
 import { DeadlineBadge } from './DeadlineBadge'
 import { PriorityBadge } from './PriorityBadge'
 import { Copy, X } from 'lucide-react'
@@ -48,6 +49,12 @@ function formatDate(d: string | null | undefined): string {
   return `${date.toLocaleDateString('ru')} ${date.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' })}`
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} Б`
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`
+  return `${(bytes / 1024 / 1024).toFixed(1)} МБ`
+}
+
 export const TaskDetailModal: FC<TaskDetailModalProps> = ({
   task,
   onClose,
@@ -57,6 +64,59 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
   onOpenBugfix,
   onOpenDeadline,
 }) => {
+  const taskId = task?.id
+  const [attachments, setAttachments] = useState<TaskAttachment[]>([])
+  const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({})
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false)
+
+  useEffect(() => {
+    if (!taskId) {
+      setAttachments([])
+      setAttachmentUrls({})
+      return
+    }
+
+    let active = true
+    const createdUrls: string[] = []
+
+    async function loadAttachments() {
+      setAttachmentsLoading(true)
+      setAttachments([])
+      setAttachmentUrls({})
+      try {
+        const list = await api.get<TaskAttachment[]>(`/api/tasks/${taskId}/attachments`)
+        if (!active) return
+        setAttachments(list)
+        const entries: Array<[string, string]> = []
+        for (const attachment of list) {
+          try {
+            const blob = await api.blob(
+              `/api/tasks/${taskId}/attachments/${attachment.id}/content`
+            )
+            if (!active) return
+            const url = URL.createObjectURL(blob)
+            createdUrls.push(url)
+            entries.push([attachment.id, url])
+          } catch {
+            if (!active) return
+          }
+        }
+        if (active) setAttachmentUrls(Object.fromEntries(entries))
+      } catch {
+        if (active) setAttachments([])
+      } finally {
+        if (active) setAttachmentsLoading(false)
+      }
+    }
+
+    void loadAttachments()
+
+    return () => {
+      active = false
+      createdUrls.forEach((url) => URL.revokeObjectURL(url))
+    }
+  }, [taskId])
+
   if (!task) return null
 
   const resolveName = (id: string | null | undefined) => {
@@ -221,6 +281,55 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
               {task.description || '—'}
             </p>
           </div>
+
+          {(attachmentsLoading || attachments.length > 0) && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Вложения</p>
+              {attachmentsLoading && (
+                <p className="mt-1 text-sm text-slate-500">Загрузка...</p>
+              )}
+              {!attachmentsLoading && attachments.length > 0 && (
+                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {attachments.map((attachment) => {
+                    const url = attachmentUrls[attachment.id]
+                    return (
+                      <a
+                        key={attachment.id}
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`overflow-hidden rounded-lg border border-slate-200 bg-white text-left shadow-sm transition ${
+                          url ? 'hover:border-primary hover:shadow' : 'pointer-events-none opacity-70'
+                        }`}
+                      >
+                        <div className="flex h-28 items-center justify-center bg-slate-100">
+                          {url ? (
+                            <img
+                              src={url}
+                              alt={attachment.original_filename}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <span className="px-3 text-center text-xs text-slate-400">
+                              Не удалось открыть файл
+                            </span>
+                          )}
+                        </div>
+                        <div className="space-y-0.5 p-2">
+                          <p className="truncate text-sm font-medium text-slate-700">
+                            {attachment.original_filename}
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            {formatBytes(attachment.size_bytes)}
+                          </p>
+                        </div>
+                      </a>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Участники */}
           <div>
