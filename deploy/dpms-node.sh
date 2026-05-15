@@ -397,7 +397,14 @@ prepare_release() {
       print_approval_sheet "$release_dir"
       return 0
     fi
-    die "release dir already exists without matching manifest: $release_dir"
+    if [[ ! -f "$(manifest_path "$release_dir")" ]]; then
+      local failed_dir
+      failed_dir="$release_dir.failed.$(date -u +%Y%m%dT%H%M%SZ)"
+      mv "$release_dir" "$failed_dir"
+      log "moved_incomplete_release=$failed_dir"
+    else
+      die "release dir already exists with a different manifest: $release_dir"
+    fi
   fi
   rm -rf "$release_dir.tmp"
   mkdir -p "$release_dir.tmp"
