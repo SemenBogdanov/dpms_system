@@ -18,6 +18,8 @@ from app.schemas.task import (
     TaskAttachmentRead,
     TaskExportRow,
     TasksExport,
+    TaskImportCommitResponse,
+    TaskImportPreview,
     SetDueDateRequest,
     CreateBugfixRequest,
     FocusResponse,
@@ -27,6 +29,7 @@ from app.schemas.task import (
 from app.services.attachments import attachment_path, save_task_attachment
 from app.services.queue import create_bugfix
 from app.services.focus import start_focus, pause_focus, correct_active_time
+from app.services.task_import import commit_task_import, preview_task_import
 
 router = APIRouter()
 
@@ -147,6 +150,26 @@ async def export_tasks(
         )
         total_q += float(t.estimated_q)
     return TasksExport(period=period, rows=rows, total_tasks=len(rows), total_q=round(total_q, 1))
+
+
+@router.post("/import/preview", response_model=TaskImportPreview)
+async def preview_tasks_import(
+    file: UploadFile = File(...),
+    user: User = Depends(require_role("admin", "teamlead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Проверить CSV со списком задач без записи в БД."""
+    return await preview_task_import(db, file)
+
+
+@router.post("/import", response_model=TaskImportCommitResponse)
+async def import_tasks(
+    file: UploadFile = File(...),
+    user: User = Depends(require_role("admin", "teamlead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Создать задачи из CSV: только валидные queued tasks, all-or-nothing."""
+    return await commit_task_import(db, file, user)
 
 
 @router.get("/{task_id}", response_model=TaskRead)

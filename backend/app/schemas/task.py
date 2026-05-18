@@ -130,6 +130,52 @@ class TasksExport(BaseModel):
     total_q: float
 
 
+class TaskImportIssue(BaseModel):
+    """Ошибка в строке импорта задач."""
+
+    row_number: int
+    field: str
+    message: str
+
+
+class TaskImportPreviewRow(BaseModel):
+    """Нормализованная строка предпросмотра импорта задач."""
+
+    row_number: int
+    title: str
+    catalog_item_id: UUID | None = None
+    catalog_item_name: str | None = None
+    quantity: int | None = None
+    priority: str
+    due_date: datetime | None = None
+    tags: list[str] = Field(default_factory=list)
+    task_type: str | None = None
+    complexity: str | None = None
+    estimated_q: float | None = None
+    min_league: str | None = None
+    errors: list[TaskImportIssue] = Field(default_factory=list)
+
+
+class TaskImportPreview(BaseModel):
+    """Предпросмотр CSV-импорта задач."""
+
+    batch_id: str
+    total_rows: int
+    valid_rows: int
+    error_rows: int
+    has_errors: bool
+    warnings: list[str] = Field(default_factory=list)
+    rows: list[TaskImportPreviewRow]
+
+
+class TaskImportCommitResponse(BaseModel):
+    """Результат подтверждённого CSV-импорта задач."""
+
+    batch_id: str
+    created_count: int
+    tasks: list[TaskRead]
+
+
 class SetDueDateRequest(BaseModel):
     """Запрос на установку дедлайна задачи (доступен тимлиду/админу)."""
 

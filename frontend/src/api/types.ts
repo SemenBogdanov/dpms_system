@@ -97,6 +97,44 @@ export interface TaskAttachment {
   created_at: string
 }
 
+export interface TaskImportIssue {
+  row_number: number
+  field: string
+  message: string
+}
+
+export interface TaskImportPreviewRow {
+  row_number: number
+  title: string
+  catalog_item_id: string | null
+  catalog_item_name: string | null
+  quantity: number | null
+  priority: TaskPriority
+  due_date: string | null
+  tags: string[]
+  task_type: TaskType | null
+  complexity: Complexity | null
+  estimated_q: number | null
+  min_league: League | null
+  errors: TaskImportIssue[]
+}
+
+export interface TaskImportPreview {
+  batch_id: string
+  total_rows: number
+  valid_rows: number
+  error_rows: number
+  has_errors: boolean
+  warnings: string[]
+  rows: TaskImportPreviewRow[]
+}
+
+export interface TaskImportCommitResponse {
+  batch_id: string
+  created_count: number
+  tasks: Task[]
+}
+
 export interface KnowledgeArticle {
   id: string
   slug: string

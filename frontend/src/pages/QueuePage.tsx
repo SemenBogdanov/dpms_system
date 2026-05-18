@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { Lock, Pencil } from 'lucide-react'
+import { FileSpreadsheet, Lock, Pencil } from 'lucide-react'
 import { api } from '@/api/client'
 import type { AssignCandidate, QueueTaskResponse, Task, User, TaskStatus } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
@@ -12,6 +12,7 @@ import { SkeletonTable } from '@/components/Skeleton'
 import { DeadlineBadge } from '@/components/DeadlineBadge'
 import { TaskDetailModal } from '@/components/TaskDetailModal'
 import { BugfixModal } from '@/components/BugfixModal'
+import { TaskImportModal } from '@/components/TaskImportModal'
 
 const complexityStyles: Record<string, string> = {
   S: 'bg-gray-50 text-gray-400 ring-1 ring-gray-100',
@@ -74,6 +75,7 @@ export function QueuePage() {
   const [editPriority, setEditPriority] = useState<'low' | 'medium' | 'high' | 'critical'>('medium')
   const [editTags, setEditTags] = useState('')
   const [editBusy, setEditBusy] = useState(false)
+  const [importModalOpen, setImportModalOpen] = useState(false)
 
   const loadQueue = () => {
     if (!currentUser) return
@@ -327,12 +329,22 @@ export function QueuePage() {
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-semibold text-gray-700">Глобальная очередь</h1>
           {isTeamleadOrAdmin && (
-            <Link
-              to="/calculator"
-              className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-dark transition-colors"
-            >
-              ➕ Создать задачу
-            </Link>
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                to="/calculator"
+                className="rounded-xl bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-dark transition-colors"
+              >
+                ➕ Создать задачу
+              </Link>
+              <button
+                type="button"
+                onClick={() => setImportModalOpen(true)}
+                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                <FileSpreadsheet className="h-4 w-4" aria-hidden="true" />
+                Импорт CSV
+              </button>
+            </div>
           )}
         </div>
         {currentUser && (
@@ -641,6 +653,18 @@ export function QueuePage() {
           </table>
         </div>
       )}
+
+      <TaskImportModal
+        open={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onImported={() => {
+          if (includeArchived) {
+            api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
+          } else {
+            loadQueue()
+          }
+        }}
+      />
 
       <TaskDetailModal
         task={detailTask}
