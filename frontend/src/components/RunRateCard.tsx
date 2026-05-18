@@ -37,6 +37,7 @@ export function RunRateCard({ data, loading, error, compact }: RunRateCardProps)
 
   const cfg = STATUS_CONFIG[data.status]
   const pct = Math.min(100, Math.max(0, data.run_rate_percent))
+  const targetAdjusted = Math.abs(Number(data.full_mpw ?? data.mpw) - Number(data.mpw)) > 0.05
 
   // Компактный вариант для MyTasksPage
   if (compact) {
@@ -46,7 +47,7 @@ export function RunRateCard({ data, loading, error, compact }: RunRateCardProps)
           {cfg.label}
         </span>
         <span className="text-slate-600">
-          Прогноз: {data.projected.toFixed(1)} / {data.mpw} Q ({data.run_rate_percent.toFixed(0)}%)
+          Прогноз: {data.projected.toFixed(1)} / {data.mpw.toFixed(1)} Q ({data.run_rate_percent.toFixed(0)}%)
         </span>
       </div>
     )
@@ -88,7 +89,8 @@ export function RunRateCard({ data, loading, error, compact }: RunRateCardProps)
         </div>
         <div>
           <p className="text-xs text-slate-500">Заработано</p>
-          <p className="text-lg font-semibold text-slate-900">{data.earned.toFixed(1)} / {data.mpw} Q</p>
+          <p className="text-lg font-semibold text-slate-900">{data.earned.toFixed(1)} / {data.mpw.toFixed(1)} Q</p>
+          {targetAdjusted && <p className="text-xs text-slate-500">Полный: {data.full_mpw.toFixed(1)} Q</p>}
         </div>
         <div>
           <p className="text-xs text-slate-500">Нужный темп</p>

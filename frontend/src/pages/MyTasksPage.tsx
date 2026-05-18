@@ -299,6 +299,8 @@ export function MyTasksPage() {
     : 0
   const progressColor =
     progressPercent < 50 ? 'bg-red-500' : progressPercent < 80 ? 'bg-yellow-500' : 'bg-emerald-500'
+  const fullTarget = progress?.full_target ?? currentUser?.mpw ?? progressTarget
+  const targetAdjusted = Math.abs(Number(fullTarget) - Number(progressTarget)) > 0.05
 
   return (
     <div className="space-y-6">
@@ -320,6 +322,11 @@ export function MyTasksPage() {
               style={{ width: `${Math.min(100, progressPercent)}%` }}
             />
           </div>
+          {targetAdjusted && (
+            <p className="mt-2 text-xs text-slate-500">
+              Полный план: {Number(fullTarget).toFixed(1)} Q. Сейчас применяется эффективный план.
+            </p>
+          )}
           {currentUser.wallet_karma > 0 && (
             <p className="mt-2 text-sm text-slate-600">
               <span className="whitespace-nowrap">⭐ Karma: {currentUser.wallet_karma} Q</span>

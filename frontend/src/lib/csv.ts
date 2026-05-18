@@ -4,11 +4,22 @@ import type { CatalogItem, TeamSummary } from '@/api/types'
 export function exportTeamCSV(summary: TeamSummary): void {
   const rows = Object.values(summary.by_league).flat()
   const header =
-    'ФИО,Лига,План (MPW),Факт (Main),% Выполнения,Карма,В работе (Q),Статус\n'
+    'ФИО,Лига,Эффективный план,Полный план,Факт (Main),% Выполнения,Карма,В работе (Q),Статус\n'
   const body = rows
-    .map(
-      (r) =>
-        `${r.full_name},${r.league},${r.mpw},${Number(r.earned).toFixed(1)},${Number(r.percent).toFixed(1)},${Number(r.karma).toFixed(1)},${Number(r.in_progress_q).toFixed(1)},${r.is_at_risk ? 'Отстаёт' : 'OK'}`
+    .map((r) =>
+      [
+        r.full_name,
+        r.league,
+        Number(r.effective_mpw).toFixed(1),
+        r.mpw,
+        Number(r.earned).toFixed(1),
+        Number(r.percent).toFixed(1),
+        Number(r.karma).toFixed(1),
+        Number(r.in_progress_q).toFixed(1),
+        r.is_at_risk ? 'Отстаёт' : 'OK',
+      ]
+        .map(csvCell)
+        .join(',')
     )
     .join('\n')
   const blob = new Blob(['\ufeff' + header + body], {

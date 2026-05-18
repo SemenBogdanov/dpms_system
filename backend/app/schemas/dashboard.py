@@ -1,23 +1,31 @@
 """Схемы аналитических данных (дашборд)."""
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
 
 class CapacityGauge(BaseModel):
     """Метрика «Стакан»: загрузка vs ёмкость."""
-    capacity: Decimal  # сумма mpw активных пользователей
+    capacity: Decimal  # сумма effective target активных пользователей
     load: Decimal  # сумма estimated_q задач in_queue + in_progress + review
     utilization: float  # load / capacity * 100
     status: str  # 'green' | 'yellow' | 'red'
 
 
 class UserProgress(BaseModel):
-    """Прогресс пользователя: earned vs target."""
+    """Прогресс пользователя: earned vs effective target."""
     earned: float
     target: float
+    full_target: float = 0
     percent: float
     karma: float
+    is_new_employee: bool = False
+    onboarding_active: bool = False
+    onboarding_until: datetime | None = None
+    plan_started_at: datetime | None = None
+    adjustment_reasons: list[str] = Field(default_factory=list)
 
 
 class TeamMemberSummary(BaseModel):
@@ -26,6 +34,7 @@ class TeamMemberSummary(BaseModel):
     full_name: str
     league: str
     mpw: int
+    effective_mpw: float = 0
     earned: float
     percent: float
     karma: float
@@ -33,6 +42,10 @@ class TeamMemberSummary(BaseModel):
     is_at_risk: bool
     quality_score: float
     has_overdue: bool
+    is_new_employee: bool = False
+    onboarding_active: bool = False
+    onboarding_until: datetime | None = None
+    adjustment_reasons: list[str] = Field(default_factory=list)
 
 
 class TeamSummary(BaseModel):
@@ -72,7 +85,8 @@ class RunRate(BaseModel):
     """Прогноз выполнения плана (Run Rate)."""
     rate_daily: float          # темп Q/день
     projected: float           # прогноз Q на конец месяца
-    mpw: int                   # план
+    mpw: float                 # effective plan
+    full_mpw: float = 0         # full monthly plan
     run_rate_percent: float    # projected / mpw * 100
     required_rate: float | None  # нужный темп (None если план выполнен)
     status: str                # on_track | slightly_behind | at_risk | critical
@@ -80,3 +94,6 @@ class RunRate(BaseModel):
     days_total: int
     days_remaining: int
     earned: float              # текущий wallet_main
+    is_new_employee: bool = False
+    onboarding_active: bool = False
+    onboarding_until: datetime | None = None

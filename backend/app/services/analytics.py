@@ -20,17 +20,24 @@ from app.schemas.dashboard import (
     UserProgress,
     PeriodStats,
 )
+from app.services.planning import current_plan_window, effective_plan_for_user
 
+
+def _effective_capacity(users: list[User], now: datetime) -> Decimal:
+    return sum(
+        (effective_plan_for_user(user, now).effective_target for user in users),
+        Decimal("0"),
+    )
 
 async def get_capacity_gauge(db: AsyncSession) -> CapacityGauge:
     """
-    Стакан: capacity = сумма mpw активных пользователей,
+    Стакан: capacity = сумма effective target активных пользователей,
     load = сумма estimated_q задач in_queue + in_progress + review.
     """
-    cap_result = await db.execute(
-        select(func.coalesce(func.sum(User.mpw), 0)).where(User.is_active.is_(True))
-    )
-    capacity = Decimal(str(cap_result.scalar() or 0))
+    now = datetime.now(timezone.utc)
+    users_result = await db.execute(select(User).where(User.is_active.is_(True)))
+    users = list(users_result.scalars().all())
+    capacity = _effective_capacity(users, now)
 
     load_result = await db.execute(
         select(func.coalesce(func.sum(Task.estimated_q), 0)).where(
@@ -58,28 +65,36 @@ async def get_capacity_gauge(db: AsyncSession) -> CapacityGauge:
 
 
 async def get_user_progress(db: AsyncSession, user_id: UUID) -> UserProgress | None:
-    """Прогресс пользователя: earned (wallet_main), target (mpw), karma."""
+    """Прогресс пользователя: earned vs effective target."""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         return None
+    now = datetime.now(timezone.utc)
+    plan = effective_plan_for_user(user, now)
     earned = user.wallet_main
-    target = Decimal(str(user.mpw))
+    target = plan.effective_target
     percent = float(earned / target * 100) if target > 0 else 0.0
     return UserProgress(
         earned=earned,
         target=target,
+        full_target=plan.full_target,
         percent=round(percent, 1),
         karma=user.wallet_karma,
+        is_new_employee=bool(user.is_new_employee),
+        onboarding_active=plan.onboarding_active,
+        onboarding_until=plan.onboarding_until,
+        plan_started_at=plan.plan_started_at,
+        adjustment_reasons=plan.adjustment_reasons,
     )
 
 
 async def get_team_summary(db: AsyncSession) -> TeamSummary:
-    """Сводка по команде: по лигам, earned vs target, in_progress_q, is_at_risk."""
+    """Сводка по команде: earned vs effective target, in_progress_q, is_at_risk."""
     users_result = await db.execute(
         select(User).where(User.is_active.is_(True)).order_by(User.league, User.full_name)
     )
-    users = users_result.scalars().all()
+    users = list(users_result.scalars().all())
 
     by_league: dict[str, list[TeamMemberSummary]] = {
         "A": [],
@@ -88,11 +103,8 @@ async def get_team_summary(db: AsyncSession) -> TeamSummary:
     }
     total_earned = Decimal("0")
 
-    # Ёмкость и текущая загрузка (как в стакане)
-    cap_result = await db.execute(
-        select(func.coalesce(func.sum(User.mpw), 0)).where(User.is_active.is_(True))
-    )
-    capacity = Decimal(str(cap_result.scalar() or 0))
+    now = datetime.now(timezone.utc)
+    capacity = _effective_capacity(users, now)
     load_result = await db.execute(
         select(func.coalesce(func.sum(Task.estimated_q), 0)).where(
             Task.status.in_(
@@ -127,14 +139,9 @@ async def get_team_summary(db: AsyncSession) -> TeamSummary:
         if user_id is not None:
             overdue_map[str(user_id)] = int(count or 0)
 
-    # Расчёт ожидаемого процента и статуса риска (по рабочим дням)
-    now = datetime.now(timezone.utc)
-    working_days = _working_days_in_month(now.year, now.month)
-    current_work_day = _working_day_index(now.year, now.month, now.day)
-    expected_percent = (current_work_day / working_days * 100) if working_days > 0 else 0.0
-
     for user in users:
-        target = Decimal(str(user.mpw))
+        plan = effective_plan_for_user(user, now)
+        target = plan.effective_target
         percent = float(user.wallet_main / target * 100) if target > 0 else 0.0
         total_earned += user.wallet_main
 
@@ -144,8 +151,9 @@ async def get_team_summary(db: AsyncSession) -> TeamSummary:
 
         in_progress_q = in_progress_map.get(str(user.id), 0.0)
         has_overdue = overdue_map.get(str(user.id), 0) > 0
-        # is_at_risk: percent < expected_percent * 0.6
-        is_at_risk = percent < expected_percent * 0.6
+        elapsed_days, total_days, _remaining_days = current_plan_window(user, now)
+        expected_percent = (elapsed_days / total_days * 100) if total_days > 0 else 0.0
+        is_at_risk = target > 0 and percent < expected_percent * 0.6
 
         by_league[key].append(
             TeamMemberSummary(
@@ -153,6 +161,7 @@ async def get_team_summary(db: AsyncSession) -> TeamSummary:
                 full_name=user.full_name,
                 league=user.league.value,
                 mpw=user.mpw,
+                effective_mpw=round(float(target), 1),
                 earned=round(float(user.wallet_main), 1),
                 percent=round(percent, 1),
                 karma=round(float(user.wallet_karma), 1),
@@ -160,6 +169,10 @@ async def get_team_summary(db: AsyncSession) -> TeamSummary:
                 is_at_risk=is_at_risk,
                 quality_score=float(getattr(user, "quality_score", 100.0)),
                 has_overdue=has_overdue,
+                is_new_employee=bool(user.is_new_employee),
+                onboarding_active=plan.onboarding_active,
+                onboarding_until=plan.onboarding_until,
+                adjustment_reasons=plan.adjustment_reasons,
             )
         )
 
@@ -258,19 +271,19 @@ def _working_day_index(year: int, month: int, day: int) -> int:
 
 
 async def get_run_rate(db: AsyncSession, user_id: UUID) -> RunRate | None:
-    """Прогноз выполнения плана (Run Rate) для сотрудника."""
+    """Прогноз выполнения effective plan для сотрудника."""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
         return None
 
     now = datetime.now(timezone.utc)
-    days_total = _working_days_in_month(now.year, now.month)
-    days_elapsed = _working_day_index(now.year, now.month, now.day)
-    days_remaining = days_total - days_elapsed
+    plan = effective_plan_for_user(user, now)
+    days_elapsed, days_total, days_remaining = current_plan_window(user, now)
 
     earned = float(user.wallet_main)
-    mpw = user.mpw
+    mpw = float(plan.effective_target)
+    full_mpw = float(plan.full_target)
 
     if days_elapsed > 0:
         rate_daily = earned / days_elapsed
@@ -299,7 +312,8 @@ async def get_run_rate(db: AsyncSession, user_id: UUID) -> RunRate | None:
     return RunRate(
         rate_daily=round(rate_daily, 2),
         projected=round(projected, 1),
-        mpw=mpw,
+        mpw=round(mpw, 1),
+        full_mpw=round(full_mpw, 1),
         run_rate_percent=round(run_rate_percent, 1),
         required_rate=required_rate,
         status=status,
@@ -307,6 +321,9 @@ async def get_run_rate(db: AsyncSession, user_id: UUID) -> RunRate | None:
         days_total=days_total,
         days_remaining=days_remaining,
         earned=round(earned, 1),
+        is_new_employee=bool(user.is_new_employee),
+        onboarding_active=plan.onboarding_active,
+        onboarding_until=plan.onboarding_until,
     )
 
 
@@ -323,10 +340,9 @@ async def get_burndown_data(db: AsyncSession) -> BurndownData:
     _, last_day = calendar.monthrange(year, month)
     month_end = now.replace(day=last_day, hour=23, minute=59, second=59, microsecond=999999)
 
-    cap_result = await db.execute(
-        select(func.coalesce(func.sum(User.mpw), 0)).where(User.is_active.is_(True))
-    )
-    total_capacity = float(cap_result.scalar() or 0)
+    users_result = await db.execute(select(User).where(User.is_active.is_(True)))
+    users = list(users_result.scalars().all())
+    total_capacity = float(_effective_capacity(users, now))
     working_days = _working_days_in_month(year, month)
     if working_days == 0:
         return BurndownData(period=period, total_capacity=total_capacity, working_days=0, points=[])

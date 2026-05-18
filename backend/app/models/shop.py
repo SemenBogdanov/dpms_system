@@ -75,7 +75,7 @@ class PeriodSnapshot(Base):
         nullable=False,
     )
     period: Mapped[str] = mapped_column(String(7), nullable=False)
-    mpw: Mapped[int] = mapped_column(Integer, nullable=False)
+    mpw: Mapped[Decimal] = mapped_column(Numeric(10, 1), nullable=False)
     earned_main: Mapped[Decimal] = mapped_column(Numeric(10, 1), nullable=False)
     earned_karma: Mapped[Decimal] = mapped_column(Numeric(10, 1), nullable=False)
     tasks_completed: Mapped[int] = mapped_column(Integer, default=0)

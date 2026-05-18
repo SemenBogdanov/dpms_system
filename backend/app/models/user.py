@@ -41,6 +41,10 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), nullable=False)
     mpw: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # план на месяц в Q
     wip_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    is_new_employee: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    plan_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    onboarding_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    onboarding_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     wallet_main: Mapped[Decimal] = mapped_column(Numeric(10, 1), nullable=False, default=Decimal("0"))
     wallet_karma: Mapped[Decimal] = mapped_column(Numeric(10, 1), nullable=False, default=Decimal("0"))
     quality_score: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)

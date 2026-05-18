@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.shop import PeriodSnapshot
 from app.models.task import Task, TaskStatus
 from app.models.user import User
+from app.services.planning import effective_plan_for_user
 from app.schemas.leagues import (
     CriteriaPeriod,
     LeagueCriterion,
@@ -82,8 +83,9 @@ async def get_league_progress(db: AsyncSession, user_id: UUID) -> LeagueProgress
     )
     snapshots = {s.period: s for s in snap_result.scalars().all()}
 
-    # Текущий месяц: live percent
-    target = float(user.mpw) if user.mpw else 1.0
+    # Текущий месяц: live percent относительно effective target
+    plan = effective_plan_for_user(user, datetime.now(timezone.utc))
+    target = float(plan.effective_target) if plan.effective_target else 1.0
     earned = float(user.wallet_main)
     current_percent = round(earned / target * 100, 1) if target > 0 else 0.0
     current_met = current_percent >= threshold

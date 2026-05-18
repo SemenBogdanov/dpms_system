@@ -24,7 +24,7 @@ class PeriodSnapshotResponse(BaseModel):
     id: UUID
     user_id: UUID
     period: str
-    mpw: int
+    mpw: float
     earned_main: Decimal
     earned_karma: Decimal
     tasks_completed: int

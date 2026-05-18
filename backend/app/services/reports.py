@@ -15,6 +15,7 @@ from app.schemas.reports import (
     TasksOverview,
 )
 from app.services.calibration import get_calibration_report
+from app.services.planning import effective_plan_for_user
 
 
 async def generate_period_report(db: AsyncSession, period: str) -> PeriodReport:
@@ -51,8 +52,9 @@ async def generate_period_report(db: AsyncSession, period: str) -> PeriodReport:
             select(PeriodSnapshot).where(PeriodSnapshot.period == period)
         )).scalars().all()
         for s in snap_list:
-            pct = (float(s.earned_main) / s.mpw * 100) if s.mpw > 0 else 0.0
-            total_capacity += float(s.mpw)
+            target = float(s.mpw)
+            pct = (float(s.earned_main) / target * 100) if target > 0 else 0.0
+            total_capacity += target
             total_earned += float(s.earned_main)
             user_r = await db.execute(select(User).where(User.id == s.user_id))
             u = user_r.scalar_one_or_none()
@@ -68,9 +70,11 @@ async def generate_period_report(db: AsyncSession, period: str) -> PeriodReport:
     else:
         users_result = await db.execute(select(User).where(User.is_active.is_(True)))
         for u in users_result.scalars().all():
-            total_capacity += float(u.mpw)
+            plan = effective_plan_for_user(u, now)
+            target = float(plan.effective_target)
+            total_capacity += target
             total_earned += float(u.wallet_main)
-            pct = (float(u.wallet_main) / u.mpw * 100) if u.mpw > 0 else 0.0
+            pct = (float(u.wallet_main) / target * 100) if target > 0 else 0.0
             tasks_done = await db.execute(
                 select(func.count(Task.id)).where(
                     Task.assignee_id == u.id,

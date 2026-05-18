@@ -11,6 +11,7 @@ from app.models.shop import PeriodSnapshot
 from app.models.task import Task, TaskStatus
 from app.models.transaction import QTransaction, WalletType
 from app.models.user import User, UserRole
+from app.services.planning import effective_plan_for_user
 
 
 def _round_q(value: float) -> float:
@@ -79,11 +80,13 @@ async def rollover_period(db: AsyncSession, admin_id: UUID) -> dict:
         )
         tasks_completed = int(tasks_count_result.scalar() or 0)
 
+        period_plan = effective_plan_for_user(user, month_start)
+
         db.add(
             PeriodSnapshot(
                 user_id=user.id,
                 period=period,
-                mpw=user.mpw,
+                mpw=period_plan.effective_target,
                 earned_main=Decimal(str(earned_main)),
                 earned_karma=Decimal(str(earned_karma)),
                 tasks_completed=tasks_completed,

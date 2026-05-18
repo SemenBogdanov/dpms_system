@@ -124,6 +124,7 @@ export function AdminUsersPage() {
         role: payload.role,
         league: payload.league,
         mpw: payload.mpw,
+        is_new_employee: payload.is_new_employee,
       })
       toast.success('Изменения сохранены')
     } else {
@@ -133,6 +134,7 @@ export function AdminUsersPage() {
         role: payload.role,
         league: payload.league,
         mpw: payload.mpw,
+        is_new_employee: payload.is_new_employee,
         password: payload.password,
       })
       toast.success('Сотрудник добавлен')
@@ -154,6 +156,10 @@ export function AdminUsersPage() {
       loadUsers()
     }).catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
   }
+
+  const formatDate = (value: string | null) => (value ? new Date(value).toLocaleDateString('ru') : '')
+  const isOnboardingActive = (u: User) =>
+    u.is_new_employee && (!u.onboarding_until || new Date(u.onboarding_until).getTime() > Date.now())
 
   const roleBadgeClass: Record<string, string> = {
     admin: 'bg-red-100 text-red-800',
@@ -213,7 +219,17 @@ export function AdminUsersPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3"><LeagueBadge league={u.league} /></td>
-                  <td className="px-4 py-3">{u.mpw}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col">
+                      <span>{u.mpw} Q</span>
+                      {isOnboardingActive(u) && (
+                        <span className="text-xs text-slate-500">адаптация до {formatDate(u.onboarding_until)}</span>
+                      )}
+                      {u.is_new_employee && !isOnboardingActive(u) && (
+                        <span className="text-xs text-slate-500">адаптация завершена</span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-4 py-3">
                     <span
                       className={cn(
@@ -230,7 +246,14 @@ export function AdminUsersPage() {
                       {Number(u.quality_score).toFixed(0)}%
                     </span>
                   </td>
-                  <td className="px-4 py-3">{u.is_active ? 'Активен' : 'Неактивен'}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      <span>{u.is_active ? 'Активен' : 'Неактивен'}</span>
+                      {isOnboardingActive(u) && (
+                        <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">Новый</span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <button

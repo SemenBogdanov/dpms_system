@@ -8,6 +8,7 @@ export type UserFormPayload = {
   role: User['role']
   league: User['league']
   mpw: number
+  is_new_employee: boolean
   password?: string
 }
 
@@ -35,6 +36,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
   const [role, setRole] = useState<User['role']>('executor')
   const [league, setLeague] = useState<User['league']>('C')
   const [mpw, setMpw] = useState(60)
+  const [isNewEmployee, setIsNewEmployee] = useState(false)
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
@@ -48,6 +50,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setRole(initial.role)
       setLeague(initial.league)
       setMpw(initial.mpw)
+      setIsNewEmployee(Boolean(initial.is_new_employee))
       setPassword('')
     } else {
       setFullName('')
@@ -55,6 +58,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setRole('executor')
       setLeague('C')
       setMpw(60)
+      setIsNewEmployee(false)
       setPassword('')
     }
   }, [open, mode, initial])
@@ -91,6 +95,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
         role,
         league,
         mpw,
+        is_new_employee: isNewEmployee,
         ...(mode === 'create' ? { password } : undefined),
       })
       onClose()
@@ -159,6 +164,18 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
             onChange={(e) => setMpw(Number(e.target.value) || 0)}
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
           />
+          <label className="flex items-start gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={isNewEmployee}
+              onChange={(e) => setIsNewEmployee(e.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-slate-300"
+            />
+            <span>
+              <span className="block font-medium text-slate-800">Новый сотрудник</span>
+              <span className="block text-xs text-slate-500">План считается с адаптацией: 50% на первые 3 месяца и пропорционально оставшимся рабочим дням месяца.</span>
+            </span>
+          </label>
           {mode === 'create' && (
             <>
               <label className="block text-sm font-medium text-slate-700">Пароль * (мин. 6 символов)</label>

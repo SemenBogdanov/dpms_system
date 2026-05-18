@@ -16,6 +16,7 @@ class UserBase(BaseModel):
     role: UserRole
     mpw: int = Field(..., ge=0)
     wip_limit: int = Field(default=2, ge=1)
+    is_new_employee: bool = False
     is_active: bool = True
 
 
@@ -27,6 +28,7 @@ class UserCreate(BaseModel):
     league: League = League.C
     mpw: int = Field(60, gt=0)
     password: str = Field(..., min_length=6)
+    is_new_employee: bool = False
 
 
 class UserUpdate(BaseModel):
@@ -37,6 +39,7 @@ class UserUpdate(BaseModel):
     league: League | None = None
     mpw: int | None = Field(None, gt=0)
     is_active: bool | None = None
+    is_new_employee: bool | None = None
 
 
 class UserRead(UserBase):
@@ -46,6 +49,9 @@ class UserRead(UserBase):
     wallet_karma: float = 0
     quality_score: float = 100.0
     needs_password_change: bool = False
+    plan_started_at: datetime | None = None
+    onboarding_started_at: datetime | None = None
+    onboarding_until: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

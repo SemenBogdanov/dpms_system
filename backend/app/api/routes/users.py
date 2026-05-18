@@ -1,4 +1,5 @@
 """API пользователей."""
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -12,6 +13,7 @@ from app.schemas.dashboard import UserProgress, RunRate
 from app.schemas.transaction import QTransactionRead
 from app.schemas.leagues import LeagueProgress
 from app.services.analytics import get_user_progress, get_run_rate
+from app.services.planning import add_months
 from app.services.leagues import get_league_progress as get_league_progress_svc
 
 router = APIRouter()
@@ -65,6 +67,8 @@ async def create_user(
     existing = await db.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Пользователь с таким email уже существует")
+    now = datetime.now(timezone.utc)
+    onboarding_until = add_months(now, 3) if body.is_new_employee else None
     user = User(
         full_name=body.full_name,
         email=body.email,
@@ -73,6 +77,10 @@ async def create_user(
         mpw=body.mpw,
         wip_limit=2,
         is_active=True,
+        is_new_employee=body.is_new_employee,
+        plan_started_at=now,
+        onboarding_started_at=now if body.is_new_employee else None,
+        onboarding_until=onboarding_until,
         password_hash=get_password_hash(body.password),
     )
     db.add(user)
@@ -108,6 +116,20 @@ async def update_user(
         user.mpw = body.mpw
     if body.is_active is not None:
         user.is_active = body.is_active
+    if body.is_new_employee is not None:
+        now = datetime.now(timezone.utc)
+        if body.is_new_employee:
+            if not user.is_new_employee or user.onboarding_started_at is None:
+                user.plan_started_at = now
+                user.onboarding_started_at = now
+                user.onboarding_until = add_months(now, 3)
+            elif user.onboarding_until is None:
+                user.onboarding_until = add_months(user.onboarding_started_at, 3)
+            user.is_new_employee = True
+        else:
+            user.is_new_employee = False
+            user.onboarding_started_at = None
+            user.onboarding_until = None
     await db.flush()
     await db.refresh(user)
     return user

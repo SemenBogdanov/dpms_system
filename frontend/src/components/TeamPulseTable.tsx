@@ -32,7 +32,9 @@ export function TeamPulseTable({ members }: TeamPulseTableProps) {
           </tr>
         </thead>
         <tbody>
-          {sorted.map((m) => (
+          {sorted.map((m) => {
+            const targetAdjusted = Math.abs(Number(m.effective_mpw) - Number(m.mpw)) > 0.05
+            return (
             <tr
               key={m.id}
               onClick={() => navigate(`/profile?user_id=${m.id}`)}
@@ -44,7 +46,10 @@ export function TeamPulseTable({ members }: TeamPulseTableProps) {
               <td className="px-4 py-2">
                 <LeagueBadge league={m.league as 'C' | 'B' | 'A'} />
               </td>
-              <td className="px-4 py-2 text-slate-600 whitespace-nowrap min-w-[44px]">{m.mpw}</td>
+              <td className="px-4 py-2 text-slate-600 whitespace-nowrap min-w-[64px]">
+                <span>{Number(m.effective_mpw).toFixed(1)}</span>
+                {targetAdjusted && <span className="block text-xs text-slate-400">из {m.mpw}</span>}
+              </td>
               <td className="px-4 py-2 text-slate-600 whitespace-nowrap">{Number(m.earned).toFixed(1)}</td>
               <td className="px-4 py-2 w-24">
                 <ProgressBar percent={m.percent} variant="risk" />
@@ -71,9 +76,11 @@ export function TeamPulseTable({ members }: TeamPulseTableProps) {
                 {m.has_overdue && <span title="Есть просроченные задачи">🔴</span>}
                 {!m.has_overdue && m.is_at_risk && <span title="Отстаёт от темпа">⚠️</span>}
                 {!m.has_overdue && !m.is_at_risk && m.percent >= 100 && <span>✅</span>}
+                {m.onboarding_active && <span title="Адаптационный план" className="ml-1 rounded bg-blue-50 px-1.5 py-0.5 text-xs text-blue-700">Новый</span>}
               </td>
             </tr>
-          ))}
+            )
+          })}
         </tbody>
       </table>
     </div>

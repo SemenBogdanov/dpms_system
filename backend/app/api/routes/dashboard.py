@@ -20,6 +20,7 @@ from app.services.analytics import (
 from app.services.calibration import get_teamlead_accuracy
 from app.services.queue import check_overdue_tasks, check_stale_tasks
 from app.services.focus import auto_pause_stale_focuses, get_focus_statuses
+from app.services.planning import effective_plan_for_user
 from app.models.task import Task, TaskStatus
 from app.models.catalog import CatalogItem
 
@@ -88,10 +89,11 @@ async def capacity_history(
     """
     now = datetime.now(timezone.utc)
 
-    cap_result = await db.execute(
-        select(func.sum(User.mpw)).where(User.is_active.is_(True), User.mpw > 0)
+    users_result = await db.execute(select(User).where(User.is_active.is_(True), User.mpw > 0))
+    active_users = list(users_result.scalars().all())
+    total_capacity = float(
+        sum((effective_plan_for_user(active_user, now).effective_target for active_user in active_users), 0)
     )
-    total_capacity = float(cap_result.scalar() or 0)
 
     month_names = {
         1: "янв", 2: "фев", 3: "мар", 4: "апр", 5: "май", 6: "июн",

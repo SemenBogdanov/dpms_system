@@ -31,6 +31,10 @@ export interface User {
   quality_score: number
   is_active: boolean
   needs_password_change: boolean
+  is_new_employee: boolean
+  plan_started_at: string | null
+  onboarding_started_at: string | null
+  onboarding_until: string | null
   created_at: string
   updated_at: string
 }
@@ -230,8 +234,14 @@ export interface CapacityHistoryResponse {
 export interface UserProgress {
   earned: number
   target: number
+  full_target: number
   percent: number
   karma: number
+  is_new_employee: boolean
+  onboarding_active: boolean
+  onboarding_until: string | null
+  plan_started_at: string | null
+  adjustment_reasons: string[]
 }
 
 export interface TeamMemberSummary {
@@ -239,6 +249,7 @@ export interface TeamMemberSummary {
   full_name: string
   league: string
   mpw: number
+  effective_mpw: number
   earned: number
   percent: number
   karma: number
@@ -246,6 +257,10 @@ export interface TeamMemberSummary {
   is_at_risk: boolean
   quality_score: number
   has_overdue: boolean
+  is_new_employee: boolean
+  onboarding_active: boolean
+  onboarding_until: string | null
+  adjustment_reasons: string[]
 }
 
 export interface TeamSummary {
@@ -531,6 +546,7 @@ export interface RunRate {
   rate_daily: number
   projected: number
   mpw: number
+  full_mpw: number
   run_rate_percent: number
   required_rate: number | null
   status: RunRateStatus
@@ -538,6 +554,9 @@ export interface RunRate {
   days_total: number
   days_remaining: number
   earned: number
+  is_new_employee: boolean
+  onboarding_active: boolean
+  onboarding_until: string | null
 }
 
 /** Позиция в запросе калькулятора */

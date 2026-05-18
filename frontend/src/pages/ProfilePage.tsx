@@ -114,6 +114,9 @@ export function ProfilePage() {
   if (loading && !user) return <SkeletonCard />
 
   const progressPercent = progress ? progress.percent : 0
+  const progressTarget = progress?.target ?? user?.mpw ?? 0
+  const fullTarget = progress?.full_target ?? user?.mpw ?? progressTarget
+  const targetAdjusted = Math.abs(Number(fullTarget) - Number(progressTarget)) > 0.05
   const progressColor =
     progressPercent < 50 ? 'bg-red-500' : progressPercent < 80 ? 'bg-amber-500' : 'bg-emerald-500'
   const shownTransactions = transactions.slice(0, transLimit)
@@ -162,16 +165,19 @@ export function ProfilePage() {
               <div>
                 <p className="text-sm font-medium text-slate-700">Main Wallet</p>
                 <p className="text-sm text-slate-600 whitespace-nowrap">
-                  {Number(user.wallet_main).toFixed(1)} / {user.mpw} Q
+                  {Number(user.wallet_main).toFixed(1)} / {Number(progressTarget).toFixed(1)} Q
                 </p>
                 <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-200">
                   <div
                     className={cn('h-full transition-all', progressColor)}
                     style={{
-                      width: `${Math.min(100, (user.mpw > 0 ? (user.wallet_main / user.mpw) * 100 : 0))}%`,
+                      width: `${Math.min(100, progressPercent)}%`,
                     }}
                   />
                 </div>
+                {targetAdjusted && (
+                  <p className="mt-1 text-xs text-slate-500">Полный план: {Number(fullTarget).toFixed(1)} Q</p>
+                )}
               </div>
               <div>
                 <p className="text-sm font-medium text-slate-700">Karma Wallet</p>
