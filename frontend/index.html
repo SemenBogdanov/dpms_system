@@ -8,10 +8,11 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>" />
     <script>
       try {
-        var theme = localStorage.getItem('dpms-theme') === 'dark' ? 'dark' : 'light'
+        var storedTheme = localStorage.getItem('dpms-theme')
+        var theme = storedTheme === 'dark' || storedTheme === 'rose' ? storedTheme : 'light'
         document.documentElement.dataset.theme = theme
         document.documentElement.classList.toggle('dark', theme === 'dark')
-        document.documentElement.style.colorScheme = theme
+        document.documentElement.style.colorScheme = theme === 'dark' ? 'dark' : 'light'
       } catch (error) {
         document.documentElement.dataset.theme = 'light'
       }

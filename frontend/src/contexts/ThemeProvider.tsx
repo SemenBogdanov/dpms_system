@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   THEME_STORAGE_KEY,
+  THEME_MODES,
   ThemeContext,
   applyTheme,
   readStoredTheme,
@@ -21,7 +22,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const toggleTheme = useCallback(() => {
-    setThemeState((current) => (current === 'dark' ? 'light' : 'dark'))
+    setThemeState((current) => {
+      const index = THEME_MODES.indexOf(current)
+      return THEME_MODES[(index + 1) % THEME_MODES.length]
+    })
   }, [])
 
   const value = useMemo(() => ({ theme, setTheme, toggleTheme }), [theme, setTheme, toggleTheme])

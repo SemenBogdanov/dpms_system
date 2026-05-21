@@ -1,6 +1,8 @@
 import { createContext, useContext } from 'react'
 
-export type ThemeMode = 'light' | 'dark'
+export type ThemeMode = 'light' | 'dark' | 'rose'
+
+export const THEME_MODES: ThemeMode[] = ['light', 'dark', 'rose']
 
 export const THEME_STORAGE_KEY = 'dpms-theme'
 
@@ -15,14 +17,14 @@ export const ThemeContext = createContext<ThemeContextValue | undefined>(undefin
 export function readStoredTheme(): ThemeMode {
   if (typeof window === 'undefined') return 'light'
   const stored = window.localStorage.getItem(THEME_STORAGE_KEY)
-  return stored === 'dark' ? 'dark' : 'light'
+  return stored === 'dark' || stored === 'rose' ? stored : 'light'
 }
 
 export function applyTheme(theme: ThemeMode) {
   const root = document.documentElement
   root.dataset.theme = theme
   root.classList.toggle('dark', theme === 'dark')
-  root.style.colorScheme = theme
+  root.style.colorScheme = theme === 'dark' ? 'dark' : 'light'
 }
 
 export function useTheme() {
