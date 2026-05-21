@@ -71,7 +71,7 @@ export function Sidebar() {
         )}
       >
         <div className="flex items-center justify-center px-4 py-5 border-b border-gray-100">
-          <img src="/logo_prosto_sdelal.png" alt="Просто Сделал" className="h-9" />
+          <img src="/logo_prosto_sdelal.svg" alt="Просто Сделал" className="app-logo h-9" />
         </div>
         {user && (
           <div className="border-b border-gray-100 px-4 py-3">

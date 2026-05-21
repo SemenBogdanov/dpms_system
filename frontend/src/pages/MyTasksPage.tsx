@@ -351,7 +351,7 @@ export function MyTasksPage() {
               const isNewAssigned = !t.is_focused && (t.active_seconds ?? 0) === 0
 
               const borderClass = isFocused
-                ? 'border-emerald-300 bg-emerald-50/30'
+                ? 'focused-task-shell'
                 : hasActive
                   ? 'border-amber-200 bg-amber-50/20'
                   : 'border-slate-200 bg-white'
@@ -408,7 +408,11 @@ export function MyTasksPage() {
                     </div>
                   </div>
 
-                  <TaskCard task={t} onOpenDetail={setDetailTask} className="border-0 p-0 shadow-none" />
+                  <TaskCard
+                    task={t}
+                    onOpenDetail={setDetailTask}
+                    className={`${isFocused ? 'focused-task-inner' : ''} border-0 p-0 shadow-none`}
+                  />
 
                   {isTeamleadOrAdmin && (
                     <button

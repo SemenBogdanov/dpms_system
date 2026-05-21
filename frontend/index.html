@@ -6,6 +6,16 @@
     <meta name="description" content="DPMS — Digital Production Management System" />
     <title>DPMS</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>" />
+    <script>
+      try {
+        var theme = localStorage.getItem('dpms-theme') === 'dark' ? 'dark' : 'light'
+        document.documentElement.dataset.theme = theme
+        document.documentElement.classList.toggle('dark', theme === 'dark')
+        document.documentElement.style.colorScheme = theme
+      } catch (error) {
+        document.documentElement.dataset.theme = 'light'
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

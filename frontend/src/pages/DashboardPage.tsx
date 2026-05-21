@@ -167,8 +167,8 @@ export function DashboardPage() {
 
       {/* Строка 4 — просроченные (только teamlead/admin) */}
       {isTeamleadOrAdmin && overdueTasks.length > 0 && (
-        <div className="rounded-xl border border-red-200 bg-red-50/50 p-4 shadow-sm">
-          <h2 className="mb-2 font-medium text-red-800">
+        <div className="overdue-panel rounded-xl border-2 border-red-300 bg-white p-4 shadow-sm">
+          <h2 className="overdue-panel-title mb-2 font-medium text-red-700">
             ⚠️ Просроченные задачи ({overdueTasks.length})
           </h2>
           <ul className="space-y-1">
@@ -177,7 +177,7 @@ export function DashboardPage() {
                 <button
                   type="button"
                   onClick={() => setDetailTask(t)}
-                  className="text-left text-sm text-red-800 hover:underline"
+                  className="overdue-panel-item text-left text-sm font-medium text-red-700 hover:underline"
                 >
                   🔴 #{t.task_number} «{t.title}» — {users.find((u) => u.id === t.assignee_id)?.full_name ?? '—'} — просрочено
                 </button>

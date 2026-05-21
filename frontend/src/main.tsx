@@ -1,20 +1,24 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { Toaster } from 'react-hot-toast'
 import { BrowserRouter } from 'react-router-dom'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
+import { ThemedToaster } from '@/components/ThemedToaster'
 import { AuthProvider } from '@/contexts/AuthContext'
+import { ThemeProvider } from '@/contexts/ThemeProvider'
 import App from './App'
+import '@fontsource-variable/victor-mono'
 import './index.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
       <BrowserRouter>
-        <AuthProvider>
-          <App />
-          <Toaster position="top-right" />
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <App />
+            <ThemedToaster />
+          </AuthProvider>
+        </ThemeProvider>
       </BrowserRouter>
     </ErrorBoundary>
   </React.StrictMode>

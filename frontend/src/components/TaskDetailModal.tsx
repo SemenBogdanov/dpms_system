@@ -215,7 +215,7 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
             </div>
             {task.due_date && (
               <div className="mt-2">
-                Дедлайн: <DeadlineBadge dueDate={task.due_date} zone={task.deadline_zone ?? null} />
+                Дедлайн: <DeadlineBadge dueDate={task.due_date} zone={task.deadline_zone ?? null} status={task.status} />
               </div>
             )}
             {task.rejection_count > 0 && (

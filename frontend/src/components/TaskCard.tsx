@@ -41,6 +41,11 @@ function daysSince(dateStr: string | null): number | null {
   return Math.floor((now.getTime() - d.getTime()) / (24 * 60 * 60 * 1000))
 }
 
+function wasCompletedLate(task: Task): boolean {
+  if (task.status !== 'done' || !task.completed_at || !task.due_date) return false
+  return new Date(task.completed_at).getTime() > new Date(task.due_date).getTime()
+}
+
 export function TaskCard({
   task,
   onPull,
@@ -67,6 +72,7 @@ export function TaskCard({
   const isBusy = busyTaskId === task.id
   const validateDisabled = Boolean(isBusy || isSelfTask)
   const days = daysSince(task.started_at)
+  const completedLate = wasCompletedLate(task)
   const briefStars = task.brief_rating
     ? '★'.repeat(task.brief_rating) + '☆'.repeat(5 - task.brief_rating)
     : null
@@ -84,6 +90,13 @@ export function TaskCard({
             <span className="shrink-0 font-mono text-xs font-semibold text-slate-400">
               #{task.task_number}
             </span>
+            {completedLate && (
+              <span
+                className="h-2 w-2 shrink-0 rounded-full bg-red-500 ring-2 ring-red-100"
+                title="Завершена с просрочкой"
+                aria-label="Завершена с просрочкой"
+              />
+            )}
             {onOpenDetail ? (
               <button
                 type="button"
@@ -109,7 +122,7 @@ export function TaskCard({
             {days != null && (
               <span className="text-xs text-slate-400">· {days} д. в работе</span>
             )}
-            <DeadlineBadge dueDate={task.due_date} zone={task.deadline_zone} />
+            <DeadlineBadge dueDate={task.due_date} zone={task.deadline_zone} status={task.status} />
             {task.rejection_count > 0 && (
               <span
                 className={cn(

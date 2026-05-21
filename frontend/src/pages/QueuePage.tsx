@@ -21,6 +21,8 @@ const complexityStyles: Record<string, string> = {
   XL: 'bg-red-50 text-red-500',
 }
 
+const QUEUE_PAGE_SIZE = 50
+
 function formatQueueDuration(hours: number | undefined): string {
   const totalMinutes = Math.max(0, Math.round((hours ?? 0) * 60))
   if (totalMinutes < 60) return `${totalMinutes} мин`
@@ -42,6 +44,24 @@ function formatQueueDuration(hours: number | undefined): string {
   return daysRest > 0 ? `${weeks} нед ${daysRest} д` : `${weeks} нед`
 }
 
+function formatCreatedDate(value: string): string {
+  return new Date(value).toLocaleDateString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  })
+}
+
+function formatCreatedDateTitle(value: string): string {
+  return `Дата постановки: ${new Date(value).toLocaleString('ru', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`
+}
+
 type RowItem = (QueueTaskResponse & { status?: TaskStatus }) | Task
 
 export function QueuePage() {
@@ -59,6 +79,7 @@ export function QueuePage() {
   const [includeArchived, setIncludeArchived] = useState(false)
   const [allTasks, setAllTasks] = useState<Task[]>([])
   const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [page, setPage] = useState(1)
   const [sortField, setSortField] = useState<'title' | 'estimated_q' | 'priority' | 'due_date' | 'status'>('priority')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [bugfixParent, setBugfixParent] = useState<Task | null>(null)
@@ -177,6 +198,17 @@ export function QueuePage() {
     }
     return new Date((a as QueueTaskResponse).created_at ?? (a as Task).created_at).getTime() - new Date((b as QueueTaskResponse).created_at ?? (b as Task).created_at).getTime()
   })
+
+  useEffect(() => {
+    setPage(1)
+  }, [searchQuery, activeTag, includeArchived, sortField, sortDir, tasks.length, allTasks.length])
+
+  const totalTasks = sortedTasks.length
+  const totalPages = Math.max(1, Math.ceil(totalTasks / QUEUE_PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const pageStart = totalTasks === 0 ? 0 : (currentPage - 1) * QUEUE_PAGE_SIZE + 1
+  const pageEnd = Math.min(currentPage * QUEUE_PAGE_SIZE, totalTasks)
+  const pageTasks = sortedTasks.slice((currentPage - 1) * QUEUE_PAGE_SIZE, currentPage * QUEUE_PAGE_SIZE)
 
   const handleSort = (field: typeof sortField) => {
     if (sortField === field) {
@@ -323,6 +355,16 @@ export function QueuePage() {
     return (t as QueueTaskResponse).is_proactive === true || (t as Task).task_type === 'proactive'
   }
 
+  const hasTaskMeta = (t: RowItem): boolean =>
+    taskType(t) === 'bugfix' ||
+    isProactive(t) ||
+    ((t as Task).rejection_count ?? 0) > 0 ||
+    (t as QueueTaskResponse).is_stale === true ||
+    (!(t as QueueTaskResponse).is_stale && ((t as QueueTaskResponse).hours_in_queue ?? 0) > 24) ||
+    (t as QueueTaskResponse).recommended === true ||
+    taskTags(t).length > 0 ||
+    Boolean((t as QueueTaskResponse).assigned_by_name)
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -423,6 +465,7 @@ export function QueuePage() {
               : 'Нет задач'}
         </div>
       ) : (
+        <>
         <div className="overflow-x-auto rounded-2xl border border-gray-100 bg-white">
           <table className="min-w-full divide-y divide-gray-100">
             <thead className="bg-gray-50/50">
@@ -445,16 +488,16 @@ export function QueuePage() {
                   Приоритет {sortField === 'priority' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-600">Мин. лига</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600">Дата</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600">Дата постановки</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-600">Действие</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-50">
+            <tbody>
               {(() => {
                 let lastPriority: string | null = null
                 let proactiveSectionShown = false
                 const rows: Array<{ type: 'section'; priority: string } | { type: 'task'; task: RowItem }> = []
-                sortedTasks.forEach((t) => {
+                pageTasks.forEach((t) => {
                   const isProact = isProactive(t as RowItem)
                   // Разделитель «Проактивные» перед первой проактивной задачей
                   if (isProact && !proactiveSectionShown) {
@@ -473,7 +516,7 @@ export function QueuePage() {
                 })
                 return rows.map((row, idx) =>
                   row.type === 'section' ? (
-                    <tr key={`section-${row.priority}-${idx}`} className="bg-gray-50/50">
+                    <tr key={`section-${row.priority}-${idx}`} className="queue-priority-section bg-gray-50/50">
                       <td colSpan={10} className="px-4 py-2 text-xs font-medium text-gray-400 tracking-wide uppercase">
                         {priorityLabels[row.priority] ?? row.priority}
                       </td>
@@ -481,66 +524,68 @@ export function QueuePage() {
                   ) : (
                     <tr
                       key={(row.task as Task).id}
-                      className={`${locked(row.task) ? 'opacity-60' : ''} ${taskType(row.task) === 'bugfix' ? 'border-l-3 border-red-300 bg-red-50/30' : ''}`}
+                      className={`queue-task-row ${locked(row.task) ? 'opacity-60' : ''} ${taskType(row.task) === 'bugfix' ? 'border-l-3 border-red-300 bg-red-50/30' : ''}`}
                     >
                       <td className="px-4 py-3 text-sm text-gray-700">
-                    <div className="flex min-w-0 items-start gap-2">
-                      <span className="shrink-0 font-mono text-xs font-semibold text-gray-400">
-                        #{row.task.task_number}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => openDetail(row.task.id)}
-                        className="min-w-0 cursor-pointer text-left font-medium text-gray-700 transition-colors hover:text-accent-dark"
-                      >
-                        {row.task.title}
-                      </button>
-                    </div>
-                    {taskType(row.task) === 'bugfix' && (
-                      <span className="ml-2 inline rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-500">
-                        Гарантийный
-                      </span>
-                    )}
-                    {isProactive(row.task) && (
-                      <span className="ml-2 inline rounded-full bg-accent-lighter px-2.5 py-0.5 text-xs font-medium text-accent-dark">
-                        Проактивная
-                      </span>
-                    )}
-                    {taskTags(row.task).length > 0 && (
-                      <div className="mt-0.5 flex flex-wrap gap-1">
-                        {taskTags(row.task).map((tag) => (
-                          <span key={tag} className="inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {(row.task as Task).rejection_count > 0 && (
-                      <span className="ml-2 inline rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-500">
-                        ↩ {(row.task as Task).rejection_count}
-                      </span>
-                    )}
-                    {(row.task as QueueTaskResponse).is_stale && (
-                      <span className="ml-2 inline rounded-full bg-orange-50 px-2.5 py-0.5 text-xs font-medium text-orange-500">
-                        Застряла {formatQueueDuration((row.task as QueueTaskResponse).hours_in_queue)}
-                      </span>
-                    )}
-                    {!(row.task as QueueTaskResponse).is_stale && ((row.task as QueueTaskResponse).hours_in_queue ?? 0) > 24 && (
-                      <span className="ml-2 inline rounded-full bg-gray-50 px-2.5 py-0.5 text-xs font-medium text-gray-400">
-                        {formatQueueDuration((row.task as QueueTaskResponse).hours_in_queue)} в очереди
-                      </span>
-                    )}
-                    {(row.task as QueueTaskResponse).recommended && (
-                      <span className="ml-2 inline rounded-full bg-accent-lighter px-2.5 py-0.5 text-xs font-medium text-accent-dark">
-                        Рекомендуем
-                      </span>
-                    )}
-                    {(row.task as QueueTaskResponse).assigned_by_name && (
-                      <span className="ml-2 text-xs text-gray-500">
-                        Назначил: {(row.task as QueueTaskResponse).assigned_by_name}
-                      </span>
-                    )}
-                  </td>
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className="shrink-0 font-mono text-xs font-semibold leading-5 text-gray-400">
+                              #{row.task.task_number}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => openDetail(row.task.id)}
+                              className="min-w-0 flex-1 cursor-pointer truncate text-left font-medium leading-5 text-gray-700 transition-colors hover:text-accent-dark"
+                            >
+                              {row.task.title}
+                            </button>
+                          </div>
+                          {hasTaskMeta(row.task) && (
+                            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                              {taskType(row.task) === 'bugfix' && (
+                                <span className="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium leading-5 text-red-500">
+                                  Гарантийный
+                                </span>
+                              )}
+                              {isProactive(row.task) && (
+                                <span className="inline-flex items-center rounded-full bg-accent-lighter px-2.5 py-0.5 text-xs font-medium leading-5 text-accent-dark">
+                                  Проактивная
+                                </span>
+                              )}
+                              {(row.task as Task).rejection_count > 0 && (
+                                <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium leading-5 text-amber-500">
+                                  ↩ {(row.task as Task).rejection_count}
+                                </span>
+                              )}
+                              {(row.task as QueueTaskResponse).is_stale && (
+                                <span className="inline-flex items-center rounded-full bg-orange-50 px-2.5 py-0.5 text-xs font-medium leading-5 text-orange-500">
+                                  Застряла {formatQueueDuration((row.task as QueueTaskResponse).hours_in_queue)}
+                                </span>
+                              )}
+                              {!(row.task as QueueTaskResponse).is_stale && ((row.task as QueueTaskResponse).hours_in_queue ?? 0) > 24 && (
+                                <span className="inline-flex items-center rounded-full bg-gray-50 px-2.5 py-0.5 text-xs font-medium leading-5 text-gray-400">
+                                  {formatQueueDuration((row.task as QueueTaskResponse).hours_in_queue)} в очереди
+                                </span>
+                              )}
+                              {(row.task as QueueTaskResponse).recommended && (
+                                <span className="inline-flex items-center rounded-full bg-accent-lighter px-2.5 py-0.5 text-xs font-medium leading-5 text-accent-dark">
+                                  Рекомендуем
+                                </span>
+                              )}
+                              {taskTags(row.task).map((tag) => (
+                                <span key={tag} className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs leading-5 text-gray-600">
+                                  {tag}
+                                </span>
+                              ))}
+                              {(row.task as QueueTaskResponse).assigned_by_name && (
+                                <span className="text-xs leading-5 text-gray-500">
+                                  Назначил: {(row.task as QueueTaskResponse).assigned_by_name}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </td>
                   <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
                     {taskStatus(row.task) === 'in_queue' && 'В очереди'}
                     {taskStatus(row.task) === 'in_progress' && 'В работе'}
@@ -561,21 +606,14 @@ export function QueuePage() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-col items-start gap-0.5">
-                      <DeadlineBadge
-                        dueDate={(row.task as QueueTaskResponse).due_date ?? (row.task as Task).due_date}
-                        zone={(row.task as QueueTaskResponse).deadline_zone ?? (row.task as Task).deadline_zone}
-                      />
-                      {((row.task as QueueTaskResponse).due_date ?? (row.task as Task).due_date) && (
-                        <span className="whitespace-nowrap text-xs text-gray-500">
-                          {new Date(((row.task as QueueTaskResponse).due_date ?? (row.task as Task).due_date)!).toLocaleDateString('ru', {
-                            day: 'numeric',
-                            month: 'short',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </span>
-                      )}
-                      {!((row.task as QueueTaskResponse).due_date ?? (row.task as Task).due_date) && (
+                      {((row.task as QueueTaskResponse).due_date ?? (row.task as Task).due_date) ? (
+                        <DeadlineBadge
+                          dueDate={(row.task as QueueTaskResponse).due_date ?? (row.task as Task).due_date}
+                          zone={(row.task as QueueTaskResponse).deadline_zone ?? (row.task as Task).deadline_zone}
+                          status={taskStatus(row.task)}
+                          showLabel={false}
+                        />
+                      ) : (
                         <span className="text-xs text-gray-400">—</span>
                       )}
                     </div>
@@ -586,8 +624,13 @@ export function QueuePage() {
                   <td className="px-4 py-3 whitespace-nowrap">
                     <LeagueBadge league={(row.task as QueueTaskResponse).min_league ?? (row.task as Task).min_league} />
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-500">
-                    {new Date((row.task as QueueTaskResponse).created_at ?? (row.task as Task).created_at).toLocaleDateString('ru')}
+                  <td
+                    className="whitespace-nowrap px-4 py-3"
+                    title={formatCreatedDateTitle((row.task as QueueTaskResponse).created_at ?? (row.task as Task).created_at)}
+                  >
+                    <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+                      {formatCreatedDate((row.task as QueueTaskResponse).created_at ?? (row.task as Task).created_at)}
+                    </span>
                   </td>
 	                  <td className="px-4 py-3 text-right">
 	                    <div className="flex items-center justify-end gap-2 whitespace-nowrap">
@@ -652,6 +695,35 @@ export function QueuePage() {
             </tbody>
           </table>
         </div>
+        {totalTasks > QUEUE_PAGE_SIZE && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-gray-100 bg-white px-4 py-3 text-sm text-gray-600">
+            <span>
+              {pageStart}-{pageEnd} из {totalTasks} задач
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Назад
+              </button>
+              <span className="whitespace-nowrap text-xs text-gray-500">
+                Страница {currentPage} из {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                disabled={currentPage === totalPages}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Вперёд
+              </button>
+            </div>
+          </div>
+        )}
+        </>
       )}
 
       <TaskImportModal
