@@ -39,7 +39,7 @@ export function TeamPulseTable({ members }: TeamPulseTableProps) {
               key={m.id}
               onClick={() => navigate(`/profile?user_id=${m.id}`)}
               className={`border-b border-slate-100 transition-colors hover:bg-slate-50 cursor-pointer ${
-                m.is_at_risk ? 'bg-red-50' : m.percent >= 100 ? 'bg-green-50' : ''
+                m.is_at_risk ? 'bg-red-50' : m.percent >= 100 ? 'team-pulse-row-complete' : ''
               }`}
             >
               <td className="px-4 py-2 font-medium text-slate-900">{m.full_name}</td>

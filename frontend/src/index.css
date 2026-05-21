@@ -83,6 +83,14 @@ body {
   background-color: hsl(150 68% 96% / 0.72);
 }
 
+.team-pulse-row-complete {
+  background-color: hsl(151 62% 94%);
+}
+
+.team-pulse-row-complete:hover {
+  background-color: hsl(151 62% 91%);
+}
+
 [data-theme='dark'] * {
   scrollbar-color: hsl(220 18% 34%) hsl(222 25% 10%);
 }
@@ -115,6 +123,24 @@ body {
 
 [data-theme='dark'] .focused-task-inner.bg-white {
   background-color: hsl(154 46% 18% / 0.82);
+}
+
+[data-theme='dark'] .team-pulse-row-complete {
+  background-color: hsl(154 42% 17% / 0.96);
+  box-shadow: inset 3px 0 0 hsl(158 64% 52% / 0.9);
+}
+
+[data-theme='dark'] .team-pulse-row-complete:hover {
+  background-color: hsl(154 42% 21% / 0.96);
+}
+
+[data-theme='dark'] .team-pulse-row-complete .text-slate-900,
+[data-theme='dark'] .team-pulse-row-complete .text-slate-800,
+[data-theme='dark'] .team-pulse-row-complete .text-slate-700,
+[data-theme='dark'] .team-pulse-row-complete .text-slate-600,
+[data-theme='dark'] .team-pulse-row-complete .text-slate-500,
+[data-theme='dark'] .team-pulse-row-complete .text-slate-400 {
+  color: hsl(152 35% 86%);
 }
 
 [data-theme='dark'] .overdue-panel-title,
