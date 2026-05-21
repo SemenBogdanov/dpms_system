@@ -48,14 +48,15 @@ export function DashboardPage() {
       setBurndown(bd)
       setTasksInWorkCount((ip?.length ?? 0) + (rv?.length ?? 0))
       setError(null)
-      const history = await api.get<{ weeks: CapacityHistoryPoint[] }>('/api/dashboard/capacity-history').catch(() => ({ weeks: [] }))
+
+      const [history, od, fs] = await Promise.all([
+        api.get<{ weeks: CapacityHistoryPoint[] }>('/api/dashboard/capacity-history').catch(() => ({ weeks: [] })),
+        isTeamleadOrAdmin ? api.get<Task[]>('/api/tasks?is_overdue=true').catch(() => []) : Promise.resolve([]),
+        isTeamleadOrAdmin ? api.get<FocusStatusItem[]>('/api/dashboard/focus-status').catch(() => []) : Promise.resolve([]),
+      ])
       setCapacityHistory(history.weeks ?? [])
       if (currentUser?.role === 'teamlead' || currentUser?.role === 'admin') {
-        const od = await api.get<Task[]>('/api/tasks?is_overdue=true').catch(() => [])
-        setOverdueTasks(od.filter((t) => t.status === 'in_progress' || t.status === 'review'))
-        const fs = await api
-          .get<FocusStatusItem[]>('/api/dashboard/focus-status')
-          .catch(() => [])
+        setOverdueTasks(od.filter((t) => t.status === 'in_queue' || t.status === 'in_progress'))
         setFocusStatuses(fs)
       }
     } catch (e) {
@@ -63,7 +64,7 @@ export function DashboardPage() {
     } finally {
       setLoading(false)
     }
-  }, [currentUser?.role])
+  }, [currentUser?.role, isTeamleadOrAdmin])
 
   useEffect(() => {
     api.get<User[]>('/api/users').then(setUsers).catch(() => setUsers([]))

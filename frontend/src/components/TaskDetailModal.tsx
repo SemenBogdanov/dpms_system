@@ -391,7 +391,7 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
           {/* Баг-фикс к задаче */}
           {task.parent_task_id && (
             <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3 text-sm text-amber-800">
-              🐛 Это баг-фикс к задаче (ID: {task.parent_task_id})
+              🐛 Это баг-фикс к связанной задаче
             </div>
           )}
 

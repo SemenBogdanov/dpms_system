@@ -1,4 +1,5 @@
 """Очередь: список с can_pull/locked, pull (FOR UPDATE), submit, validate."""
+import asyncio
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal
 from uuid import UUID
@@ -19,6 +20,26 @@ from app.services.wallet import credit_q
 _LEAGUE_ORDER = {League.C: 0, League.B: 1, League.A: 2}
 _PRIORITY_ORDER = {TaskPriority.low: 1, TaskPriority.medium: 2, TaskPriority.high: 3, TaskPriority.critical: 4}
 CRITICAL_BLOCK_REASON = "Сначала нужно взять или назначить критическую задачу"
+_MAINTENANCE_INTERVAL = timedelta(seconds=60)
+_maintenance_lock = asyncio.Lock()
+_maintenance_last_run: datetime | None = None
+
+
+async def run_dashboard_maintenance(db: AsyncSession) -> None:
+    """Run expensive queue maintenance at most once per backend process interval."""
+    global _maintenance_last_run
+
+    now = datetime.now(timezone.utc)
+    if _maintenance_last_run and now - _maintenance_last_run < _MAINTENANCE_INTERVAL:
+        return
+
+    async with _maintenance_lock:
+        now = datetime.now(timezone.utc)
+        if _maintenance_last_run and now - _maintenance_last_run < _MAINTENANCE_INTERVAL:
+            return
+        await check_overdue_tasks(db)
+        await check_stale_tasks(db)
+        _maintenance_last_run = datetime.now(timezone.utc)
 
 
 async def _critical_queue_exists(db: AsyncSession, exclude_task_id: UUID | None = None) -> bool:
@@ -562,7 +583,7 @@ async def check_overdue_tasks(db: AsyncSession) -> None:
     if not overdue_tasks:
         return
 
-    from app.services.notifications import create_notification
+    from app.models.notification import Notification
 
     teamleads_result = await db.execute(
         select(User).where(
@@ -576,13 +597,14 @@ async def check_overdue_tasks(db: AsyncSession) -> None:
         task.is_overdue = True
         assignee_name = task.assignee.full_name if getattr(task, "assignee", None) else "—"
         for tl in teamleads:
-            await create_notification(
-                db,
-                tl.id,
-                "task_overdue",
-                "⏰ Задача просрочена",
-                message=f"«{task.title}» просрочена у {assignee_name}",
-                link="/queue",
+            db.add(
+                Notification(
+                    user_id=tl.id,
+                    type="task_overdue",
+                    title="⏰ Задача просрочена",
+                    message=f"«{task.title}» просрочена у {assignee_name}",
+                    link="/queue",
+                )
             )
 
 
@@ -732,8 +754,6 @@ async def check_stale_tasks(db: AsyncSession) -> None:
     if not stale_tasks:
         return
 
-    from app.services.notifications import create_notification
-
     teamleads_result = await db.execute(
         select(User).where(
             User.role.in_([UserRole.teamlead, UserRole.admin]),
@@ -741,24 +761,33 @@ async def check_stale_tasks(db: AsyncSession) -> None:
         )
     )
     teamleads = list(teamleads_result.scalars().all())
+    if not teamleads:
+        return
+
+    links_by_task_id = {task.id: f"/queue?stale={task.id}" for task in stale_tasks}
+    stale_links = list(links_by_task_id.values())
+    recent_result = await db.execute(
+        select(Notification.link).where(
+            Notification.type == "task_stale",
+            Notification.link.in_(stale_links),
+            Notification.created_at >= since_24h,
+        )
+    )
+    recent_links = {link for link in recent_result.scalars().all() if link}
+
     for task in stale_tasks:
         hours = int((now - task.created_at).total_seconds() / 3600)
-        link = f"/queue?stale={task.id}"
-        recent = await db.execute(
-            select(Notification.id).where(
-                Notification.type == "task_stale",
-                Notification.link == link,
-                Notification.created_at >= since_24h,
-            ).limit(1)
-        )
-        if recent.scalar_one_or_none():
+        link = links_by_task_id[task.id]
+        if link in recent_links:
             continue
         for tl in teamleads:
-            await create_notification(
-                db,
-                tl.id,
-                "task_stale",
-                "⏳ Задача в очереди давно",
-                message=f"Задача «{task.title}» в очереди более {hours}ч, никто не берёт",
-                link=link,
+            db.add(
+                Notification(
+                    user_id=tl.id,
+                    type="task_stale",
+                    title="⏳ Задача в очереди давно",
+                    message=f"Задача «{task.title}» в очереди более {hours}ч, никто не берёт",
+                    link=link,
+                )
             )
+    await db.flush()

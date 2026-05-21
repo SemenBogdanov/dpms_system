@@ -18,7 +18,7 @@ from app.services.analytics import (
     get_burndown_data,
 )
 from app.services.calibration import get_teamlead_accuracy
-from app.services.queue import check_overdue_tasks, check_stale_tasks
+from app.services.queue import run_dashboard_maintenance
 from app.services.focus import auto_pause_stale_focuses, get_focus_statuses
 from app.services.planning import effective_plan_for_user
 from app.models.task import Task, TaskStatus
@@ -32,8 +32,7 @@ async def capacity(
     db: AsyncSession = Depends(get_db),
 ):
     """Метрика «Стакан»: загрузка vs ёмкость команды."""
-    await check_overdue_tasks(db)
-    await check_stale_tasks(db)
+    await run_dashboard_maintenance(db)
     return await get_capacity_gauge(db)
 
 
@@ -42,8 +41,7 @@ async def team_summary(
     db: AsyncSession = Depends(get_db),
 ):
     """Сводка по команде (по лигам, earned vs target, in_progress_q, is_at_risk)."""
-    await check_overdue_tasks(db)
-    await check_stale_tasks(db)
+    await run_dashboard_maintenance(db)
     return await get_team_summary(db)
 
 
@@ -52,8 +50,7 @@ async def plan_fact(
     db: AsyncSession = Depends(get_db),
 ):
     """План/факт по сотрудникам (то же что team-summary)."""
-    await check_overdue_tasks(db)
-    await check_stale_tasks(db)
+    await run_dashboard_maintenance(db)
     return await get_team_summary(db)
 
 
@@ -62,8 +59,7 @@ async def period_stats(
     db: AsyncSession = Depends(get_db),
 ):
     """Статистика текущего месяца для дашборда руководителя."""
-    await check_overdue_tasks(db)
-    await check_stale_tasks(db)
+    await run_dashboard_maintenance(db)
     return await get_period_stats(db)
 
 
@@ -72,8 +68,7 @@ async def burndown(
     db: AsyncSession = Depends(get_db),
 ):
     """Данные для графика burn-down текущего месяца."""
-    await check_overdue_tasks(db)
-    await check_stale_tasks(db)
+    await run_dashboard_maintenance(db)
     return await get_burndown_data(db)
 
 
@@ -131,7 +126,7 @@ async def capacity_history(
 
 @router.get("/focus-status", response_model=list[FocusStatus])
 async def focus_status(
-    user: User = Depends(require_role("teamlead")),
+    user: User = Depends(require_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Статусы фокуса всех исполнителей (для дашборда тимлида/админа)."""
