@@ -17,6 +17,7 @@ export type TaskStatus =
   | 'cancelled'
 export type TaskPriority = 'low' | 'medium' | 'high' | 'critical'
 export type KnowledgeStatus = 'draft' | 'published'
+export type AbsenceType = 'vacation' | 'sick_leave' | 'day_off' | 'other'
 
 export interface User {
   id: string
@@ -175,6 +176,32 @@ export interface KnowledgeArticleUpdate {
   sort_order?: number
 }
 
+export interface UserAbsence {
+  id: string
+  user_id: string
+  user_name: string
+  user_email: string
+  start_date: string
+  end_date: string
+  type: AbsenceType
+  affects_plan: boolean
+  comment: string | null
+  source: string
+  working_days: number
+  created_by_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AbsencePayload {
+  user_id: string
+  start_date: string
+  end_date: string
+  type: AbsenceType
+  affects_plan: boolean
+  comment?: string | null
+}
+
 /** Задача в очереди с флагами can_pull, locked */
 export interface QueueTaskResponse {
   id: string
@@ -241,6 +268,8 @@ export interface UserProgress {
   onboarding_active: boolean
   onboarding_until: string | null
   plan_started_at: string | null
+  absence_working_days: number
+  absent_today: boolean
   adjustment_reasons: string[]
 }
 
@@ -260,6 +289,8 @@ export interface TeamMemberSummary {
   is_new_employee: boolean
   onboarding_active: boolean
   onboarding_until: string | null
+  absence_working_days: number
+  absent_today: boolean
   adjustment_reasons: string[]
 }
 
@@ -470,6 +501,75 @@ export interface PeriodReport {
   utilization_percent: number
 }
 
+export interface ActivityEvent {
+  id: string
+  actor_id: string
+  actor_name: string
+  event_type: string
+  task_id: string | null
+  task_number: number | null
+  task_title: string | null
+  metadata: Record<string, unknown> | null
+  occurred_at: string
+}
+
+export interface ActivityEventListResponse {
+  items: ActivityEvent[]
+  total: number
+  limit: number
+}
+
+export interface FocusActivitySummary {
+  total_focus_seconds: number
+  total_focus_hours: number
+  focus_start_count: number
+  focus_pause_count: number
+  focus_auto_pause_count: number
+  focused_tasks_count: number
+  avg_pauses_per_task: number
+}
+
+export interface EmployeeSummaryTask {
+  id: string
+  task_number: number
+  title: string
+  status: TaskStatus
+  priority: TaskPriority
+  task_type: TaskType
+  estimated_q: number
+  started_at: string | null
+  completed_at: string | null
+  validated_at: string | null
+  active_seconds: number
+  focus_sessions: number
+  pause_count: number
+  auto_pause_count: number
+  result_url: string | null
+}
+
+export interface EmployeePeriodSummary {
+  user_id: string
+  full_name: string
+  role: UserRole
+  league: League
+  start_date: string
+  end_date: string
+  plan_q: number
+  completed_q: number
+  efficiency_percent: number
+  completed_tasks_count: number
+  in_progress_tasks_count: number
+  review_tasks_count: number
+  rejected_tasks_count: number
+  absence_working_days: number
+  focus: FocusActivitySummary
+  completed_tasks: EmployeeSummaryTask[]
+  in_progress_tasks: EmployeeSummaryTask[]
+  review_tasks: EmployeeSummaryTask[]
+  rejected_tasks: EmployeeSummaryTask[]
+  recent_activity: ActivityEvent[]
+}
+
 export interface TaskExportRow {
   title: string
   category: string
@@ -557,6 +657,8 @@ export interface RunRate {
   is_new_employee: boolean
   onboarding_active: boolean
   onboarding_until: string | null
+  absence_working_days: number
+  absent_today: boolean
 }
 
 /** Позиция в запросе калькулятора */

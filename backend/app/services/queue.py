@@ -15,6 +15,7 @@ from app.models.transaction import QTransaction, WalletType
 from app.schemas.queue import QueueTaskResponse
 from app.schemas.task import compute_deadline_zone
 from app.services.focus import add_bounded_focus_time
+from app.services.activity import record_activity_event
 from app.services.wallet import credit_q
 
 _LEAGUE_ORDER = {League.C: 0, League.B: 1, League.A: 2}
@@ -254,9 +255,37 @@ async def pull_task(db: AsyncSession, user_id: UUID, task_id: UUID) -> Task:
     )
     current_focus = current_focus_result.scalar_one_or_none()
     if current_focus and current_focus.focus_started_at is not None:
-        add_bounded_focus_time(current_focus, now)
+        added = add_bounded_focus_time(current_focus, now)
+        await record_activity_event(
+            db,
+            user_id,
+            "focus_auto_pause",
+            task_id=current_focus.id,
+            metadata={
+                "reason": "pulled_another_task",
+                "added_seconds": added,
+                "active_seconds": current_focus.active_seconds,
+            },
+            occurred_at=now,
+        )
 
     task.focus_started_at = now
+    await record_activity_event(
+        db,
+        user_id,
+        "task_pulled",
+        task_id=task.id,
+        metadata={"priority": task.priority.value, "estimated_q": float(task.estimated_q)},
+        occurred_at=now,
+    )
+    await record_activity_event(
+        db,
+        user_id,
+        "focus_start",
+        task_id=task.id,
+        metadata={"source": "auto_on_pull", "active_seconds": task.active_seconds},
+        occurred_at=now,
+    )
 
     await db.flush()
     return task
@@ -283,11 +312,20 @@ async def submit_for_review(
     if brief_rating is None:
         raise HTTPException(status_code=400, detail="Оценка постановки задачи обязательна")
     # Если задача в фокусе — зафиксировать время и снять с фокуса
+    now = datetime.now(timezone.utc)
     if task.focus_started_at:
-        add_bounded_focus_time(task, datetime.now(timezone.utc))
+        added = add_bounded_focus_time(task, now)
+        await record_activity_event(
+            db,
+            user_id,
+            "focus_pause",
+            task_id=task.id,
+            metadata={"source": "submit_for_review", "added_seconds": added, "active_seconds": task.active_seconds},
+            occurred_at=now,
+        )
 
     task.status = TaskStatus.review
-    task.completed_at = datetime.now(timezone.utc)
+    task.completed_at = now
     if result_url is not None:
         task.result_url = result_url
     if comment is not None:
@@ -296,6 +334,14 @@ async def submit_for_review(
         task.brief_rating = brief_rating
     if brief_feedback is not None:
         task.brief_feedback = brief_feedback.strip() or None
+    await record_activity_event(
+        db,
+        user_id,
+        "task_submitted",
+        task_id=task.id,
+        metadata={"estimated_q": float(task.estimated_q), "brief_rating": brief_rating},
+        occurred_at=now,
+    )
     await db.flush()
     return task
 
@@ -339,6 +385,7 @@ async def validate_task(
         task.focus_started_at = None
         # Счётчик возвратов
         task.rejection_count = (getattr(task, "rejection_count", 0) or 0) + 1
+        rejected_at = datetime.now(timezone.utc)
 
         # Quality Score: штраф за возврат
         if task.assignee_id:
@@ -381,12 +428,25 @@ async def validate_task(
                 message=f"«{task.title}» отклонена: {comment.strip()}",
                 link="/my-tasks",
             )
+        await record_activity_event(
+            db,
+            validator_id,
+            "task_rejected",
+            task_id=task.id,
+            metadata={
+                "assignee_id": task.assignee_id,
+                "comment": comment.strip(),
+                "rejection_count": task.rejection_count,
+            },
+            occurred_at=rejected_at,
+        )
         return task
 
     # Принятие задачи
+    validated_at = datetime.now(timezone.utc)
     task.status = TaskStatus.done
     task.validator_id = validator_id
-    task.validated_at = datetime.now(timezone.utc)
+    task.validated_at = validated_at
     task.rejection_comment = None
     task.is_overdue = False
 
@@ -439,6 +499,15 @@ async def validate_task(
             message=f"«{task.title}» валидирована. +{float(task.estimated_q)} Q",
             link="/my-tasks",
         )
+
+    await record_activity_event(
+        db,
+        validator_id,
+        "task_verified",
+        task_id=task.id,
+        metadata={"assignee_id": task.assignee_id, "estimated_q": float(task.estimated_q)},
+        occurred_at=validated_at,
+    )
 
     await db.flush()
     return task
@@ -677,6 +746,15 @@ async def assign_task(
         task.due_date = now + timedelta(days=work_days_needed, hours=remaining_hours)
 
     await db.flush()
+
+    await record_activity_event(
+        db,
+        assigner_id,
+        "task_assigned",
+        task_id=task.id,
+        metadata={"executor_id": executor_id, "comment": comment, "estimated_q": float(task.estimated_q)},
+        occurred_at=now,
+    )
 
     from app.services.notifications import create_notification
     await create_notification(

@@ -1,20 +1,176 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/client'
-import type { PeriodReport, PeriodHistoryItem, TasksExport } from '@/api/types'
+import type {
+  ActivityEvent,
+  EmployeePeriodSummary,
+  EmployeeSummaryTask,
+  PeriodHistoryItem,
+  PeriodReport,
+  TasksExport,
+  User,
+} from '@/api/types'
 import { MetricCard } from '@/components/MetricCard'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
+import { FileText, Search } from 'lucide-react'
+
+const eventLabels: Record<string, string> = {
+  login_success: 'Вход',
+  task_created: 'Задача создана',
+  task_updated: 'Задача изменена',
+  task_due_date_updated: 'Срок изменен',
+  task_cancelled: 'Задача отменена',
+  task_pulled: 'Задача взята',
+  task_assigned: 'Задача назначена',
+  task_submitted: 'Сдано на проверку',
+  task_verified: 'Задача принята',
+  task_rejected: 'Задача отклонена',
+  focus_start: 'Фокус старт',
+  focus_pause: 'Фокус пауза',
+  focus_auto_pause: 'Фокус автопауза',
+  focus_time_corrected: 'Время исправлено',
+}
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function monthStartIso(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+}
+
+function currentPeriodIso(): string {
+  return new Date().toISOString().slice(0, 7)
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function formatHours(seconds: number): string {
+  if (!seconds) return '0 ч'
+  const hours = seconds / 3600
+  return `${hours.toFixed(hours >= 10 ? 0 : 1)} ч`
+}
+
+function taskStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    in_queue: 'В очереди',
+    in_progress: 'В работе',
+    review: 'На проверке',
+    done: 'Принята',
+    cancelled: 'Отменена',
+  }
+  return labels[status] ?? status
+}
+
+function TaskSummaryTable({ title, tasks }: { title: string; tasks: EmployeeSummaryTask[] }) {
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="font-medium text-slate-800">{title}</h3>
+        <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-500">{tasks.length}</span>
+      </div>
+      {tasks.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                <th className="px-3 py-2 text-left font-medium text-slate-600">Задача</th>
+                <th className="px-3 py-2 text-left font-medium text-slate-600">Статус</th>
+                <th className="px-3 py-2 text-left font-medium text-slate-600">Q</th>
+                <th className="px-3 py-2 text-left font-medium text-slate-600">Фокус</th>
+                <th className="px-3 py-2 text-left font-medium text-slate-600">Паузы</th>
+                <th className="px-3 py-2 text-left font-medium text-slate-600">Принята</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasks.map((task) => (
+                <tr key={task.id} className="border-b border-slate-100 last:border-0">
+                  <td className="px-3 py-2">
+                    <div className="font-medium text-slate-800">#{task.task_number} {task.title}</div>
+                    <div className="text-xs text-slate-500">{task.task_type} · {task.priority}</div>
+                  </td>
+                  <td className="px-3 py-2 text-slate-600">{taskStatusLabel(task.status)}</td>
+                  <td className="px-3 py-2 text-slate-600">{Number(task.estimated_q).toFixed(1)}</td>
+                  <td className="px-3 py-2 text-slate-600">{formatHours(task.active_seconds)}</td>
+                  <td className="px-3 py-2 text-slate-600">{task.pause_count + task.auto_pause_count}</td>
+                  <td className="px-3 py-2 text-slate-600">{formatDateTime(task.validated_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="text-sm text-slate-500">Нет задач в этом блоке.</p>
+      )}
+    </section>
+  )
+}
+
+function ActivityTable({ events }: { events: ActivityEvent[] }) {
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <h3 className="mb-3 font-medium text-slate-800">Последняя активность</h3>
+      {events.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                <th className="px-3 py-2 text-left font-medium text-slate-600">Время</th>
+                <th className="px-3 py-2 text-left font-medium text-slate-600">Действие</th>
+                <th className="px-3 py-2 text-left font-medium text-slate-600">Задача</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((event) => (
+                <tr key={event.id} className="border-b border-slate-100 last:border-0">
+                  <td className="px-3 py-2 text-slate-600">{formatDateTime(event.occurred_at)}</td>
+                  <td className="px-3 py-2 font-medium text-slate-700">{eventLabels[event.event_type] ?? event.event_type}</td>
+                  <td className="px-3 py-2 text-slate-600">
+                    {event.task_number ? `#${event.task_number} ${event.task_title ?? ''}` : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="text-sm text-slate-500">Активность за период пока не зафиксирована.</p>
+      )}
+    </section>
+  )
+}
 
 export function ReportsPage() {
-  const [period, setPeriod] = useState('')
+  const [period, setPeriod] = useState(currentPeriodIso())
   const [report, setReport] = useState<PeriodReport | null>(null)
   const [history, setHistory] = useState<PeriodHistoryItem[]>([])
+  const [users, setUsers] = useState<User[]>([])
+  const [selectedUserId, setSelectedUserId] = useState('')
+  const [summaryStartDate, setSummaryStartDate] = useState(monthStartIso())
+  const [summaryEndDate, setSummaryEndDate] = useState(todayIso())
+  const [employeeSummary, setEmployeeSummary] = useState<EmployeePeriodSummary | null>(null)
   const [loading, setLoading] = useState(false)
+  const [summaryLoading, setSummaryLoading] = useState(false)
   const [exportTasksLoading, setExportTasksLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [summaryError, setSummaryError] = useState<string | null>(null)
 
   useEffect(() => {
     api.get<PeriodHistoryItem[]>('/api/admin/period-history').then(setHistory).catch(() => setHistory([]))
+    api
+      .get<User[]>('/api/users', { is_active: 'true' })
+      .then((items) => {
+        setUsers(items)
+        const firstExecutor = items.find((u) => u.role === 'executor') ?? items[0]
+        if (firstExecutor) setSelectedUserId(firstExecutor.id)
+      })
+      .catch(() => setUsers([]))
   }, [])
 
   const loadReport = useCallback(() => {
@@ -31,14 +187,28 @@ export function ReportsPage() {
       .finally(() => setLoading(false))
   }, [period])
 
-  useEffect(() => {
-    if (period || history.length >= 0) {
-      const p = period || new Date().toISOString().slice(0, 7)
-      setPeriod(p)
-    }
-  }, [])
+  const currentPeriod = period || currentPeriodIso()
 
-  const currentPeriod = period || new Date().toISOString().slice(0, 7)
+  const loadEmployeeSummary = useCallback(() => {
+    if (!selectedUserId) {
+      setSummaryError('Выберите сотрудника')
+      return
+    }
+    setSummaryLoading(true)
+    setSummaryError(null)
+    api
+      .get<EmployeePeriodSummary>('/api/reports/employee-summary', {
+        user_id: selectedUserId,
+        start_date: summaryStartDate,
+        end_date: summaryEndDate,
+      })
+      .then(setEmployeeSummary)
+      .catch((e) => {
+        setSummaryError(e instanceof Error ? e.message : 'Ошибка')
+        setEmployeeSummary(null)
+      })
+      .finally(() => setSummaryLoading(false))
+  }, [selectedUserId, summaryEndDate, summaryStartDate])
 
   const handleExport = () => {
     if (!report) return
@@ -152,6 +322,131 @@ export function ReportsPage() {
       </div>
 
       {error && <p className="text-red-600">{error}</p>}
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-medium text-slate-800">Сводка по сотруднику</h2>
+            <p className="text-sm text-slate-500">План, факт, эффективность, задачи и работа с фокусом за период.</p>
+          </div>
+          <button
+            type="button"
+            onClick={loadEmployeeSummary}
+            disabled={summaryLoading || !selectedUserId}
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            <Search className="h-4 w-4" />
+            {summaryLoading ? 'Формируется...' : 'Сформировать сводку'}
+          </button>
+        </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-[minmax(220px,1fr)_170px_170px]">
+          <label className="space-y-1 text-sm">
+            <span className="font-medium text-slate-600">Сотрудник</span>
+            <select
+              value={selectedUserId}
+              onChange={(e) => setSelectedUserId(e.target.value)}
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+            >
+              <option value="">Выберите сотрудника</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.full_name} · {u.role}</option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="font-medium text-slate-600">Начало</span>
+            <input
+              type="date"
+              value={summaryStartDate}
+              onChange={(e) => setSummaryStartDate(e.target.value)}
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="font-medium text-slate-600">Окончание</span>
+            <input
+              type="date"
+              value={summaryEndDate}
+              onChange={(e) => setSummaryEndDate(e.target.value)}
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+            />
+          </label>
+        </div>
+        {summaryError && <p className="mt-3 text-sm text-red-600">{summaryError}</p>}
+      </section>
+
+      {employeeSummary && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-slate-900">{employeeSummary.full_name}</h2>
+              <p className="text-sm text-slate-500">
+                {employeeSummary.start_date} — {employeeSummary.end_date} · Лига {employeeSummary.league} · {employeeSummary.role}
+              </p>
+            </div>
+            <span className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-600">
+              <FileText className="h-4 w-4" />
+              Сводка для доклада
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <MetricCard title="План" value={Number(employeeSummary.plan_q).toFixed(1)} subtitle="Q" />
+            <MetricCard title="Факт" value={Number(employeeSummary.completed_q).toFixed(1)} subtitle="Q принято" />
+            <MetricCard title="Эффективность" value={`${Number(employeeSummary.efficiency_percent).toFixed(1)}%`} />
+            <MetricCard title="Фокус" value={Number(employeeSummary.focus.total_focus_hours).toFixed(1)} subtitle="часов" />
+          </div>
+
+          <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h3 className="mb-3 font-medium text-slate-800">Контрольные показатели</h3>
+            <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4 lg:grid-cols-8">
+              <div>
+                <p className="text-slate-500">Принято задач</p>
+                <p className="text-lg font-semibold text-slate-900">{employeeSummary.completed_tasks_count}</p>
+              </div>
+              <div>
+                <p className="text-slate-500">В работе</p>
+                <p className="text-lg font-semibold text-slate-900">{employeeSummary.in_progress_tasks_count}</p>
+              </div>
+              <div>
+                <p className="text-slate-500">На проверке</p>
+                <p className="text-lg font-semibold text-slate-900">{employeeSummary.review_tasks_count}</p>
+              </div>
+              <div>
+                <p className="text-slate-500">Возвраты</p>
+                <p className="text-lg font-semibold text-slate-900">{employeeSummary.rejected_tasks_count}</p>
+              </div>
+              <div>
+                <p className="text-slate-500">Отсутствия</p>
+                <p className="text-lg font-semibold text-slate-900">{employeeSummary.absence_working_days} дн.</p>
+              </div>
+              <div>
+                <p className="text-slate-500">Стартов фокуса</p>
+                <p className="text-lg font-semibold text-slate-900">{employeeSummary.focus.focus_start_count}</p>
+              </div>
+              <div>
+                <p className="text-slate-500">Пауз</p>
+                <p className="text-lg font-semibold text-slate-900">
+                  {employeeSummary.focus.focus_pause_count + employeeSummary.focus.focus_auto_pause_count}
+                </p>
+              </div>
+              <div>
+                <p className="text-slate-500">Пауз/задачу</p>
+                <p className="text-lg font-semibold text-slate-900">{Number(employeeSummary.focus.avg_pauses_per_task).toFixed(2)}</p>
+              </div>
+            </div>
+          </section>
+
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <TaskSummaryTable title="Принятые задачи" tasks={employeeSummary.completed_tasks} />
+            <TaskSummaryTable title="Задачи в работе" tasks={employeeSummary.in_progress_tasks} />
+            <TaskSummaryTable title="На проверке" tasks={employeeSummary.review_tasks} />
+            <TaskSummaryTable title="Возвращались на доработку" tasks={employeeSummary.rejected_tasks} />
+          </div>
+
+          <ActivityTable events={employeeSummary.recent_activity} />
+        </div>
+      )}
 
       {report && (
         <>

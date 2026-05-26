@@ -1,5 +1,5 @@
 """Генерация отчёта за период."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +15,7 @@ from app.schemas.reports import (
     TasksOverview,
 )
 from app.services.calibration import get_calibration_report
+from app.services.absences import absence_dates_by_user
 from app.services.planning import effective_plan_for_user
 
 
@@ -69,8 +70,12 @@ async def generate_period_report(db: AsyncSession, period: str) -> PeriodReport:
             )
     else:
         users_result = await db.execute(select(User).where(User.is_active.is_(True)))
-        for u in users_result.scalars().all():
-            plan = effective_plan_for_user(u, now)
+        users = list(users_result.scalars().all())
+        period_end_date = (month_end - timedelta(days=1)).date()
+        absence_map = await absence_dates_by_user(db, [u.id for u in users], month_start.date(), period_end_date)
+        plan_time = now if period == now.strftime("%Y-%m") else month_start
+        for u in users:
+            plan = effective_plan_for_user(u, plan_time, absence_map.get(u.id, set()))
             target = float(plan.effective_target)
             total_capacity += target
             total_earned += float(u.wallet_main)

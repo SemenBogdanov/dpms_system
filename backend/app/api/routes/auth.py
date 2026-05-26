@@ -10,6 +10,7 @@ from app.core.security import verify_password, get_password_hash, create_access_
 from app.models.user import User
 from app.schemas.auth import LoginRequest, TokenResponse, SetPasswordRequest, ChangePasswordRequest
 from app.schemas.user import UserRead
+from app.services.activity import record_activity_event
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -69,6 +70,15 @@ async def login(
             )
     # Если password_hash пустой — первый вход, пароль не проверяем
     token = create_access_token(data={"sub": str(user.id)})
+    await record_activity_event(
+        db,
+        user.id,
+        "login_success",
+        metadata={
+            "client_host": request.client.host if request.client else None,
+            "user_agent": (request.headers.get("user-agent") or "")[:200],
+        },
+    )
     return TokenResponse(
         access_token=token,
         token_type="bearer",

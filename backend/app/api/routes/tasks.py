@@ -27,6 +27,7 @@ from app.schemas.task import (
     compute_deadline_zone,
 )
 from app.services.attachments import attachment_path, save_task_attachment
+from app.services.activity import record_activity_event
 from app.services.queue import create_bugfix
 from app.services.focus import start_focus, pause_focus, correct_active_time
 from app.services.task_import import commit_task_import, preview_task_import
@@ -270,6 +271,13 @@ async def create_task(
     db.add(task)
     await db.flush()
     await db.refresh(task)
+    await record_activity_event(
+        db,
+        user.id,
+        "task_created",
+        task_id=task.id,
+        metadata={"status": task.status.value, "priority": task.priority.value, "estimated_q": float(task.estimated_q)},
+    )
     return task
 
 
@@ -295,6 +303,13 @@ async def update_task(
         task.tags = [tag.strip() for tag in body.tags if tag.strip()]
     await db.flush()
     await db.refresh(task)
+    await record_activity_event(
+        db,
+        user.id,
+        "task_updated",
+        task_id=task.id,
+        metadata={"fields": [name for name, value in body.model_dump(exclude_unset=True).items() if value is not None]},
+    )
     return task
 
 
@@ -315,6 +330,13 @@ async def set_due_date(
     task.due_date = body.due_date
     await db.flush()
     await db.refresh(task)
+    await record_activity_event(
+        db,
+        user.id,
+        "task_due_date_updated",
+        task_id=task.id,
+        metadata={"due_date": body.due_date},
+    )
     return task
 
 
@@ -335,6 +357,13 @@ async def cancel_task(
     old_assignee = task.assignee_id
     task.status = TaskStatus.cancelled
     task.is_overdue = False
+    await record_activity_event(
+        db,
+        user.id,
+        "task_cancelled",
+        task_id=task.id,
+        metadata={"old_assignee": old_assignee},
+    )
 
     if old_assignee:
         from app.services.notifications import create_notification

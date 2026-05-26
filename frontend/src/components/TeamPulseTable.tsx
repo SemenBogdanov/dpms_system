@@ -77,6 +77,12 @@ export function TeamPulseTable({ members }: TeamPulseTableProps) {
                 {!m.has_overdue && m.is_at_risk && <span title="Отстаёт от темпа">⚠️</span>}
                 {!m.has_overdue && !m.is_at_risk && m.percent >= 100 && <span>✅</span>}
                 {m.onboarding_active && <span title="Адаптационный план" className="ml-1 rounded bg-blue-50 px-1.5 py-0.5 text-xs text-blue-700">Новый</span>}
+                {m.absent_today && <span title="Сегодня отсутствует" className="ml-1 rounded bg-emerald-50 px-1.5 py-0.5 text-xs text-emerald-700">Отсутствует</span>}
+                {!m.absent_today && m.absence_working_days > 0 && (
+                  <span title="План скорректирован из-за отсутствий" className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">
+                    -{m.absence_working_days} дн.
+                  </span>
+                )}
               </td>
             </tr>
             )

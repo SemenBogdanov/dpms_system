@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.task import Task, TaskStatus
 from app.models.user import User, UserRole
 from app.schemas.task import FocusStatus
+from app.services.activity import record_activity_event
 from app.services.notifications import create_notification
 
 MAX_FOCUS_SECONDS = 4 * 3600
@@ -65,8 +66,20 @@ async def start_focus(db: AsyncSession, user_id, task_id) -> dict[str, Any]:
     )
     current_focus = current_focus_result.scalar_one_or_none()
     if current_focus:
-        add_bounded_focus_time(current_focus, now)
+        added = add_bounded_focus_time(current_focus, now)
         paused_task_id = current_focus.id
+        await record_activity_event(
+            db,
+            user_id,
+            "focus_auto_pause",
+            task_id=current_focus.id,
+            metadata={
+                "reason": "started_another_task",
+                "added_seconds": added,
+                "active_seconds": current_focus.active_seconds,
+            },
+            occurred_at=now,
+        )
 
     # Первый фокус: при необходимости запустить SLA от момента фокуса
     if task.active_seconds == 0 and task.started_at is None:
@@ -74,6 +87,14 @@ async def start_focus(db: AsyncSession, user_id, task_id) -> dict[str, Any]:
         # due_date / sla_hours могут быть пересчитаны отдельной логикой, здесь не трогаем
 
     task.focus_started_at = now
+    await record_activity_event(
+        db,
+        user_id,
+        "focus_start",
+        task_id=task.id,
+        metadata={"source": "manual", "active_seconds": task.active_seconds},
+        occurred_at=now,
+    )
     await db.flush()
 
     active_hours = task.active_seconds / 3600
@@ -103,7 +124,15 @@ async def pause_focus(db: AsyncSession, user_id, task_id) -> dict[str, Any]:
     if task.focus_started_at is None:
         raise HTTPException(status_code=400, detail="Задача уже на паузе")
 
-    add_bounded_focus_time(task, now)
+    added = add_bounded_focus_time(task, now)
+    await record_activity_event(
+        db,
+        user_id,
+        "focus_pause",
+        task_id=task.id,
+        metadata={"source": "manual", "added_seconds": added, "active_seconds": task.active_seconds},
+        occurred_at=now,
+    )
 
     await db.flush()
     active_hours = task.active_seconds / 3600
@@ -133,8 +162,16 @@ async def auto_pause_stale_focuses(db: AsyncSession) -> int:
         current = max(int(task.active_seconds or 0), 0)
         if delta < MAX_FOCUS_SECONDS and current + int(max(delta, 0)) < MAX_FOCUS_SECONDS:
             continue
-        add_bounded_focus_time(task, now)
+        added = add_bounded_focus_time(task, now)
         count += 1
+        await record_activity_event(
+            db,
+            task.assignee_id,
+            "focus_auto_pause",
+            task_id=task.id,
+            metadata={"reason": "four_hour_limit", "added_seconds": added, "active_seconds": task.active_seconds},
+            occurred_at=now,
+        )
 
         if task.assignee_id:
             await create_notification(
@@ -196,6 +233,19 @@ async def correct_active_time(
 
     if task.focus_started_at is not None:
         task.focus_started_at = now
+
+    await record_activity_event(
+        db,
+        corrector.id,
+        "focus_time_corrected",
+        task_id=task.id,
+        metadata={
+            "old_seconds": old_seconds,
+            "new_seconds": int(new_active_seconds),
+            "reason": reason,
+        },
+        occurred_at=now,
+    )
 
     await db.flush()
     active_hours = task.active_seconds / 3600
