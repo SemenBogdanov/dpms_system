@@ -233,6 +233,7 @@ export interface QueueTaskResponse {
 export interface AssignCandidate {
   id: string
   full_name: string
+  role: UserRole
   league: string
   wip_current: number
   wip_limit: number
@@ -613,6 +614,8 @@ export interface Purchase {
   approved_at: string | null
   approved_by: string | null
   item_name: string | null
+  user_name?: string | null
+  user_email?: string | null
 }
 
 export interface RolloverResponse {

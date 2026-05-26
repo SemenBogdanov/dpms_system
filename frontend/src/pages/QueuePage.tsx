@@ -909,6 +909,11 @@ export function QueuePage() {
                     className={`w-full px-4 py-2 text-left text-sm ${c.is_available ? 'hover:bg-gray-50' : 'cursor-not-allowed bg-gray-50 text-gray-400'}`}
                   >
                     <span className="font-medium">{c.full_name}</span>
+                    {c.role === 'teamlead' && (
+                      <span className="ml-2 rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+                        тимлид
+                      </span>
+                    )}
                     <span className="ml-2 text-gray-500">Лига {c.league}</span>
                     <span className="ml-2 text-gray-500">WIP: {c.wip_current}/{c.wip_limit}</span>
                     {!c.is_available && <span className="ml-2 text-xs">(занят)</span>}

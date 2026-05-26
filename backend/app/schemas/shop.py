@@ -39,6 +39,8 @@ class PurchaseResponse(BaseModel):
     approved_at: datetime | None
     approved_by: UUID | None
     item_name: str | None = None
+    user_name: str | None = None
+    user_email: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -47,3 +49,4 @@ class ApprovePurchaseRequest(BaseModel):
     """Подтверждение покупки тимлидом/админом. approved_by опционален (из JWT)."""
     purchase_id: UUID
     approved_by: UUID | None = None
+    comment: str | None = None

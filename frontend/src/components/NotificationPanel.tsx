@@ -22,7 +22,7 @@ function formatRelative(dateStr: string): string {
 function iconForType(type: string): string {
   if (type === 'task_validated') return '✅'
   if (type === 'task_rejected') return '❌'
-  if (type === 'purchase_approved' || type === 'purchase_pending') return '🛒'
+  if (type === 'purchase_approved' || type === 'purchase_pending' || type === 'purchase_rejected') return '🛒'
   if (type === 'rollover') return '🔄'
   if (type === 'league_change') return '⬆️'
   return '📌'

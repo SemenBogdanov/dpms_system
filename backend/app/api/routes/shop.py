@@ -15,13 +15,27 @@ from app.schemas.shop import (
     ApprovePurchaseRequest,
 )
 from app.services.shop import (
-    get_shop_items,
-    purchase_item,
-    get_user_purchases,
     approve_purchase,
+    get_pending_purchase_approvals,
+    get_shop_items,
+    get_user_purchases,
+    purchase_item,
+    reject_purchase,
 )
 
 router = APIRouter()
+
+
+def _purchase_actor_id(user: User, body_user_id: UUID | None) -> UUID:
+    if body_user_id is not None and body_user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нельзя покупать от имени другого пользователя")
+    return user.id
+
+
+def _decision_actor_id(user: User, body_user_id: UUID | None) -> UUID:
+    if body_user_id is not None and body_user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Нельзя согласовывать от имени другого пользователя")
+    return user.id
 
 
 @router.get("", response_model=list[ShopItemResponse])
@@ -38,7 +52,7 @@ async def create_purchase(
     db: AsyncSession = Depends(get_db),
 ):
     """Купить товар за карму. Возвращает созданную покупку (status=pending)."""
-    user_id = body.user_id or user.id
+    user_id = _purchase_actor_id(user, body.user_id)
     purchase = await purchase_item(db, user_id, body.shop_item_id)
     shop_item = await db.get(ShopItem, purchase.shop_item_id)
     return PurchaseResponse(
@@ -66,13 +80,33 @@ async def list_user_purchases(
     return await get_user_purchases(db, user_id)
 
 
-@router.post("/approve")
+@router.get("/approvals", response_model=list[PurchaseResponse])
+async def list_purchase_approvals(
+    user: User = Depends(require_role("admin", "teamlead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ожидающие согласования покупки для экрана «Мои задачи»."""
+    return await get_pending_purchase_approvals(db)
+
+
+@router.post("/approve", response_model=PurchaseResponse)
 async def approve_purchase_route(
     body: ApprovePurchaseRequest,
     user: User = Depends(require_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Тимлид/админ подтверждает покупку."""
-    approved_by = body.approved_by or user.id
+    approved_by = _decision_actor_id(user, body.approved_by)
     purchase = await approve_purchase(db, body.purchase_id, approved_by)
     return purchase
+
+
+@router.post("/reject", response_model=PurchaseResponse)
+async def reject_purchase_route(
+    body: ApprovePurchaseRequest,
+    user: User = Depends(require_role("admin", "teamlead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Тимлид/админ отклоняет покупку."""
+    rejected_by = _decision_actor_id(user, body.approved_by)
+    return await reject_purchase(db, body.purchase_id, rejected_by, body.comment)

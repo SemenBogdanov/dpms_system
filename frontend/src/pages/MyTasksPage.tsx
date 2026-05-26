@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '@/api/client'
-import type { Task, User, RunRate, UserProgress } from '@/api/types'
+import type { Purchase, Task, User, RunRate, UserProgress } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { RunRateCard } from '@/components/RunRateCard'
 import { TaskCard } from '@/components/TaskCard'
@@ -19,10 +19,12 @@ export function MyTasksPage() {
   const { user: currentUser } = useAuth()
   const [tasks, setTasks] = useState<Task[]>([])
   const [reviewTasks, setReviewTasks] = useState<Task[]>([])
+  const [purchaseApprovals, setPurchaseApprovals] = useState<Purchase[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
   const [error] = useState<string | null>(null)
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null)
+  const [busyPurchaseId, setBusyPurchaseId] = useState<string | null>(null)
 
   const [submitTaskId, setSubmitTaskId] = useState<string | null>(null)
   const [submitResultUrl, setSubmitResultUrl] = useState('')
@@ -69,9 +71,23 @@ export function MyTasksPage() {
     }
   }, [])
 
+  const loadPurchaseApprovals = useCallback(async () => {
+    if (currentUser?.role !== 'teamlead' && currentUser?.role !== 'admin') {
+      setPurchaseApprovals([])
+      return
+    }
+    try {
+      const list = await api.get<Purchase[]>('/api/shop/approvals')
+      setPurchaseApprovals(list)
+    } catch {
+      setPurchaseApprovals([])
+    }
+  }, [currentUser?.role])
+
   useEffect(() => {
     loadReviewTasks()
-  }, [loadReviewTasks])
+    loadPurchaseApprovals()
+  }, [loadReviewTasks, loadPurchaseApprovals])
 
   const refreshTasks = useCallback(async () => {
     if (!currentUser) return
@@ -87,9 +103,10 @@ export function MyTasksPage() {
       api.get<User[]>('/api/users')
         .then((u) => setUsers(u))
         .catch(() => {}),
+      loadPurchaseApprovals(),
     ])
     setTasks(newTasks)
-  }, [currentUser, loadReviewTasks])
+  }, [currentUser, loadReviewTasks, loadPurchaseApprovals])
 
   const handleFocus = async (taskId: string) => {
     setFocusBusyId(taskId)
@@ -214,6 +231,19 @@ export function MyTasksPage() {
       return
     }
     handleValidate(rejectTask.id, false, rejectComment.trim())
+  }
+
+  const handlePurchaseDecision = async (purchaseId: string, approved: boolean) => {
+    setBusyPurchaseId(purchaseId)
+    try {
+      await api.post(`/api/shop/${approved ? 'approve' : 'reject'}`, { purchase_id: purchaseId })
+      toast.success(approved ? 'Покупка согласована' : 'Покупка отклонена')
+      await loadPurchaseApprovals()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Не удалось обработать покупку')
+    } finally {
+      setBusyPurchaseId(null)
+    }
   }
 
   const handleOpenBugfix = (task: Task) => {
@@ -504,7 +534,7 @@ export function MyTasksPage() {
         }}
       />
 
-      {isTeamleadOrAdmin && reviewTasks.length > 0 && (
+      {isTeamleadOrAdmin && (reviewTasks.length > 0 || purchaseApprovals.length > 0) && (
         <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
           <h2 className="mb-3 font-medium text-amber-800">На валидацию</h2>
           <div className="space-y-2">
@@ -521,6 +551,52 @@ export function MyTasksPage() {
                 onOpenDetail={setDetailTask}
               />
             ))}
+            {purchaseApprovals.map((purchase) => {
+              const isBusy = busyPurchaseId === purchase.id
+              return (
+                <div
+                  key={purchase.id}
+                  className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                          Покупка
+                        </span>
+                        <h3 className="min-w-0 truncate font-medium text-slate-900">
+                          {purchase.item_name ?? 'Товар'}
+                        </h3>
+                      </div>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {purchase.user_name ?? purchase.user_email ?? 'Сотрудник'} · {Number(purchase.cost_q).toFixed(1)} Q кармы
+                      </p>
+                      <p className="mt-1 text-xs text-slate-400">
+                        Запрошено {new Date(purchase.created_at).toLocaleString('ru')}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handlePurchaseDecision(purchase.id, true)}
+                        disabled={isBusy}
+                        className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        {isBusy ? '...' : '✓ Принять'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handlePurchaseDecision(purchase.id, false)}
+                        disabled={isBusy}
+                        className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                      >
+                        ✗ Отклонить
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </section>
       )}

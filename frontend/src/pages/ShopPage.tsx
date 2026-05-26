@@ -67,6 +67,13 @@ export function ShopPage() {
     return '❌'
   }
 
+  const statusLabel = (status: string) => {
+    if (status === 'pending') return 'Ожидает согласования'
+    if (status === 'approved') return 'Согласовано'
+    if (status === 'rejected') return 'Отклонено'
+    return status
+  }
+
   if (loading) return <div className="text-slate-500">Загрузка...</div>
   if (error) return <div className="text-red-600">{error}</div>
 
@@ -122,7 +129,7 @@ export function ShopPage() {
                   </td>
                   <td className="px-4 py-2">{p.item_name ?? p.shop_item_id}</td>
                   <td className="px-4 py-2">{Number(p.cost_q).toFixed(1)} Q</td>
-                  <td className="px-4 py-2">{statusIcon(p.status)} {p.status}</td>
+                  <td className="px-4 py-2">{statusIcon(p.status)} {statusLabel(p.status)}</td>
                 </tr>
               ))}
             </tbody>

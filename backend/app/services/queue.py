@@ -685,7 +685,7 @@ async def assign_task(
     comment: str | None = None,
 ) -> Task:
     """
-    Тимлид/админ назначает задачу на исполнителя.
+    Тимлид назначает задачу на исполнителя. Админ может назначить на исполнителя или тимлида.
     Задача должна быть in_queue; non-critical назначается после 24ч в очереди.
     Исполнитель: league >= task.min_league, WIP свободен.
     """
@@ -714,8 +714,14 @@ async def assign_task(
     executor = executor_result.scalar_one_or_none()
     if not executor:
         raise HTTPException(status_code=404, detail="Исполнитель не найден")
-    if executor.role != UserRole.executor:
-        raise HTTPException(status_code=400, detail="Назначить можно только на исполнителя")
+    allowed_executor_roles = (UserRole.executor,)
+    if assigner.role == UserRole.admin:
+        allowed_executor_roles = (UserRole.executor, UserRole.teamlead)
+    if executor.role not in allowed_executor_roles:
+        detail = "Админ может назначить задачу на исполнителя или тимлида"
+        if assigner.role == UserRole.teamlead:
+            detail = "Тимлид может назначить задачу только на исполнителя"
+        raise HTTPException(status_code=400, detail=detail)
     if _LEAGUE_ORDER.get(executor.league, 0) < _LEAGUE_ORDER.get(task.min_league, 0):
         raise HTTPException(status_code=400, detail="У исполнителя недостаточный уровень лиги")
 
@@ -768,10 +774,10 @@ async def assign_task(
     return task
 
 
-async def get_assign_candidates(db: AsyncSession, task_id: UUID) -> list[dict]:
+async def get_assign_candidates(db: AsyncSession, task_id: UUID, assigner_id: UUID) -> list[dict]:
     """
     Список кандидатов для назначения задачи.
-    Активные исполнители с league >= task.min_league, с wip_current, wip_limit, is_available.
+    Teamlead видит активных исполнителей, admin — исполнителей и тимлидов.
     """
     result = await db.execute(select(Task).where(Task.id == task_id))
     task = result.scalar_one_or_none()
@@ -780,10 +786,19 @@ async def get_assign_candidates(db: AsyncSession, task_id: UUID) -> list[dict]:
     if task.status != TaskStatus.in_queue:
         raise HTTPException(status_code=400, detail="Задача не в очереди")
 
+    assigner_result = await db.execute(select(User).where(User.id == assigner_id))
+    assigner = assigner_result.scalar_one_or_none()
+    if not assigner or assigner.role not in (UserRole.teamlead, UserRole.admin):
+        raise HTTPException(status_code=403, detail="Только тимлид или админ может назначать задачи")
+
+    candidate_roles = [UserRole.executor]
+    if assigner.role == UserRole.admin:
+        candidate_roles.append(UserRole.teamlead)
+
     task_league_order = _LEAGUE_ORDER.get(task.min_league, 0)
     executors_result = await db.execute(
         select(User).where(
-            User.role == UserRole.executor,
+            User.role.in_(candidate_roles),
             User.is_active.is_(True),
         )
     )
@@ -804,6 +819,7 @@ async def get_assign_candidates(db: AsyncSession, task_id: UUID) -> list[dict]:
         out.append({
             "id": u.id,
             "full_name": u.full_name,
+            "role": u.role.value,
             "league": u.league.value,
             "wip_current": wip_current,
             "wip_limit": wip_limit,

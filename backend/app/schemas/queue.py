@@ -49,6 +49,7 @@ class AssignCandidate(BaseModel):
     """Кандидат для назначения задачи."""
     id: UUID
     full_name: str
+    role: str
     league: str
     wip_current: int
     wip_limit: int

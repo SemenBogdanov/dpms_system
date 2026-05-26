@@ -17,6 +17,26 @@ def _round_q(value: Decimal) -> Decimal:
     return Decimal(str(round(float(value), 1)))
 
 
+def _purchase_response(
+    purchase: Purchase,
+    item_name: str | None = None,
+    user: User | None = None,
+) -> PurchaseResponse:
+    return PurchaseResponse(
+        id=purchase.id,
+        user_id=purchase.user_id,
+        shop_item_id=purchase.shop_item_id,
+        cost_q=purchase.cost_q,
+        status=purchase.status,
+        created_at=purchase.created_at,
+        approved_at=purchase.approved_at,
+        approved_by=purchase.approved_by,
+        item_name=item_name,
+        user_name=user.full_name if user else None,
+        user_email=user.email if user else None,
+    )
+
+
 async def get_shop_items(db: AsyncSession) -> list[ShopItem]:
     """Все активные товары."""
     result = await db.execute(
@@ -121,7 +141,7 @@ async def purchase_item(
             "purchase_pending",
             "Новая покупка",
             message=f"{user.full_name} купил «{item.name}»",
-            link="/admin/users",
+            link="/my-tasks",
         )
     return purchase
 
@@ -140,27 +160,30 @@ async def get_user_purchases(
     rows = result.all()
     out = []
     for p, item_name in rows:
-        out.append(
-            PurchaseResponse(
-                id=p.id,
-                user_id=p.user_id,
-                shop_item_id=p.shop_item_id,
-                cost_q=p.cost_q,
-                status=p.status,
-                created_at=p.created_at,
-                approved_at=p.approved_at,
-                approved_by=p.approved_by,
-                item_name=item_name,
-            )
-        )
+        out.append(_purchase_response(p, item_name=item_name))
     return out
+
+
+async def get_pending_purchase_approvals(db: AsyncSession) -> list[PurchaseResponse]:
+    """Ожидающие согласования покупки для экрана «Мои задачи» тимлида."""
+    result = await db.execute(
+        select(Purchase, ShopItem.name, User)
+        .join(ShopItem, Purchase.shop_item_id == ShopItem.id)
+        .join(User, Purchase.user_id == User.id)
+        .where(Purchase.status == "pending")
+        .order_by(Purchase.created_at.asc())
+    )
+    return [
+        _purchase_response(purchase, item_name=item_name, user=user)
+        for purchase, item_name, user in result.all()
+    ]
 
 
 async def approve_purchase(
     db: AsyncSession,
     purchase_id: UUID,
     approved_by: UUID,
-) -> Purchase:
+) -> PurchaseResponse:
     """Тимлид/админ подтверждает покупку."""
     approver_result = await db.execute(select(User).where(User.id == approved_by))
     approver = approver_result.scalar_one_or_none()
@@ -172,22 +195,38 @@ async def approve_purchase(
             detail="Подтверждать покупки могут только тимлид или админ",
         )
 
-    result = await db.execute(select(Purchase).where(Purchase.id == purchase_id))
+    result = await db.execute(select(Purchase).where(Purchase.id == purchase_id).with_for_update())
     purchase = result.scalar_one_or_none()
     if not purchase:
         raise HTTPException(status_code=404, detail="Покупка не найдена")
     if purchase.status != "pending":
         raise HTTPException(status_code=400, detail="Покупка уже обработана")
 
+    item_result = await db.execute(select(ShopItem).where(ShopItem.id == purchase.shop_item_id))
+    item = item_result.scalar_one_or_none()
+    item_name = item.name if item else "Товар"
+    buyer_result = await db.execute(select(User).where(User.id == purchase.user_id))
+    buyer = buyer_result.scalar_one_or_none()
+    if not buyer:
+        raise HTTPException(status_code=404, detail="Покупатель не найден")
+    if float(buyer.wallet_karma) < float(purchase.cost_q):
+        raise HTTPException(status_code=400, detail="У сотрудника недостаточно кармы для подтверждения покупки")
+
+    buyer.wallet_karma -= purchase.cost_q
+    db.add(
+        QTransaction(
+            user_id=purchase.user_id,
+            amount=-purchase.cost_q,
+            wallet_type=WalletType.karma,
+            reason=f"Покупка: {item_name}",
+        )
+    )
     purchase.status = "approved"
     purchase.approved_at = datetime.now(timezone.utc)
     purchase.approved_by = approved_by
     await db.flush()
     await db.refresh(purchase)
     from app.services.notifications import create_notification
-    item_result = await db.execute(select(ShopItem).where(ShopItem.id == purchase.shop_item_id))
-    item = item_result.scalar_one_or_none()
-    item_name = item.name if item else "Товар"
     await create_notification(
         db,
         purchase.user_id,
@@ -196,4 +235,52 @@ async def approve_purchase(
         message=f"«{item_name}» одобрена",
         link="/shop",
     )
-    return purchase
+    return _purchase_response(purchase, item_name=item_name, user=buyer)
+
+
+async def reject_purchase(
+    db: AsyncSession,
+    purchase_id: UUID,
+    rejected_by: UUID,
+    comment: str | None = None,
+) -> PurchaseResponse:
+    """Тимлид/админ отклоняет покупку без списания кармы."""
+    approver_result = await db.execute(select(User).where(User.id == rejected_by))
+    approver = approver_result.scalar_one_or_none()
+    if not approver:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    if approver.role not in (UserRole.teamlead, UserRole.admin):
+        raise HTTPException(status_code=400, detail="Отклонять покупки могут только тимлид или админ")
+
+    result = await db.execute(select(Purchase).where(Purchase.id == purchase_id).with_for_update())
+    purchase = result.scalar_one_or_none()
+    if not purchase:
+        raise HTTPException(status_code=404, detail="Покупка не найдена")
+    if purchase.status != "pending":
+        raise HTTPException(status_code=400, detail="Покупка уже обработана")
+
+    item_result = await db.execute(select(ShopItem).where(ShopItem.id == purchase.shop_item_id))
+    item = item_result.scalar_one_or_none()
+    item_name = item.name if item else "Товар"
+    buyer_result = await db.execute(select(User).where(User.id == purchase.user_id))
+    buyer = buyer_result.scalar_one_or_none()
+
+    purchase.status = "rejected"
+    purchase.approved_at = datetime.now(timezone.utc)
+    purchase.approved_by = rejected_by
+    await db.flush()
+    await db.refresh(purchase)
+
+    from app.services.notifications import create_notification
+    message = f"«{item_name}» отклонена"
+    if comment:
+        message = f"{message}: {comment}"
+    await create_notification(
+        db,
+        purchase.user_id,
+        "purchase_rejected",
+        "Покупка отклонена",
+        message=message,
+        link="/shop",
+    )
+    return _purchase_response(purchase, item_name=item_name, user=buyer)

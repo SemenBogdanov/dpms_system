@@ -104,7 +104,7 @@ async def queue_assign(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Назначить задачу на исполнителя. Только teamlead/admin."""
+    """Назначить задачу. Teamlead — исполнителю, admin — исполнителю или тимлиду."""
     if user.role not in (UserRole.teamlead, UserRole.admin):
         raise HTTPException(403, "Только тимлид или админ может назначать задачи")
     task = await assign_task(db, user.id, body.task_id, body.executor_id, body.comment)
@@ -119,4 +119,4 @@ async def queue_candidates(
     db: AsyncSession = Depends(get_db),
 ):
     """Список кандидатов для назначения задачи."""
-    return await get_assign_candidates(db, task_id)
+    return await get_assign_candidates(db, task_id, user.id)
