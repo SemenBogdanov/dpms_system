@@ -25,6 +25,8 @@ class UserProgress(BaseModel):
     onboarding_active: bool = False
     onboarding_until: datetime | None = None
     plan_started_at: datetime | None = None
+    absence_working_days: int = 0
+    absent_today: bool = False
     adjustment_reasons: list[str] = Field(default_factory=list)
 
 
@@ -45,6 +47,8 @@ class TeamMemberSummary(BaseModel):
     is_new_employee: bool = False
     onboarding_active: bool = False
     onboarding_until: datetime | None = None
+    absence_working_days: int = 0
+    absent_today: bool = False
     adjustment_reasons: list[str] = Field(default_factory=list)
 
 
@@ -97,3 +101,5 @@ class RunRate(BaseModel):
     is_new_employee: bool = False
     onboarding_active: bool = False
     onboarding_until: datetime | None = None
+    absence_working_days: int = 0
+    absent_today: bool = False

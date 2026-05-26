@@ -12,6 +12,7 @@ class EffectivePlan:
     effective_target: Decimal
     partial_month_factor: Decimal
     onboarding_factor: Decimal
+    absence_working_days: int
     onboarding_active: bool
     plan_started_at: datetime | None
     onboarding_started_at: datetime | None
@@ -43,19 +44,24 @@ def working_days_in_month(year: int, month: int) -> int:
     return working_days_between(date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1]))
 
 
-def working_days_between(start: date, end: date) -> int:
+def working_days_between(start: date, end: date, excluded_dates: set[date] | None = None) -> int:
     if end < start:
         return 0
+    excluded = excluded_dates or set()
     count = 0
     current = start
     while current <= end:
-        if current.weekday() < 5:
+        if current.weekday() < 5 and current not in excluded:
             count += 1
         current = date.fromordinal(current.toordinal() + 1)
     return count
 
 
-def current_plan_window(user: Any, now: datetime | None = None) -> tuple[int, int, int]:
+def current_plan_window(
+    user: Any,
+    now: datetime | None = None,
+    absence_dates: set[date] | None = None,
+) -> tuple[int, int, int]:
     """Return elapsed, total, remaining working days for the user's current plan window."""
     current = _as_utc(now) or datetime.now(timezone.utc)
     month_start = date(current.year, current.month, 1)
@@ -65,13 +71,17 @@ def current_plan_window(user: Any, now: datetime | None = None) -> tuple[int, in
     if plan_started_at and plan_started_at.year == current.year and plan_started_at.month == current.month:
         start = max(start, plan_started_at.date())
     today = min(max(current.date(), start), month_end)
-    total = working_days_between(start, month_end)
-    elapsed = working_days_between(start, today)
+    total = working_days_between(start, month_end, absence_dates)
+    elapsed = working_days_between(start, today, absence_dates)
     remaining = max(0, total - elapsed)
     return elapsed, total, remaining
 
 
-def effective_plan_for_user(user: Any, now: datetime | None = None) -> EffectivePlan:
+def effective_plan_for_user(
+    user: Any,
+    now: datetime | None = None,
+    absence_dates: set[date] | None = None,
+) -> EffectivePlan:
     current = _as_utc(now) or datetime.now(timezone.utc)
     full_target = Decimal(str(getattr(user, "mpw", 0) or 0))
     if full_target <= 0:
@@ -80,6 +90,7 @@ def effective_plan_for_user(user: Any, now: datetime | None = None) -> Effective
             effective_target=Decimal("0"),
             partial_month_factor=Decimal("1"),
             onboarding_factor=Decimal("1"),
+            absence_working_days=0,
             onboarding_active=False,
             plan_started_at=_as_utc(getattr(user, "plan_started_at", None)),
             onboarding_started_at=_as_utc(getattr(user, "onboarding_started_at", None)),
@@ -91,14 +102,24 @@ def effective_plan_for_user(user: Any, now: datetime | None = None) -> Effective
     target = full_target
     partial_month_factor = Decimal("1")
     month_days = working_days_in_month(current.year, current.month)
+    month_start = date(current.year, current.month, 1)
+    month_end = date(current.year, current.month, calendar.monthrange(current.year, current.month)[1])
+    plan_start = month_start
     plan_started_at = _as_utc(getattr(user, "plan_started_at", None))
-    if plan_started_at and plan_started_at.year == current.year and plan_started_at.month == current.month and month_days > 0:
-        month_end = date(current.year, current.month, calendar.monthrange(current.year, current.month)[1])
-        remaining_from_start = working_days_between(plan_started_at.date(), month_end)
-        partial_month_factor = Decimal(remaining_from_start) / Decimal(month_days)
+    if plan_started_at and plan_started_at.year == current.year and plan_started_at.month == current.month:
+        plan_start = max(month_start, plan_started_at.date())
+
+    absence_days = 0
+    if month_days > 0:
+        working_days_without_absences = working_days_between(plan_start, month_end)
+        available_days = working_days_between(plan_start, month_end, absence_dates)
+        absence_days = max(0, working_days_without_absences - available_days)
+        partial_month_factor = Decimal(available_days) / Decimal(month_days)
         target *= partial_month_factor
-        if partial_month_factor < 1:
+        if plan_start > month_start:
             reasons.append("partial_month")
+        if absence_days > 0:
+            reasons.append("absence")
 
     onboarding_started_at = _as_utc(getattr(user, "onboarding_started_at", None))
     onboarding_until = _as_utc(getattr(user, "onboarding_until", None))
@@ -115,6 +136,7 @@ def effective_plan_for_user(user: Any, now: datetime | None = None) -> Effective
         effective_target=_round_q(max(Decimal("0"), target)),
         partial_month_factor=partial_month_factor,
         onboarding_factor=onboarding_factor,
+        absence_working_days=absence_days,
         onboarding_active=onboarding_active,
         plan_started_at=plan_started_at,
         onboarding_started_at=onboarding_started_at,

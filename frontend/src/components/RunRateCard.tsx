@@ -103,6 +103,7 @@ export function RunRateCard({ data, loading, error, compact }: RunRateCardProps)
       {/* Дни */}
       <p className="text-xs text-slate-400">
         День {data.days_elapsed} из {data.days_total} рабочих (осталось {data.days_remaining})
+        {data.absence_working_days > 0 && ` · отсутствия: ${data.absence_working_days} дн.`}
       </p>
     </div>
   )

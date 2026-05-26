@@ -21,13 +21,20 @@ from app.schemas.dashboard import (
     PeriodStats,
 )
 from app.services.planning import current_plan_window, effective_plan_for_user
+from app.services.absences import absence_dates_by_user, absence_dates_for_user, is_absent_on, month_bounds_for
 
 
-def _effective_capacity(users: list[User], now: datetime) -> Decimal:
+def _effective_capacity(users: list[User], now: datetime, absence_map: dict[UUID, set[date]] | None = None) -> Decimal:
+    absence_map = absence_map or {}
     return sum(
-        (effective_plan_for_user(user, now).effective_target for user in users),
+        (effective_plan_for_user(user, now, absence_map.get(user.id, set())).effective_target for user in users),
         Decimal("0"),
     )
+
+
+async def _absence_map_for_users(db: AsyncSession, users: list[User], now: datetime) -> dict[UUID, set[date]]:
+    month_start, month_end = month_bounds_for(now)
+    return await absence_dates_by_user(db, [user.id for user in users], month_start, month_end)
 
 async def get_capacity_gauge(db: AsyncSession) -> CapacityGauge:
     """
@@ -37,7 +44,8 @@ async def get_capacity_gauge(db: AsyncSession) -> CapacityGauge:
     now = datetime.now(timezone.utc)
     users_result = await db.execute(select(User).where(User.is_active.is_(True)))
     users = list(users_result.scalars().all())
-    capacity = _effective_capacity(users, now)
+    absence_map = await _absence_map_for_users(db, users, now)
+    capacity = _effective_capacity(users, now, absence_map)
 
     load_result = await db.execute(
         select(func.coalesce(func.sum(Task.estimated_q), 0)).where(
@@ -71,7 +79,9 @@ async def get_user_progress(db: AsyncSession, user_id: UUID) -> UserProgress | N
     if not user:
         return None
     now = datetime.now(timezone.utc)
-    plan = effective_plan_for_user(user, now)
+    month_start, month_end = month_bounds_for(now)
+    absence_dates = await absence_dates_for_user(db, user.id, month_start, month_end)
+    plan = effective_plan_for_user(user, now, absence_dates)
     earned = user.wallet_main
     target = plan.effective_target
     percent = float(earned / target * 100) if target > 0 else 0.0
@@ -85,6 +95,8 @@ async def get_user_progress(db: AsyncSession, user_id: UUID) -> UserProgress | N
         onboarding_active=plan.onboarding_active,
         onboarding_until=plan.onboarding_until,
         plan_started_at=plan.plan_started_at,
+        absence_working_days=plan.absence_working_days,
+        absent_today=is_absent_on(absence_dates, now),
         adjustment_reasons=plan.adjustment_reasons,
     )
 
@@ -104,7 +116,8 @@ async def get_team_summary(db: AsyncSession) -> TeamSummary:
     total_earned = Decimal("0")
 
     now = datetime.now(timezone.utc)
-    capacity = _effective_capacity(users, now)
+    absence_map = await _absence_map_for_users(db, users, now)
+    capacity = _effective_capacity(users, now, absence_map)
     load_result = await db.execute(
         select(func.coalesce(func.sum(Task.estimated_q), 0)).where(
             Task.status.in_(
@@ -140,7 +153,8 @@ async def get_team_summary(db: AsyncSession) -> TeamSummary:
             overdue_map[str(user_id)] = int(count or 0)
 
     for user in users:
-        plan = effective_plan_for_user(user, now)
+        user_absence_dates = absence_map.get(user.id, set())
+        plan = effective_plan_for_user(user, now, user_absence_dates)
         target = plan.effective_target
         percent = float(user.wallet_main / target * 100) if target > 0 else 0.0
         total_earned += user.wallet_main
@@ -151,7 +165,7 @@ async def get_team_summary(db: AsyncSession) -> TeamSummary:
 
         in_progress_q = in_progress_map.get(str(user.id), 0.0)
         has_overdue = overdue_map.get(str(user.id), 0) > 0
-        elapsed_days, total_days, _remaining_days = current_plan_window(user, now)
+        elapsed_days, total_days, _remaining_days = current_plan_window(user, now, user_absence_dates)
         expected_percent = (elapsed_days / total_days * 100) if total_days > 0 else 0.0
         is_at_risk = target > 0 and percent < expected_percent * 0.6
 
@@ -172,6 +186,8 @@ async def get_team_summary(db: AsyncSession) -> TeamSummary:
                 is_new_employee=bool(user.is_new_employee),
                 onboarding_active=plan.onboarding_active,
                 onboarding_until=plan.onboarding_until,
+                absence_working_days=plan.absence_working_days,
+                absent_today=is_absent_on(user_absence_dates, now),
                 adjustment_reasons=plan.adjustment_reasons,
             )
         )
@@ -278,8 +294,10 @@ async def get_run_rate(db: AsyncSession, user_id: UUID) -> RunRate | None:
         return None
 
     now = datetime.now(timezone.utc)
-    plan = effective_plan_for_user(user, now)
-    days_elapsed, days_total, days_remaining = current_plan_window(user, now)
+    month_start, month_end = month_bounds_for(now)
+    absence_dates = await absence_dates_for_user(db, user.id, month_start, month_end)
+    plan = effective_plan_for_user(user, now, absence_dates)
+    days_elapsed, days_total, days_remaining = current_plan_window(user, now, absence_dates)
 
     earned = float(user.wallet_main)
     mpw = float(plan.effective_target)
@@ -324,6 +342,8 @@ async def get_run_rate(db: AsyncSession, user_id: UUID) -> RunRate | None:
         is_new_employee=bool(user.is_new_employee),
         onboarding_active=plan.onboarding_active,
         onboarding_until=plan.onboarding_until,
+        absence_working_days=plan.absence_working_days,
+        absent_today=is_absent_on(absence_dates, now),
     )
 
 
@@ -342,7 +362,8 @@ async def get_burndown_data(db: AsyncSession) -> BurndownData:
 
     users_result = await db.execute(select(User).where(User.is_active.is_(True)))
     users = list(users_result.scalars().all())
-    total_capacity = float(_effective_capacity(users, now))
+    absence_map = await _absence_map_for_users(db, users, now)
+    total_capacity = float(_effective_capacity(users, now, absence_map))
     working_days = _working_days_in_month(year, month)
     if working_days == 0:
         return BurndownData(period=period, total_capacity=total_capacity, working_days=0, points=[])

@@ -20,6 +20,7 @@ from app.services.analytics import (
 from app.services.calibration import get_teamlead_accuracy
 from app.services.queue import run_dashboard_maintenance
 from app.services.focus import auto_pause_stale_focuses, get_focus_statuses
+from app.services.absences import absence_dates_by_user, month_bounds_for
 from app.services.planning import effective_plan_for_user
 from app.models.task import Task, TaskStatus
 from app.models.catalog import CatalogItem
@@ -86,8 +87,16 @@ async def capacity_history(
 
     users_result = await db.execute(select(User).where(User.is_active.is_(True), User.mpw > 0))
     active_users = list(users_result.scalars().all())
+    month_start, month_end = month_bounds_for(now)
+    absence_map = await absence_dates_by_user(db, [active_user.id for active_user in active_users], month_start, month_end)
     total_capacity = float(
-        sum((effective_plan_for_user(active_user, now).effective_target for active_user in active_users), 0)
+        sum(
+            (
+                effective_plan_for_user(active_user, now, absence_map.get(active_user.id, set())).effective_target
+                for active_user in active_users
+            ),
+            0,
+        )
     )
 
     month_names = {

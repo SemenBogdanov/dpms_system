@@ -1,5 +1,5 @@
 """Админка: закрытие периода (rollover), история периодов."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -11,6 +11,7 @@ from app.models.shop import PeriodSnapshot
 from app.models.task import Task, TaskStatus
 from app.models.transaction import QTransaction, WalletType
 from app.models.user import User, UserRole
+from app.services.absences import absence_dates_by_user
 from app.services.planning import effective_plan_for_user
 
 
@@ -61,7 +62,9 @@ async def rollover_period(db: AsyncSession, admin_id: UUID) -> dict:
     users_result = await db.execute(
         select(User).where(User.is_active.is_(True))
     )
-    users = users_result.scalars().all()
+    users = list(users_result.scalars().all())
+    period_end_date = (month_end - timedelta(days=1)).date()
+    absence_map = await absence_dates_by_user(db, [user.id for user in users], month_start.date(), period_end_date)
     total_main_reset = 0.0
     total_karma_burned = 0.0
 
@@ -80,7 +83,7 @@ async def rollover_period(db: AsyncSession, admin_id: UUID) -> dict:
         )
         tasks_completed = int(tasks_count_result.scalar() or 0)
 
-        period_plan = effective_plan_for_user(user, month_start)
+        period_plan = effective_plan_for_user(user, month_start, absence_map.get(user.id, set()))
 
         db.add(
             PeriodSnapshot(

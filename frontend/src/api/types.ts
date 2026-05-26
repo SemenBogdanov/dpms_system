@@ -17,6 +17,7 @@ export type TaskStatus =
   | 'cancelled'
 export type TaskPriority = 'low' | 'medium' | 'high' | 'critical'
 export type KnowledgeStatus = 'draft' | 'published'
+export type AbsenceType = 'vacation' | 'sick_leave' | 'day_off' | 'other'
 
 export interface User {
   id: string
@@ -175,6 +176,32 @@ export interface KnowledgeArticleUpdate {
   sort_order?: number
 }
 
+export interface UserAbsence {
+  id: string
+  user_id: string
+  user_name: string
+  user_email: string
+  start_date: string
+  end_date: string
+  type: AbsenceType
+  affects_plan: boolean
+  comment: string | null
+  source: string
+  working_days: number
+  created_by_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AbsencePayload {
+  user_id: string
+  start_date: string
+  end_date: string
+  type: AbsenceType
+  affects_plan: boolean
+  comment?: string | null
+}
+
 /** Задача в очереди с флагами can_pull, locked */
 export interface QueueTaskResponse {
   id: string
@@ -241,6 +268,8 @@ export interface UserProgress {
   onboarding_active: boolean
   onboarding_until: string | null
   plan_started_at: string | null
+  absence_working_days: number
+  absent_today: boolean
   adjustment_reasons: string[]
 }
 
@@ -260,6 +289,8 @@ export interface TeamMemberSummary {
   is_new_employee: boolean
   onboarding_active: boolean
   onboarding_until: string | null
+  absence_working_days: number
+  absent_today: boolean
   adjustment_reasons: string[]
 }
 
@@ -557,6 +588,8 @@ export interface RunRate {
   is_new_employee: boolean
   onboarding_active: boolean
   onboarding_until: string | null
+  absence_working_days: number
+  absent_today: boolean
 }
 
 /** Позиция в запросе калькулятора */
