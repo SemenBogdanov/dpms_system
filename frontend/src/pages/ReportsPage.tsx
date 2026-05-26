@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/client'
 import type {
   ActivityEvent,
+  EmployeeScorecardResponse,
+  EmployeeScorecardRow,
   EmployeePeriodSummary,
   EmployeeSummaryTask,
   PeriodHistoryItem,
@@ -12,7 +14,7 @@ import type {
 import { MetricCard } from '@/components/MetricCard'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
-import { FileText, Search } from 'lucide-react'
+import { BarChart3, FileText, Search } from 'lucide-react'
 
 const eventLabels: Record<string, string> = {
   login_success: 'Вход',
@@ -66,6 +68,74 @@ function taskStatusLabel(status: string): string {
     cancelled: 'Отменена',
   }
   return labels[status] ?? status
+}
+
+function scoreTone(score: number): string {
+  if (score >= 80) return 'bg-emerald-50 text-emerald-700 ring-emerald-100'
+  if (score >= 60) return 'bg-amber-50 text-amber-700 ring-amber-100'
+  return 'bg-red-50 text-red-700 ring-red-100'
+}
+
+function ScorecardTable({ rows }: { rows: EmployeeScorecardRow[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[1180px] text-sm">
+        <thead>
+          <tr className="border-b border-slate-200 bg-slate-50">
+            <th className="px-3 py-2 text-left font-medium text-slate-600">Место</th>
+            <th className="px-3 py-2 text-left font-medium text-slate-600">Сотрудник</th>
+            <th className="px-3 py-2 text-left font-medium text-slate-600">Индекс</th>
+            <th className="px-3 py-2 text-left font-medium text-slate-600">Факт / план</th>
+            <th className="px-3 py-2 text-left font-medium text-slate-600">Задачи</th>
+            <th className="px-3 py-2 text-left font-medium text-slate-600">Приемка</th>
+            <th className="px-3 py-2 text-left font-medium text-slate-600">Сроки</th>
+            <th className="px-3 py-2 text-left font-medium text-slate-600">Фокус</th>
+            <th className="px-3 py-2 text-left font-medium text-slate-600">QS</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.user_id} className="border-b border-slate-100 last:border-0">
+              <td className="px-3 py-3 font-mono text-sm font-semibold text-slate-500">#{row.rank}</td>
+              <td className="px-3 py-3">
+                <div className="font-medium text-slate-900">{row.full_name}</div>
+                <div className="text-xs text-slate-500">Лига {row.league} · {row.role}</div>
+              </td>
+              <td className="px-3 py-3">
+                <span className={cn('inline-flex rounded-full px-2.5 py-1 text-sm font-semibold ring-1', scoreTone(row.score))}>
+                  {Number(row.score).toFixed(1)}
+                </span>
+                <div className="mt-1 text-xs text-slate-400">
+                  {Number(row.efficiency_score).toFixed(0)} / {Number(row.acceptance_score).toFixed(0)} / {Number(row.reliability_score).toFixed(0)} / {Number(row.focus_score).toFixed(0)}
+                </div>
+              </td>
+              <td className="px-3 py-3 text-slate-700">
+                <div className="font-medium">{Number(row.completed_q).toFixed(1)} / {Number(row.plan_q).toFixed(1)} Q</div>
+                <div className="text-xs text-slate-500">{Number(row.efficiency_percent).toFixed(1)}%</div>
+              </td>
+              <td className="px-3 py-3 text-slate-700">
+                <div className="font-medium">{row.completed_tasks_count}</div>
+                <div className="text-xs text-slate-500">high {row.high_priority_completed_count} · critical {row.critical_completed_count}</div>
+              </td>
+              <td className="px-3 py-3 text-slate-700">
+                <div className="font-medium">{Number(row.first_pass_rate).toFixed(0)}%</div>
+                <div className="text-xs text-slate-500">с первого раза {row.first_pass_tasks_count} · возвраты {row.rejection_events_count}</div>
+              </td>
+              <td className="px-3 py-3 text-slate-700">
+                <div className="font-medium">{row.completed_late_count + row.active_overdue_count}</div>
+                <div className="text-xs text-slate-500">заверш. {row.completed_late_count} · актив. {row.active_overdue_count}</div>
+              </td>
+              <td className="px-3 py-3 text-slate-700">
+                <div className="font-medium">{Number(row.focus_hours).toFixed(1)} ч</div>
+                <div className="text-xs text-slate-500">старт {row.focus_start_count} · пауз {row.focus_pause_count} · покрытие {Number(row.focus_task_coverage_percent).toFixed(0)}%</div>
+              </td>
+              <td className="px-3 py-3 font-medium text-slate-700">{Number(row.quality_score).toFixed(0)}%</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 function TaskSummaryTable({ title, tasks }: { title: string; tasks: EmployeeSummaryTask[] }) {
@@ -155,11 +225,16 @@ export function ReportsPage() {
   const [summaryStartDate, setSummaryStartDate] = useState(monthStartIso())
   const [summaryEndDate, setSummaryEndDate] = useState(todayIso())
   const [employeeSummary, setEmployeeSummary] = useState<EmployeePeriodSummary | null>(null)
+  const [scorecardStartDate, setScorecardStartDate] = useState(monthStartIso())
+  const [scorecardEndDate, setScorecardEndDate] = useState(todayIso())
+  const [scorecard, setScorecard] = useState<EmployeeScorecardResponse | null>(null)
   const [loading, setLoading] = useState(false)
   const [summaryLoading, setSummaryLoading] = useState(false)
+  const [scorecardLoading, setScorecardLoading] = useState(false)
   const [exportTasksLoading, setExportTasksLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [summaryError, setSummaryError] = useState<string | null>(null)
+  const [scorecardError, setScorecardError] = useState<string | null>(null)
 
   useEffect(() => {
     api.get<PeriodHistoryItem[]>('/api/admin/period-history').then(setHistory).catch(() => setHistory([]))
@@ -209,6 +284,22 @@ export function ReportsPage() {
       })
       .finally(() => setSummaryLoading(false))
   }, [selectedUserId, summaryEndDate, summaryStartDate])
+
+  const loadScorecard = useCallback(() => {
+    setScorecardLoading(true)
+    setScorecardError(null)
+    api
+      .get<EmployeeScorecardResponse>('/api/reports/scorecard', {
+        start_date: scorecardStartDate,
+        end_date: scorecardEndDate,
+      })
+      .then(setScorecard)
+      .catch((e) => {
+        setScorecardError(e instanceof Error ? e.message : 'Ошибка')
+        setScorecard(null)
+      })
+      .finally(() => setScorecardLoading(false))
+  }, [scorecardEndDate, scorecardStartDate])
 
   const handleExport = () => {
     if (!report) return
@@ -322,6 +413,59 @@ export function ReportsPage() {
       </div>
 
       {error && <p className="text-red-600">{error}</p>}
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-medium text-slate-800">Рейтинг сотрудников</h2>
+            <p className="text-sm text-slate-500">Индекс: эффективность 35%, приемка 25%, сроки 20%, фокус 10%, QS 10%.</p>
+          </div>
+          <button
+            type="button"
+            onClick={loadScorecard}
+            disabled={scorecardLoading}
+            className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          >
+            <BarChart3 className="h-4 w-4" />
+            {scorecardLoading ? 'Формируется...' : 'Сформировать рейтинг'}
+          </button>
+        </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-[170px_170px_1fr]">
+          <label className="space-y-1 text-sm">
+            <span className="font-medium text-slate-600">Начало</span>
+            <input
+              type="date"
+              value={scorecardStartDate}
+              onChange={(e) => setScorecardStartDate(e.target.value)}
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+            />
+          </label>
+          <label className="space-y-1 text-sm">
+            <span className="font-medium text-slate-600">Окончание</span>
+            <input
+              type="date"
+              value={scorecardEndDate}
+              onChange={(e) => setScorecardEndDate(e.target.value)}
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+            />
+          </label>
+          {scorecard && (
+            <div className="flex items-end justify-start text-sm text-slate-500">
+              {scorecard.start_date} — {scorecard.end_date} · сотрудников: {scorecard.rows.length}
+            </div>
+          )}
+        </div>
+        {scorecardError && <p className="mt-3 text-sm text-red-600">{scorecardError}</p>}
+        {scorecard && (
+          <div className="mt-4">
+            {scorecard.rows.length > 0 ? (
+              <ScorecardTable rows={scorecard.rows} />
+            ) : (
+              <p className="text-sm text-slate-500">Нет сотрудников для рейтинга.</p>
+            )}
+          </div>
+        )}
+      </section>
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">

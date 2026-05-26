@@ -9,9 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, require_role
 from app.models.user import User
 from app.schemas.activity import EmployeePeriodSummary
-from app.schemas.reports import PeriodReport
+from app.schemas.reports import EmployeeScorecardResponse, PeriodReport
 from app.services.activity import generate_employee_period_summary
-from app.services.reports import generate_period_report
+from app.services.reports import generate_employee_scorecard, generate_period_report
 
 router = APIRouter()
 
@@ -38,6 +38,19 @@ async def get_employee_summary(
         if str(exc) == "user_not_found":
             raise HTTPException(status_code=404, detail="Пользователь не найден")
         raise
+
+
+@router.get("/scorecard", response_model=EmployeeScorecardResponse)
+async def get_employee_scorecard(
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    user: User = Depends(require_role("admin", "teamlead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Рейтинг сотрудников за период: прозрачная scorecard v1."""
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="Дата окончания не может быть раньше даты начала")
+    return await generate_employee_scorecard(db, start_date=start_date, end_date=end_date)
 
 
 @router.get("/{period}", response_model=PeriodReport)

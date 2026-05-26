@@ -502,6 +502,44 @@ export interface PeriodReport {
   utilization_percent: number
 }
 
+export interface EmployeeScorecardRow {
+  rank: number
+  user_id: string
+  full_name: string
+  role: UserRole
+  league: League
+  plan_q: number
+  completed_q: number
+  efficiency_percent: number
+  completed_tasks_count: number
+  first_pass_tasks_count: number
+  first_pass_rate: number
+  rejection_events_count: number
+  active_overdue_count: number
+  completed_late_count: number
+  high_priority_completed_count: number
+  critical_completed_count: number
+  focus_hours: number
+  focus_start_count: number
+  focus_pause_count: number
+  avg_pauses_per_task: number
+  focus_task_coverage_percent: number
+  quality_score: number
+  efficiency_score: number
+  acceptance_score: number
+  reliability_score: number
+  focus_score: number
+  score: number
+}
+
+export interface EmployeeScorecardResponse {
+  start_date: string
+  end_date: string
+  generated_at: string
+  weights: Record<string, number>
+  rows: EmployeeScorecardRow[]
+}
+
 export interface ActivityEvent {
   id: string
   actor_id: string
