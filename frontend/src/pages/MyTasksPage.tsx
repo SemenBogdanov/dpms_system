@@ -8,8 +8,6 @@ import { TaskDetailModal } from '@/components/TaskDetailModal'
 import toast from 'react-hot-toast'
 import { BugfixModal } from '@/components/BugfixModal'
 
-const MAX_FOCUS_SECONDS = 4 * 3600
-
 type TaskWithComputedTime = Task & {
   is_focused: boolean
   _elapsedSeconds: number
@@ -161,7 +159,6 @@ export function MyTasksPage() {
         const started = new Date(t.focus_started_at).getTime()
         elapsedSeconds += Math.max(0, Math.floor((now - started) / 1000))
       }
-      elapsedSeconds = Math.min(elapsedSeconds, MAX_FOCUS_SECONDS)
       return { ...t, is_focused: isFocusedComputed, _elapsedSeconds: elapsedSeconds }
     })
   }, [tasks, now])
@@ -394,7 +391,6 @@ export function MyTasksPage() {
                       {isFocused && (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-emerald-700">
                           🟢 В фокусе · ⏱ {elapsedLabel}
-                          {t._elapsedSeconds >= MAX_FOCUS_SECONDS && ' · лимит'}
                         </span>
                       )}
                       {!isFocused && hasActive && (

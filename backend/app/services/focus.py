@@ -22,14 +22,13 @@ async def _get_user(db: AsyncSession, user_id) -> User | None:
 
 
 def add_bounded_focus_time(task: Task, now: datetime) -> int:
-    """Accrue focus time up to the hard 4h task limit and stop the timer."""
+    """Accrue at most 4h for one continuous focus session and stop the timer."""
     if task.focus_started_at is None:
         return 0
     current = max(int(task.active_seconds or 0), 0)
-    remaining = max(MAX_FOCUS_SECONDS - current, 0)
     delta = (now - task.focus_started_at).total_seconds()
-    added = min(max(int(delta), 0), remaining)
-    task.active_seconds = min(current + added, MAX_FOCUS_SECONDS)
+    added = min(max(int(delta), 0), MAX_FOCUS_SECONDS)
+    task.active_seconds = current + added
     task.focus_started_at = None
     return added
 
@@ -50,8 +49,6 @@ async def start_focus(db: AsyncSession, user_id, task_id) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="В фокус можно поставить только задачу в работе")
     if task.focus_started_at is not None:
         raise HTTPException(status_code=400, detail="Задача уже в фокусе")
-    if int(task.active_seconds or 0) >= MAX_FOCUS_SECONDS:
-        raise HTTPException(status_code=400, detail="Лимит фокуса 4 часа исчерпан")
 
     paused_task_id = None
 
@@ -159,8 +156,7 @@ async def auto_pause_stale_focuses(db: AsyncSession) -> int:
         if not task.focus_started_at:
             continue
         delta = (now - task.focus_started_at).total_seconds()
-        current = max(int(task.active_seconds or 0), 0)
-        if delta < MAX_FOCUS_SECONDS and current + int(max(delta, 0)) < MAX_FOCUS_SECONDS:
+        if delta < MAX_FOCUS_SECONDS:
             continue
         added = add_bounded_focus_time(task, now)
         count += 1
@@ -293,7 +289,7 @@ async def get_focus_statuses(db: AsyncSession) -> list[dict[str, Any]]:
             elapsed = task.active_seconds
             if task.focus_started_at:
                 elapsed += int((now - task.focus_started_at).total_seconds())
-            minutes = round(min(elapsed, MAX_FOCUS_SECONDS) / 60, 1)
+            minutes = round(elapsed / 60, 1)
             status = FocusStatus(
                 user_id=u.id,
                 full_name=u.full_name,
