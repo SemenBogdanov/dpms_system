@@ -61,11 +61,13 @@ export function exportTaskImportTemplate(): void {
 /** Справочник активных операций, чтобы менеджер мог скопировать catalog_item_id в шаблон. */
 export function exportTaskImportCatalog(catalog: CatalogItem[]): void {
   const rows = [
-    'catalog_item_id;catalog_item_name;category;complexity;base_cost_q;min_league',
+    'sort_order;catalog_item_id;catalog_item_name;category;complexity;base_cost_q;min_league',
     ...catalog
       .filter((item) => item.is_active)
+      .sort((a, b) => (a.sort_order ?? 100) - (b.sort_order ?? 100) || a.name.localeCompare(b.name, 'ru'))
       .map((item) =>
         [
+          csvCell(item.sort_order ?? 100),
           csvCell(item.id),
           csvCell(item.name),
           csvCell(item.category),

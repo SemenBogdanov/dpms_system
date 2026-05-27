@@ -15,10 +15,11 @@ export interface CreateEditPayload {
   complexity: Complexity
   base_cost_q: number
   min_league: League
+  sort_order: number
   description: string
 }
 
-const CATEGORIES: CatalogCategory[] = ['widget', 'etl', 'api', 'docs']
+const CATEGORIES: CatalogCategory[] = ['widget', 'etl', 'api', 'docs', 'proactive']
 const COMPLEXITIES: Complexity[] = ['S', 'M', 'L', 'XL']
 const LEAGUES: League[] = ['C', 'B', 'A']
 
@@ -28,6 +29,7 @@ export function CatalogModal({ item, onClose, onSave, isOpen }: CatalogModalProp
   const [complexity, setComplexity] = useState<Complexity>('S')
   const [base_cost_q, setBaseCostQ] = useState<string>('1')
   const [min_league, setMinLeague] = useState<League>('C')
+  const [sortOrder, setSortOrder] = useState('100')
   const [description, setDescription] = useState('')
 
   useEffect(() => {
@@ -37,6 +39,7 @@ export function CatalogModal({ item, onClose, onSave, isOpen }: CatalogModalProp
       setComplexity(item.complexity)
       setBaseCostQ(String(item.base_cost_q))
       setMinLeague(item.min_league)
+      setSortOrder(String(item.sort_order ?? 100))
       setDescription(item.description ?? '')
     } else {
       setName('')
@@ -44,6 +47,7 @@ export function CatalogModal({ item, onClose, onSave, isOpen }: CatalogModalProp
       setComplexity('S')
       setBaseCostQ('1')
       setMinLeague('C')
+      setSortOrder('100')
       setDescription('')
     }
   }, [item, isOpen])
@@ -51,9 +55,19 @@ export function CatalogModal({ item, onClose, onSave, isOpen }: CatalogModalProp
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     const cost = parseFloat(base_cost_q)
+    const order = Number.parseInt(sortOrder, 10)
     if (!name.trim()) return
     if (Number.isNaN(cost) || cost <= 0) return
-    onSave({ name: name.trim(), category, complexity, base_cost_q: cost, min_league, description: description.trim() || '' })
+    if (Number.isNaN(order) || order < 0) return
+    onSave({
+      name: name.trim(),
+      category,
+      complexity,
+      base_cost_q: cost,
+      min_league,
+      sort_order: order,
+      description: description.trim() || '',
+    })
     onClose()
   }
 
@@ -131,6 +145,18 @@ export function CatalogModal({ item, onClose, onSave, isOpen }: CatalogModalProp
                 <option key={l} value={l}>{l}</option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700">Порядковый номер</label>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={sortOrder}
+              onChange={(e) => setSortOrder(e.target.value)}
+              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              required
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700">Описание</label>

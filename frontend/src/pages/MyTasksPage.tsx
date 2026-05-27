@@ -310,6 +310,7 @@ export function MyTasksPage() {
 
   const isTeamleadOrAdmin =
     currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
+  const isAdmin = currentUser?.role === 'admin'
   const validatorNames: Record<string, string> = {}
   users.forEach((u) => {
     validatorNames[u.id] = u.full_name
@@ -521,12 +522,16 @@ export function MyTasksPage() {
         onClose={() => setDetailTask(null)}
         users={users}
         isTeamleadOrAdmin={isTeamleadOrAdmin}
-        onOpenBugfix={(t) => {
-          setDetailTask(null)
-          setBugfixParent(t)
-          setBugfixTitle('')
-          setBugfixDescription('')
-        }}
+        onOpenBugfix={
+          isAdmin
+            ? (t) => {
+                setDetailTask(null)
+                setBugfixParent(t)
+                setBugfixTitle('')
+                setBugfixDescription('')
+              }
+            : undefined
+        }
         onOpenDeadline={(t) => {
           setDetailTask(null)
           setDeadlineTask(t)

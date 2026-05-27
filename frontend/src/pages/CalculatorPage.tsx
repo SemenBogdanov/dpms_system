@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
@@ -7,7 +7,8 @@ import type { CartRow } from '@/components/EstimateCart'
 import { CatalogPicker } from '@/components/CatalogPicker'
 import { EstimateCart } from '@/components/EstimateCart'
 import { TagInput } from '@/components/TagInput'
-import { Paperclip, X } from 'lucide-react'
+import { Paperclip, Search, X } from 'lucide-react'
+import { useAuth } from '@/contexts/AuthContext'
 
 const MAX_TASK_ATTACHMENTS = 5
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
@@ -22,6 +23,7 @@ function formatAttachmentSize(bytes: number): string {
 
 export function CalculatorPage() {
   const navigate = useNavigate()
+  const { user: currentUser } = useAuth()
   const [catalog, setCatalog] = useState<CatalogItem[]>([])
   const [teamleads, setTeamleads] = useState<User[]>([])
   const [cart, setCart] = useState<CartRow[]>([])
@@ -37,6 +39,9 @@ export function CalculatorPage() {
   const [dueDate, setDueDate] = useState('')
   const [creating, setCreating] = useState(false)
   const [categoryTab, setCategoryTab] = useState<'all' | 'widget' | 'etl' | 'api' | 'docs' | 'proactive'>('all')
+  const [catalogSearch, setCatalogSearch] = useState('')
+
+  const isAdmin = currentUser?.role === 'admin'
 
   useEffect(() => {
     api.get<CatalogItem[]>('/api/catalog').then(setCatalog).catch(() => setCatalog([]))
@@ -46,6 +51,12 @@ export function CalculatorPage() {
   useEffect(() => {
     if (teamleads.length > 0 && !createEstimatorId) setCreateEstimatorId(teamleads[0].id)
   }, [teamleads, createEstimatorId])
+
+  useEffect(() => {
+    if (!isAdmin && createPriority === 'critical') {
+      setCreatePriority('high')
+    }
+  }, [createPriority, isAdmin])
 
   const addToCart = (item: CatalogItem) => {
     setCart((prev) => {
@@ -158,7 +169,8 @@ export function CalculatorPage() {
     }
     if (cart.length === 0) return
     const hasProactive = cart.some((r) => r.catalog.category === 'proactive')
-    const priorityToSend = hasProactive && (createPriority === 'critical' || createPriority === 'high') ? 'medium' : createPriority
+    const adminSafePriority = !isAdmin && createPriority === 'critical' ? 'high' : createPriority
+    const priorityToSend = hasProactive && (adminSafePriority === 'critical' || adminSafePriority === 'high') ? 'medium' : adminSafePriority
     setCreating(true)
     try {
       const task = await api.post<Task>(
@@ -197,10 +209,20 @@ export function CalculatorPage() {
     }
   }
 
-  const filteredCatalog =
-    categoryTab === 'all'
-      ? catalog
-      : catalog.filter((item) => item.category === categoryTab)
+  const filteredCatalog = useMemo(() => {
+    const query = catalogSearch.trim().toLowerCase()
+    return catalog.filter((item) => {
+      if (categoryTab !== 'all' && item.category !== categoryTab) return false
+      if (!query) return true
+      return [
+        item.name,
+        item.description ?? '',
+        item.category,
+        item.complexity,
+        item.min_league,
+      ].some((value) => value.toLowerCase().includes(query))
+    })
+  }, [catalog, catalogSearch, categoryTab])
 
   const tabs: Array<{ key: typeof categoryTab; label: string }> = [
     { key: 'all', label: 'Все' },
@@ -265,6 +287,26 @@ export function CalculatorPage() {
               </button>
             ))}
           </div>
+          <div className="mb-3 flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1.5">
+            <Search className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+            <input
+              type="search"
+              value={catalogSearch}
+              onChange={(e) => setCatalogSearch(e.target.value)}
+              placeholder="Поиск операции"
+              className="min-w-0 flex-1 bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
+            />
+            {catalogSearch && (
+              <button
+                type="button"
+                onClick={() => setCatalogSearch('')}
+                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                aria-label="Очистить поиск"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
           <CatalogPicker catalog={filteredCatalog} onAdd={addToCart} />
         </div>
         <div className="w-full md:flex-1 md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-180px)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -322,14 +364,15 @@ export function CalculatorPage() {
               </label>
               {(() => {
                 const hasProactive = cart.some((r) => r.catalog.category === 'proactive')
-                const effectivePriority = hasProactive && (createPriority === 'critical' || createPriority === 'high') ? 'medium' : createPriority
+                const adminSafePriority = !isAdmin && createPriority === 'critical' ? 'high' : createPriority
+                const effectivePriority = hasProactive && (adminSafePriority === 'critical' || adminSafePriority === 'high') ? 'medium' : adminSafePriority
                 const priorityOptions = hasProactive
                   ? [
                       { value: 'medium', label: '🟡 Средний' },
                       { value: 'low', label: '🟢 Низкий' },
                     ]
                   : [
-                      { value: 'critical', label: '🔴 Критический' },
+                      ...(isAdmin ? [{ value: 'critical', label: '🔴 Критический' }] : []),
                       { value: 'high', label: '🟠 Высокий' },
                       { value: 'medium', label: '🟡 Средний' },
                       { value: 'low', label: '🟢 Низкий' },
@@ -354,7 +397,7 @@ export function CalculatorPage() {
                     )}
                     {!hasProactive && (
                       <p className="mt-1 text-xs text-slate-400">
-                        {priorityHint[createPriority] ?? ''}
+                        {priorityHint[effectivePriority] ?? ''}
                       </p>
                     )}
                   </>

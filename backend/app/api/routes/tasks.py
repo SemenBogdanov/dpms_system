@@ -31,6 +31,7 @@ from app.services.activity import record_activity_event
 from app.services.queue import create_bugfix
 from app.services.focus import start_focus, pause_focus, correct_active_time
 from app.services.task_import import commit_task_import, preview_task_import
+from app.services.task_policy import ensure_critical_priority_allowed
 
 router = APIRouter()
 
@@ -160,7 +161,7 @@ async def preview_tasks_import(
     db: AsyncSession = Depends(get_db),
 ):
     """Проверить CSV со списком задач без записи в БД."""
-    return await preview_task_import(db, file)
+    return await preview_task_import(db, file, user)
 
 
 @router.post("/import", response_model=TaskImportCommitResponse)
@@ -251,6 +252,7 @@ async def create_task(
     db: AsyncSession = Depends(get_db),
 ):
     """Создать задачу (с оценкой или без)."""
+    ensure_critical_priority_allowed(user, body.priority)
     if body.task_type == TaskType.proactive and body.priority in (TaskPriority.critical, TaskPriority.high):
         raise HTTPException(
             status_code=400,
@@ -293,6 +295,9 @@ async def update_task(
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    if body.priority is not None and body.priority != task.priority:
+        if TaskPriority.critical in (body.priority, task.priority):
+            ensure_critical_priority_allowed(user, TaskPriority.critical)
     if body.title is not None:
         task.title = body.title
     if body.description is not None:
@@ -380,7 +385,7 @@ async def cancel_task(
 @router.post("/bugfix", response_model=TaskRead)
 async def create_bugfix_task(
     body: CreateBugfixRequest,
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """

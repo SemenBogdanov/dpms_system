@@ -41,8 +41,7 @@ export function CatalogPage() {
     setLoading(false)
   }, [loadItems])
 
-  const canEdit =
-    currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
+  const canEdit = currentUser?.role === 'admin'
 
   const handleCreate = () => {
     setModalItem(null)
@@ -119,6 +118,7 @@ export function CatalogPage() {
           <option value="etl">etl</option>
           <option value="api">api</option>
           <option value="docs">docs</option>
+          <option value="proactive">proactive</option>
         </select>
 
         <select
@@ -167,6 +167,9 @@ export function CatalogPage() {
           <thead className="bg-slate-50">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
+                №
+              </th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
                 Название
               </th>
               <th className="px-4 py-3 text-left text-xs font-medium text-slate-600">
@@ -200,6 +203,9 @@ export function CatalogPage() {
                   !item.is_active && 'bg-slate-100 opacity-75'
                 )}
               >
+                <td className="whitespace-nowrap px-4 py-3 text-sm text-slate-500">
+                  {item.sort_order ?? 100}
+                </td>
                 <td className="px-4 py-3 text-sm font-medium text-slate-900">
                   {item.name}
                 </td>

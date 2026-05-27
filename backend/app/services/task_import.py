@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.catalog import CatalogItem
 from app.models.task import Task, TaskPriority, TaskStatus, TaskType
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.task import (
     TaskImportCommitResponse,
     TaskImportIssue,
@@ -275,6 +275,7 @@ def _breakdown(catalog_item: CatalogItem, quantity: int, estimated_q: Decimal) -
 async def parse_task_import(
     db: AsyncSession,
     upload: UploadFile,
+    user: User,
 ) -> TaskImportParseResult:
     """Parse and validate a CSV task import without writing tasks."""
     content = await upload.read()
@@ -342,6 +343,14 @@ async def parse_task_import(
                     row_number=row_number,
                     field="priority",
                     message="Приоритет должен быть low, medium, high или critical",
+                )
+            )
+        if priority == TaskPriority.critical and user.role != UserRole.admin:
+            errors.append(
+                TaskImportIssue(
+                    row_number=row_number,
+                    field="priority",
+                    message="Критический приоритет может установить только администратор",
                 )
             )
 
@@ -487,9 +496,10 @@ async def parse_task_import(
 async def preview_task_import(
     db: AsyncSession,
     upload: UploadFile,
+    user: User,
 ) -> TaskImportPreview:
     """Return validated task import preview; no database writes."""
-    return (await parse_task_import(db, upload)).preview
+    return (await parse_task_import(db, upload, user)).preview
 
 
 async def commit_task_import(
@@ -498,7 +508,7 @@ async def commit_task_import(
     user: User,
 ) -> TaskImportCommitResponse:
     """Validate and create queued tasks in one transaction."""
-    parsed = await parse_task_import(db, upload)
+    parsed = await parse_task_import(db, upload, user)
     if parsed.preview.has_errors:
         raise HTTPException(
             status_code=400,

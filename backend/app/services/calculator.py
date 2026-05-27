@@ -7,13 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.catalog import CatalogItem, CatalogCategory, Complexity
 from app.models.task import Task, TaskStatus, TaskType, TaskPriority
-from app.models.user import League
+from app.models.user import League, User
 from app.schemas.calculator import (
     EstimateRequest,
     EstimateResponse,
     EstimateBreakdownItem,
     CreateTaskFromCalcRequest,
 )
+from app.services.task_policy import ensure_critical_priority_allowed
 
 _LEAGUE_ORDER = {League.C: 0, League.B: 1, League.A: 2}
 _COMPLEXITY_ORDER = {Complexity.S: 0, Complexity.M: 1, Complexity.L: 2, Complexity.XL: 3}
@@ -95,6 +96,7 @@ def _max_complexity(complexities: list[str]) -> str:
 async def create_task_from_calc(
     db: AsyncSession,
     request: CreateTaskFromCalcRequest,
+    user: User,
 ) -> Task:
     """
     Создать задачу из калькулятора: расчёт + создание Task со статусом in_queue.
@@ -115,6 +117,7 @@ async def create_task_from_calc(
         task_type = TaskType.widget
     complexity_enum = Complexity(complexity_str) if complexity_str in ("S", "M", "L", "XL") else Complexity.S
     priority_enum = TaskPriority(request.priority) if request.priority in ("low", "medium", "high", "critical") else TaskPriority.medium
+    ensure_critical_priority_allowed(user, priority_enum)
     if task_type == TaskType.proactive and priority_enum in (TaskPriority.critical, TaskPriority.high):
         from fastapi import HTTPException
         raise HTTPException(

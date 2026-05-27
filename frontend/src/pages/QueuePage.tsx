@@ -97,6 +97,7 @@ export function QueuePage() {
   const [editTags, setEditTags] = useState('')
   const [editBusy, setEditBusy] = useState(false)
   const [importModalOpen, setImportModalOpen] = useState(false)
+  const canSetCriticalPriority = currentUser?.role === 'admin'
 
   const loadQueue = () => {
     if (!currentUser) return
@@ -221,6 +222,7 @@ export function QueuePage() {
 
   const allTags = [...new Set(displayList.flatMap((t) => (t as QueueTaskResponse).tags ?? (t as Task).tags ?? []))].sort()
   const isTeamleadOrAdmin = currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
+  const isAdmin = currentUser?.role === 'admin'
 
   const doPull = async () => {
     if (!confirmPull || !currentUser) return
@@ -743,7 +745,7 @@ export function QueuePage() {
         onClose={() => setDetailTask(null)}
         users={users}
         isTeamleadOrAdmin={isTeamleadOrAdmin}
-        onOpenBugfix={handleOpenBugfix}
+        onOpenBugfix={isAdmin ? handleOpenBugfix : undefined}
         onOpenDeadline={(task) => {
           setDetailTask(null)
           const hours = prompt('Срок выполнения (часов от сейчас):')
@@ -815,13 +817,23 @@ export function QueuePage() {
                   <select
                     value={editPriority}
                     onChange={(e) => setEditPriority(e.target.value as 'low' | 'medium' | 'high' | 'critical')}
+                    disabled={!canSetCriticalPriority && editPriority === 'critical'}
                     className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                   >
-                    <option value="low">low</option>
-                    <option value="medium">medium</option>
+                    {(canSetCriticalPriority || editPriority === 'critical') && (
+                      <option value="critical" disabled={!canSetCriticalPriority}>
+                        critical
+                      </option>
+                    )}
                     <option value="high">high</option>
-                    <option value="critical">critical</option>
+                    <option value="medium">medium</option>
+                    <option value="low">low</option>
                   </select>
+                  {!canSetCriticalPriority && editPriority === 'critical' && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Критический приоритет меняет только администратор.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Теги</label>

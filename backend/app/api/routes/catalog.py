@@ -1,8 +1,8 @@
-"""API каталога операций. GET — публичный; POST/PATCH/DELETE — admin/teamlead."""
+"""API каталога операций. GET — публичный; изменения — только admin."""
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_role
@@ -22,7 +22,7 @@ async def list_catalog(
     db: AsyncSession = Depends(get_db),
 ):
     """Справочник операций с фильтрами."""
-    stmt = select(CatalogItem).order_by(CatalogItem.sort_order)
+    stmt = select(CatalogItem).order_by(CatalogItem.sort_order.asc(), CatalogItem.name.asc())
     if category is not None:
         stmt = stmt.where(CatalogItem.category == category)
     if complexity is not None:
@@ -30,7 +30,13 @@ async def list_catalog(
     if is_active is not None:
         stmt = stmt.where(CatalogItem.is_active == is_active)
     if search and search.strip():
-        stmt = stmt.where(CatalogItem.name.ilike(f"%{search.strip()}%"))
+        search_term = f"%{search.strip()}%"
+        stmt = stmt.where(
+            or_(
+                CatalogItem.name.ilike(search_term),
+                CatalogItem.description.ilike(search_term),
+            )
+        )
     result = await db.execute(stmt)
     return list(result.scalars().all())
 
@@ -38,7 +44,7 @@ async def list_catalog(
 @router.post("", response_model=CatalogItemRead)
 async def create_catalog_item(
     body: CatalogItemCreate,
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """Добавить позицию в каталог."""
@@ -49,6 +55,7 @@ async def create_catalog_item(
         base_cost_q=body.base_cost_q,
         description=body.description,
         min_league=body.min_league,
+        sort_order=body.sort_order,
         is_active=body.is_active,
     )
     db.add(item)
@@ -74,7 +81,7 @@ async def get_catalog_item(
 async def update_catalog_item(
     item_id: UUID,
     body: CatalogItemUpdate,
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """Обновить позицию (частично)."""
@@ -94,6 +101,8 @@ async def update_catalog_item(
         item.min_league = body.min_league
     if body.description is not None:
         item.description = body.description
+    if body.sort_order is not None:
+        item.sort_order = body.sort_order
     if body.is_active is not None:
         item.is_active = body.is_active
     await db.flush()
@@ -104,7 +113,7 @@ async def update_catalog_item(
 @router.delete("/{item_id}", response_model=CatalogItemRead)
 async def deactivate_catalog_item(
     item_id: UUID,
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """Деактивировать позицию (is_active=false), не удаляя из БД."""

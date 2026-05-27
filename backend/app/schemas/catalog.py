@@ -16,6 +16,7 @@ class CatalogItemBase(BaseModel):
     base_cost_q: float = Field(..., ge=0)
     description: str | None = None
     min_league: League
+    sort_order: int = Field(default=100, ge=0, le=100000)
     is_active: bool = True
 
 
@@ -32,13 +33,13 @@ class CatalogItemUpdate(BaseModel):
     base_cost_q: float | None = Field(None, gt=0)
     min_league: League | None = None
     description: str | None = None
+    sort_order: int | None = Field(None, ge=0, le=100000)
     is_active: bool | None = None
 
 
 class CatalogItemRead(CatalogItemBase):
     """Чтение позиции каталога."""
     id: UUID
-    sort_order: int = 100
     created_at: datetime
 
     model_config = {"from_attributes": True}

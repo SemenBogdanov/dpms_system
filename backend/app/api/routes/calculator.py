@@ -32,5 +32,5 @@ async def create_task(
     db: AsyncSession = Depends(get_db),
 ):
     """Создать задачу из калькулятора и отправить в очередь (in_queue)."""
-    task = await create_task_from_calc(db, body)
+    task = await create_task_from_calc(db, body, user)
     return task

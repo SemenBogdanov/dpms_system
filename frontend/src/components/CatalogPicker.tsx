@@ -8,6 +8,7 @@ const categoryLabels: Record<string, string> = {
   etl: 'ETL',
   api: 'API',
   docs: 'Документация',
+  proactive: 'Проактивные',
 }
 
 const complexityStyles: Record<string, string> = {
@@ -31,7 +32,7 @@ export function CatalogPicker({ catalog, onAdd, className }: CatalogPickerProps)
     acc[cat].push(item)
     return acc
   }, {})
-  const order = ['widget', 'etl', 'api', 'docs']
+  const order = ['widget', 'etl', 'api', 'docs', 'proactive']
 
   return (
     <div className={cn('space-y-4', className)}>
