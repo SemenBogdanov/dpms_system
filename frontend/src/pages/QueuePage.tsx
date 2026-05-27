@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
-import { FileSpreadsheet, Lock, Pencil } from 'lucide-react'
+import { FileSpreadsheet, Lock, Pencil, Search } from 'lucide-react'
 import { api } from '@/api/client'
 import type { AssignCandidate, QueueTaskResponse, Task, User, TaskStatus } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
@@ -99,7 +99,7 @@ export function QueuePage() {
   const [importModalOpen, setImportModalOpen] = useState(false)
   const canSetCriticalPriority = currentUser?.role === 'admin'
 
-  const loadQueue = () => {
+  const loadQueue = useCallback(() => {
     if (!currentUser) return
     setLoading(true)
     api
@@ -107,12 +107,21 @@ export function QueuePage() {
       .then(setTasks)
       .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка'))
       .finally(() => setLoading(false))
-  }
+  }, [currentUser])
+
+  const loadArchivedTasks = useCallback(() => {
+    if (!currentUser) return
+    const endpoint =
+      currentUser.role === 'executor'
+        ? `/api/tasks?assignee_id=${currentUser.id}&status=done`
+        : '/api/tasks'
+    api.get<Task[]>(endpoint).then(setAllTasks).catch(() => setAllTasks([]))
+  }, [currentUser])
 
   useEffect(() => {
     if (!currentUser) return
     loadQueue()
-  }, [currentUser])
+  }, [currentUser, loadQueue])
 
   useEffect(() => {
     if (!currentUser) return
@@ -127,12 +136,17 @@ export function QueuePage() {
   }, [])
 
   useEffect(() => {
-    if (!includeArchived) return
-    api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
-  }, [includeArchived])
+    if (!includeArchived) {
+      setAllTasks([])
+      return
+    }
+    loadArchivedTasks()
+  }, [includeArchived, loadArchivedTasks])
 
   const displayList: RowItem[] = includeArchived
-    ? allTasks
+    ? currentUser?.role === 'executor'
+      ? [...tasks.map((t) => ({ ...t, status: 'in_queue' as TaskStatus })), ...allTasks]
+      : allTasks
     : tasks.map((t) => ({ ...t, status: 'in_queue' as TaskStatus }))
 
   const filteredBySearch = displayList.filter((t) => {
@@ -234,7 +248,7 @@ export function QueuePage() {
       toast.success('Задача взята!')
       setConfirmPull(null)
       if (includeArchived) {
-        api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
+        loadArchivedTasks()
       } else {
         setTasks((prev) => prev.filter((t) => t.id !== confirmPull.id))
       }
@@ -243,7 +257,7 @@ export function QueuePage() {
       toast.error(e instanceof Error ? e.message : 'Не удалось взять задачу')
       setConfirmPull(null)
       if (includeArchived) {
-        api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
+        loadArchivedTasks()
       } else {
         loadQueue()
       }
@@ -282,7 +296,7 @@ export function QueuePage() {
       setBugfixTitle('')
       setBugfixDescription('')
       if (includeArchived) {
-        api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
+        loadArchivedTasks()
       } else {
         loadQueue()
       }
@@ -301,7 +315,7 @@ export function QueuePage() {
       .then(() => {
         toast.success('Задача отменена')
         if (includeArchived) {
-          api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
+          loadArchivedTasks()
         } else {
           loadQueue()
         }
@@ -336,7 +350,7 @@ export function QueuePage() {
         setDetailTask(updated)
       }
       if (includeArchived) {
-        api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
+        loadArchivedTasks()
       } else {
         loadQueue()
       }
@@ -401,7 +415,7 @@ export function QueuePage() {
 
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px]">
-          <span className="absolute left-3 top-1/2 -trangray-y-1/2 text-gray-400">🔍</span>
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" aria-hidden="true" />
           <input
             type="text"
             placeholder="Поиск по названию или тегу..."
@@ -733,7 +747,7 @@ export function QueuePage() {
         onClose={() => setImportModalOpen(false)}
         onImported={() => {
           if (includeArchived) {
-            api.get<Task[]>('/api/tasks').then(setAllTasks).catch(() => setAllTasks([]))
+            loadArchivedTasks()
           } else {
             loadQueue()
           }

@@ -7,8 +7,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_role
 from app.models.user import User
-from app.schemas.absence import AbsenceCreate, AbsenceRead, AbsenceUpdate
-from app.services.absences import create_absence, delete_absence, list_absences, update_absence
+from app.schemas.absence import AbsenceCreate, AbsenceRead, AbsenceUpdate, HolidayCreate, HolidayRead, HolidayUpdate
+from app.services.absences import (
+    create_absence,
+    create_holiday,
+    delete_absence,
+    delete_holiday,
+    list_absences,
+    list_holidays,
+    update_absence,
+    update_holiday,
+)
 
 router = APIRouter()
 
@@ -33,6 +42,49 @@ async def post_absence(
 ):
     """Create absence manually. Admin only."""
     return await create_absence(db, body, admin)
+
+
+@router.get("/holidays", response_model=list[HolidayRead])
+async def get_holidays(
+    date_from: date = Query(..., alias="from"),
+    date_to: date = Query(..., alias="to"),
+    _: User = Depends(require_role("admin", "teamlead")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Global non-working days that reduce plan for everyone."""
+    return await list_holidays(db, date_from, date_to)
+
+
+@router.post("/holidays", response_model=HolidayRead)
+async def post_holiday(
+    body: HolidayCreate,
+    admin: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a global holiday. Admin only."""
+    return await create_holiday(db, body, admin)
+
+
+@router.patch("/holidays/{holiday_id}", response_model=HolidayRead)
+async def patch_holiday(
+    holiday_id: UUID,
+    body: HolidayUpdate,
+    _: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a global holiday. Admin only."""
+    return await update_holiday(db, holiday_id, body)
+
+
+@router.delete("/holidays/{holiday_id}", status_code=204)
+async def remove_holiday(
+    holiday_id: UUID,
+    _: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a global holiday. Admin only."""
+    await delete_holiday(db, holiday_id)
+    return Response(status_code=204)
 
 
 @router.patch("/{absence_id}", response_model=AbsenceRead)

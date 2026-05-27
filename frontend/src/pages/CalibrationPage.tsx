@@ -19,7 +19,7 @@ export function CalibrationPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const canView = currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
+  const canView = currentUser?.role === 'admin'
 
   const load = useCallback(() => {
     if (!canView) return
@@ -40,7 +40,7 @@ export function CalibrationPage() {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl font-semibold text-slate-900">Калибровка</h1>
-        <p className="text-slate-600">Доступ разрешён только тимлидам и администраторам.</p>
+        <p className="text-slate-600">Доступ разрешён только администраторам.</p>
       </div>
     )
   }

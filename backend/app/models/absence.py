@@ -53,3 +53,31 @@ class UserAbsence(Base):
 
     user = relationship("User", foreign_keys=[user_id])
     created_by = relationship("User", foreign_keys=[created_by_id])
+
+
+class GlobalHoliday(Base):
+    """A non-working calendar date that reduces plan capacity for everyone."""
+
+    __tablename__ = "global_holidays"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    holiday_date: Mapped[date] = mapped_column(Date, nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    affects_plan: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    created_by = relationship("User", foreign_keys=[created_by_id])

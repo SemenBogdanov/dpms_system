@@ -1,5 +1,5 @@
 """Schemas for user absences."""
-from datetime import date, datetime
+from datetime import date as DateType, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
@@ -9,8 +9,8 @@ from app.models.absence import AbsenceType
 
 class AbsenceBase(BaseModel):
     user_id: UUID
-    start_date: date
-    end_date: date
+    start_date: DateType
+    end_date: DateType
     type: AbsenceType = AbsenceType.vacation
     affects_plan: bool = True
     comment: str | None = Field(None, max_length=1000)
@@ -28,8 +28,8 @@ class AbsenceCreate(AbsenceBase):
 
 class AbsenceUpdate(BaseModel):
     user_id: UUID | None = None
-    start_date: date | None = None
-    end_date: date | None = None
+    start_date: DateType | None = None
+    end_date: DateType | None = None
     type: AbsenceType | None = None
     affects_plan: bool | None = None
     comment: str | None = Field(None, max_length=1000)
@@ -40,8 +40,8 @@ class AbsenceRead(BaseModel):
     user_id: UUID
     user_name: str
     user_email: str
-    start_date: date
-    end_date: date
+    start_date: DateType
+    end_date: DateType
     type: AbsenceType
     affects_plan: bool
     comment: str | None = None
@@ -56,3 +56,25 @@ class AbsenceSummary(BaseModel):
     period: str
     total_absence_days: int
     active_absences_today: int
+
+
+class HolidayBase(BaseModel):
+    date: DateType
+    name: str = Field(..., min_length=1, max_length=255)
+
+
+class HolidayCreate(HolidayBase):
+    pass
+
+
+class HolidayUpdate(BaseModel):
+    date: DateType | None = None
+    name: str | None = Field(None, min_length=1, max_length=255)
+
+
+class HolidayRead(HolidayBase):
+    id: UUID
+    affects_plan: bool
+    created_by_id: UUID | None = None
+    created_at: datetime
+    updated_at: datetime

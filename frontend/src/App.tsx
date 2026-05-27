@@ -35,6 +35,14 @@ function TeamleadAdminRoute({ children }: { children: ReactElement }) {
   return children
 }
 
+function AdminRoute({ children }: { children: ReactElement }) {
+  const { user } = useAuth()
+  if (user?.role !== 'admin') {
+    return <Navigate to="/queue" replace />
+  }
+  return children
+}
+
 function App() {
   return (
     <Routes>
@@ -49,7 +57,14 @@ function App() {
         }
       >
         <Route index element={<DashboardRoute />} />
-        <Route path="calibration" element={<CalibrationPage />} />
+        <Route
+          path="calibration"
+          element={
+            <AdminRoute>
+              <CalibrationPage />
+            </AdminRoute>
+          }
+        />
         <Route path="queue" element={<QueuePage />} />
         <Route path="my-tasks" element={<MyTasksPage />} />
         <Route

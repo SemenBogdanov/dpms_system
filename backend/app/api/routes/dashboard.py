@@ -1,4 +1,4 @@
-"""API дашборда: Стакан, сводка по команде, план/факт, периодическая статистика. calibration — admin/teamlead."""
+"""API дашборда: Стакан, сводка по команде, план/факт, периодическая статистика."""
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, Query
@@ -146,7 +146,7 @@ async def focus_status(
 @router.get("/calibration", response_model=CalibrationReportNew)
 async def calibration(
     period: str = Query(default="", description="YYYY-MM, пусто = текущий"),
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -340,8 +340,8 @@ async def calibration(
 
 @router.get("/teamlead-accuracy", response_model=list[TeamleadAccuracy])
 async def teamlead_accuracy(
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Точность оценок тимлидов. Только admin/teamlead."""
+    """Точность оценок тимлидов. Только admin."""
     return await get_teamlead_accuracy(db)

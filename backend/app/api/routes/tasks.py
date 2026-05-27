@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user, require_role
 from app.models.attachment import TaskAttachment
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.task import Task, TaskStatus, TaskType, TaskPriority
 from app.schemas.task import (
     TaskCreate,
@@ -63,7 +63,11 @@ async def list_tasks(
     if status is not None:
         stmt = stmt.where(Task.status == status)
     if assignee_id is not None:
+        if user.role == UserRole.executor and assignee_id != user.id:
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
         stmt = stmt.where(Task.assignee_id == assignee_id)
+    elif user.role == UserRole.executor:
+        stmt = stmt.where(Task.assignee_id == user.id)
     if task_type is not None:
         from app.models.task import TaskType
         try:

@@ -21,7 +21,7 @@ from app.schemas.dashboard import (
     PeriodStats,
 )
 from app.services.planning import current_plan_window, effective_plan_for_user
-from app.services.absences import absence_dates_by_user, absence_dates_for_user, is_absent_on, month_bounds_for
+from app.services.absences import absence_dates_by_user, absence_dates_for_user, global_holiday_dates, is_absent_on, month_bounds_for
 
 
 def _effective_capacity(users: list[User], now: datetime, absence_map: dict[UUID, set[date]] | None = None) -> Decimal:
@@ -268,20 +268,24 @@ async def get_period_stats(db: AsyncSession) -> PeriodStats:
     )
 
 
-def _working_days_in_month(year: int, month: int) -> int:
+def _working_days_in_month(year: int, month: int, excluded_dates: set[date] | None = None) -> int:
     """Количество рабочих дней (пн–пт) в месяце."""
+    excluded = excluded_dates or set()
     count = 0
     for day in range(1, calendar.monthrange(year, month)[1] + 1):
-        if date(year, month, day).weekday() < 5:  # 0-4 = пн-пт
+        current = date(year, month, day)
+        if current.weekday() < 5 and current not in excluded:  # 0-4 = пн-пт
             count += 1
     return count
 
 
-def _working_day_index(year: int, month: int, day: int) -> int:
+def _working_day_index(year: int, month: int, day: int, excluded_dates: set[date] | None = None) -> int:
     """Порядковый номер рабочего дня в месяце (1-based)."""
+    excluded = excluded_dates or set()
     idx = 0
     for d in range(1, day + 1):
-        if date(year, month, d).weekday() < 5:
+        current = date(year, month, d)
+        if current.weekday() < 5 and current not in excluded:
             idx += 1
     return idx
 
@@ -359,12 +363,13 @@ async def get_burndown_data(db: AsyncSession) -> BurndownData:
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     _, last_day = calendar.monthrange(year, month)
     month_end = now.replace(day=last_day, hour=23, minute=59, second=59, microsecond=999999)
+    holiday_dates = await global_holiday_dates(db, month_start.date(), month_end.date())
 
     users_result = await db.execute(select(User).where(User.is_active.is_(True)))
     users = list(users_result.scalars().all())
     absence_map = await _absence_map_for_users(db, users, now)
     total_capacity = float(_effective_capacity(users, now, absence_map))
-    working_days = _working_days_in_month(year, month)
+    working_days = _working_days_in_month(year, month, holiday_dates)
     if working_days == 0:
         return BurndownData(period=period, total_capacity=total_capacity, working_days=0, points=[])
 
@@ -401,7 +406,7 @@ async def get_burndown_data(db: AsyncSession) -> BurndownData:
     for day in range(1, last_day + 1):
         d = date(year, month, day)
         day_str = d.strftime("%Y-%m-%d")
-        work_idx = _working_day_index(year, month, day)
+        work_idx = _working_day_index(year, month, day, holiday_dates)
         ideal = round(total_capacity / working_days * work_idx, 1) if working_days else 0.0
 
         if d <= today:

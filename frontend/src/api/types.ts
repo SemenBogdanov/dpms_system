@@ -202,6 +202,21 @@ export interface AbsencePayload {
   comment?: string | null
 }
 
+export interface GlobalHoliday {
+  id: string
+  date: string
+  name: string
+  affects_plan: boolean
+  created_by_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface HolidayPayload {
+  date: string
+  name: string
+}
+
 /** Задача в очереди с флагами can_pull, locked */
 export interface QueueTaskResponse {
   id: string
