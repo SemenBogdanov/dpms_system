@@ -44,7 +44,7 @@ export function CalculatorPage() {
   const isAdmin = currentUser?.role === 'admin'
 
   useEffect(() => {
-    api.get<CatalogItem[]>('/api/catalog').then(setCatalog).catch(() => setCatalog([]))
+    api.get<CatalogItem[]>('/api/catalog', { is_active: 'true' }).then(setCatalog).catch(() => setCatalog([]))
     api.get<User[]>('/api/users?role=teamlead').then(setTeamleads).catch(() => setTeamleads([]))
   }, [])
 
@@ -212,6 +212,7 @@ export function CalculatorPage() {
   const filteredCatalog = useMemo(() => {
     const query = catalogSearch.trim().toLowerCase()
     return catalog.filter((item) => {
+      if (!item.is_active) return false
       if (categoryTab !== 'all' && item.category !== categoryTab) return false
       if (!query) return true
       return [

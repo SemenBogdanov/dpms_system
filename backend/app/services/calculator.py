@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,6 +44,12 @@ async def calculate_estimate(
         )
     )
     catalog_by_id = {row.id: row for row in result.scalars().all()}
+    missing_ids = [str(item.catalog_id) for item in request.items if item.catalog_id not in catalog_by_id]
+    if missing_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Одна или несколько операций неактивны или удалены из каталога. Обновите калькулятор.",
+        )
 
     breakdown: list[EstimateBreakdownItem] = []
     raw_total = 0.0
