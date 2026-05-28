@@ -18,6 +18,9 @@ export type TaskStatus =
 export type TaskPriority = 'low' | 'medium' | 'high' | 'critical'
 export type KnowledgeStatus = 'draft' | 'published'
 export type AbsenceType = 'vacation' | 'sick_leave' | 'day_off' | 'other'
+export type FeedbackCategory = 'improvement' | 'disagreement' | 'bug' | 'process' | 'other'
+export type FeedbackStatus = 'new' | 'in_review' | 'accepted' | 'rejected' | 'done'
+export type FeedbackPriority = 'low' | 'medium' | 'high'
 
 export interface User {
   id: string
@@ -215,6 +218,44 @@ export interface GlobalHoliday {
 export interface HolidayPayload {
   date: string
   name: string
+}
+
+export interface FeedbackRequest {
+  id: string
+  author_id: string
+  author_name: string
+  reviewer_id: string | null
+  reviewer_name: string | null
+  category: FeedbackCategory
+  status: FeedbackStatus
+  priority: FeedbackPriority
+  title: string
+  description: string
+  resolution: string | null
+  created_at: string
+  updated_at: string
+  reviewed_at: string | null
+  closed_at: string | null
+}
+
+export interface FeedbackRequestCreate {
+  category: FeedbackCategory
+  priority: FeedbackPriority
+  title: string
+  description: string
+}
+
+export interface FeedbackRequestUpdate {
+  status?: FeedbackStatus
+  reviewer_id?: string | null
+  priority?: FeedbackPriority
+  resolution?: string | null
+}
+
+export interface FeedbackRequestListResponse {
+  items: FeedbackRequest[]
+  total: number
+  limit: number
 }
 
 /** Задача в очереди с флагами can_pull, locked */

@@ -18,6 +18,7 @@ import { CalibrationPage } from '@/pages/CalibrationPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
 import { ReportsPage } from '@/pages/ReportsPage'
 import { SetPasswordPage } from '@/pages/SetPasswordPage'
+import { FeedbackPage } from '@/pages/FeedbackPage'
 
 function DashboardRoute() {
   const { user } = useAuth()
@@ -77,6 +78,7 @@ function App() {
         />
         <Route path="profile" element={<ProfilePage />} />
         <Route path="shop" element={<ShopPage />} />
+        <Route path="feedback" element={<FeedbackPage />} />
         <Route path="admin/users" element={<AdminUsersPage />} />
         <Route
           path="absences"

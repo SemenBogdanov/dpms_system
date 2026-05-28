@@ -9,7 +9,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
-from app.api.routes import absences, activity, admin, auth, calculator, catalog, dashboard, knowledge, notifications, queue, reports, shop, tasks, users
+from app.api.routes import absences, activity, admin, auth, calculator, catalog, dashboard, feedback, knowledge, notifications, queue, reports, shop, tasks, users
 
 
 @asynccontextmanager
@@ -56,6 +56,7 @@ app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(catalog.router, prefix="/api/catalog", tags=["catalog"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["knowledge"])
 app.include_router(absences.router, prefix="/api/absences", tags=["absences"])
+app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"])
 app.include_router(calculator.router, prefix="/api/calculator", tags=["calculator"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(queue.router, prefix="/api/queue", tags=["queue"])

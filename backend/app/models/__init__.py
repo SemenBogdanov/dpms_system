@@ -22,6 +22,7 @@ from app.models.transaction import QTransaction
 from app.models.shop import ShopItem, Purchase, PeriodSnapshot
 from app.models.notification import Notification
 from app.models.activity import ActivityEvent
+from app.models.feedback import FeedbackRequest
 
 
 __all__ = [
@@ -39,4 +40,5 @@ __all__ = [
     "PeriodSnapshot",
     "Notification",
     "ActivityEvent",
+    "FeedbackRequest",
 ]
