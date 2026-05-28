@@ -34,13 +34,17 @@ PUBLIC_METADATA_KEYS = {
     "category",
     "due_date",
     "estimated_q",
+    "feedback_code",
     "feedback_id",
+    "feedback_number",
     "fields",
+    "object_type",
     "priority",
     "reason",
     "reviewer_id",
     "source",
     "status",
+    "target_release",
 }
 
 

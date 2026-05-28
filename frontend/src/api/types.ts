@@ -19,8 +19,9 @@ export type TaskPriority = 'low' | 'medium' | 'high' | 'critical'
 export type KnowledgeStatus = 'draft' | 'published'
 export type AbsenceType = 'vacation' | 'sick_leave' | 'day_off' | 'other'
 export type FeedbackCategory = 'improvement' | 'disagreement' | 'bug' | 'process' | 'other'
-export type FeedbackStatus = 'new' | 'in_review' | 'accepted' | 'rejected' | 'done'
+export type FeedbackStatus = 'new' | 'in_review' | 'triage' | 'needs_info' | 'accepted' | 'planned' | 'rejected' | 'done' | 'withdrawn'
 export type FeedbackPriority = 'low' | 'medium' | 'high'
+export type FeedbackObjectType = 'task' | 'shop' | 'report' | 'rule' | 'kb' | 'other'
 
 export interface User {
   id: string
@@ -222,20 +223,34 @@ export interface HolidayPayload {
 
 export interface FeedbackRequest {
   id: string
+  feedback_number: number
+  feedback_code: string
   author_id: string
   author_name: string
   reviewer_id: string | null
   reviewer_name: string | null
+  decided_by_id: string | null
+  decided_by_name: string | null
   category: FeedbackCategory
   status: FeedbackStatus
   priority: FeedbackPriority
   title: string
   description: string
+  object_type: FeedbackObjectType
+  object_ref: string | null
+  expected_result: string | null
+  impact: string | null
+  evidence_links: string[]
   resolution: string | null
+  decision_summary: string | null
+  decision_reason: string | null
+  next_action: string | null
+  target_release: string | null
   created_at: string
   updated_at: string
   reviewed_at: string | null
   closed_at: string | null
+  decided_at: string | null
 }
 
 export interface FeedbackRequestCreate {
@@ -243,6 +258,11 @@ export interface FeedbackRequestCreate {
   priority: FeedbackPriority
   title: string
   description: string
+  object_type: FeedbackObjectType
+  object_ref?: string | null
+  expected_result?: string | null
+  impact?: string | null
+  evidence_links: string[]
 }
 
 export interface FeedbackRequestUpdate {
@@ -250,6 +270,15 @@ export interface FeedbackRequestUpdate {
   reviewer_id?: string | null
   priority?: FeedbackPriority
   resolution?: string | null
+  object_type?: FeedbackObjectType
+  object_ref?: string | null
+  expected_result?: string | null
+  impact?: string | null
+  evidence_links?: string[] | null
+  decision_summary?: string | null
+  decision_reason?: string | null
+  next_action?: string | null
+  target_release?: string | null
 }
 
 export interface FeedbackRequestListResponse {
