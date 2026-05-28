@@ -78,6 +78,7 @@ async def create_user(
         wip_limit=2,
         is_active=True,
         is_new_employee=body.is_new_employee,
+        feedback_enabled=body.feedback_enabled,
         plan_started_at=now,
         onboarding_started_at=now if body.is_new_employee else None,
         onboarding_until=onboarding_until,
@@ -116,6 +117,8 @@ async def update_user(
         user.mpw = body.mpw
     if body.is_active is not None:
         user.is_active = body.is_active
+    if body.feedback_enabled is not None:
+        user.feedback_enabled = body.feedback_enabled
     if body.is_new_employee is not None:
         now = datetime.now(timezone.utc)
         if body.is_new_employee:

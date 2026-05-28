@@ -26,6 +26,7 @@ def _user_to_read(user: User) -> UserRead:
         mpw=user.mpw,
         wip_limit=user.wip_limit,
         is_new_employee=user.is_new_employee,
+        feedback_enabled=user.feedback_enabled,
         is_active=user.is_active,
         wallet_main=float(user.wallet_main),
         wallet_karma=float(user.wallet_karma),

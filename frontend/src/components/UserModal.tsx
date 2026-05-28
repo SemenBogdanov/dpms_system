@@ -9,6 +9,7 @@ export type UserFormPayload = {
   league: User['league']
   mpw: number
   is_new_employee: boolean
+  feedback_enabled: boolean
   password?: string
 }
 
@@ -37,6 +38,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
   const [league, setLeague] = useState<User['league']>('C')
   const [mpw, setMpw] = useState(60)
   const [isNewEmployee, setIsNewEmployee] = useState(false)
+  const [feedbackEnabled, setFeedbackEnabled] = useState(false)
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
@@ -51,6 +53,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setLeague(initial.league)
       setMpw(initial.mpw)
       setIsNewEmployee(Boolean(initial.is_new_employee))
+      setFeedbackEnabled(Boolean(initial.feedback_enabled))
       setPassword('')
     } else {
       setFullName('')
@@ -59,6 +62,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setLeague('C')
       setMpw(60)
       setIsNewEmployee(false)
+      setFeedbackEnabled(false)
       setPassword('')
     }
   }, [open, mode, initial])
@@ -96,6 +100,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
         league,
         mpw,
         is_new_employee: isNewEmployee,
+        feedback_enabled: feedbackEnabled,
         ...(mode === 'create' ? { password } : undefined),
       })
       onClose()
@@ -174,6 +179,18 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
             <span>
               <span className="block font-medium text-slate-800">Новый сотрудник</span>
               <span className="block text-xs text-slate-500">План считается с адаптацией: 50% на первые 3 месяца и пропорционально оставшимся рабочим дням месяца.</span>
+            </span>
+          </label>
+          <label className="flex items-start gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={feedbackEnabled}
+              onChange={(e) => setFeedbackEnabled(e.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-slate-300"
+            />
+            <span>
+              <span className="block font-medium text-slate-800">Доступ к обратной связи</span>
+              <span className="block text-xs text-slate-500">Показывает раздел «Обратная связь» и разрешает создавать или рассматривать обращения.</span>
             </span>
           </label>
           {mode === 'create' && (

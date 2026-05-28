@@ -44,6 +44,14 @@ function AdminRoute({ children }: { children: ReactElement }) {
   return children
 }
 
+function FeedbackAccessRoute({ children }: { children: ReactElement }) {
+  const { user } = useAuth()
+  if (!user?.feedback_enabled) {
+    return <Navigate to="/queue" replace />
+  }
+  return children
+}
+
 function App() {
   return (
     <Routes>
@@ -78,7 +86,14 @@ function App() {
         />
         <Route path="profile" element={<ProfilePage />} />
         <Route path="shop" element={<ShopPage />} />
-        <Route path="feedback" element={<FeedbackPage />} />
+        <Route
+          path="feedback"
+          element={
+            <FeedbackAccessRoute>
+              <FeedbackPage />
+            </FeedbackAccessRoute>
+          }
+        />
         <Route path="admin/users" element={<AdminUsersPage />} />
         <Route
           path="absences"

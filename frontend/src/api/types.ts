@@ -37,6 +37,7 @@ export interface User {
   is_active: boolean
   needs_password_change: boolean
   is_new_employee: boolean
+  feedback_enabled: boolean
   plan_started_at: string | null
   onboarding_started_at: string | null
   onboarding_until: string | null

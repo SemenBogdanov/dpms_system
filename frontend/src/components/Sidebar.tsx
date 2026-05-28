@@ -45,6 +45,7 @@ export function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false)
 
   const visibleNav = nav.filter((item) => {
+    if (item.to === '/feedback') return Boolean(user?.feedback_enabled)
     if (!item.roles) return true
     return user && item.roles.includes(user.role)
   })

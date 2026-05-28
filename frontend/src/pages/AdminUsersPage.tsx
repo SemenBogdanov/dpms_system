@@ -125,6 +125,7 @@ export function AdminUsersPage() {
         league: payload.league,
         mpw: payload.mpw,
         is_new_employee: payload.is_new_employee,
+        feedback_enabled: payload.feedback_enabled,
       })
       toast.success('Изменения сохранены')
     } else {
@@ -135,6 +136,7 @@ export function AdminUsersPage() {
         league: payload.league,
         mpw: payload.mpw,
         is_new_employee: payload.is_new_employee,
+        feedback_enabled: payload.feedback_enabled,
         password: payload.password,
       })
       toast.success('Сотрудник добавлен')
@@ -199,6 +201,7 @@ export function AdminUsersPage() {
                 <th className="px-4 py-3 text-left font-medium text-slate-600">MPW</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">QS</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Статус</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">ОС</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Действия</th>
               </tr>
             </thead>
@@ -253,6 +256,13 @@ export function AdminUsersPage() {
                         <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">Новый</span>
                       )}
                     </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {u.feedback_enabled ? (
+                      <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Вкл</span>
+                    ) : (
+                      <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">Выкл</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">

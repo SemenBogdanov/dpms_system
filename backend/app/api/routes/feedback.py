@@ -1,7 +1,7 @@
 """Feedback/change request API."""
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, require_role
@@ -13,6 +13,13 @@ from app.services.feedback import create_feedback_request, get_feedback_request,
 router = APIRouter()
 
 
+def ensure_feedback_access(user: User) -> User:
+    """Allow feedback section only for users enabled by admin."""
+    if not user.feedback_enabled:
+        raise HTTPException(status_code=403, detail="Раздел обратной связи недоступен")
+    return user
+
+
 @router.get("", response_model=FeedbackRequestListResponse)
 async def list_feedback(
     status_filter: FeedbackStatus | None = Query(None, alias="status"),
@@ -20,10 +27,11 @@ async def list_feedback(
     author_id: UUID | None = Query(None),
     reviewer_id: UUID | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
-    user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List feedback requests. Executors see only their own requests."""
+    user = ensure_feedback_access(current_user)
     return await list_feedback_requests(
         db,
         user,
@@ -38,20 +46,22 @@ async def list_feedback(
 @router.post("", response_model=FeedbackRequestRead, status_code=status.HTTP_201_CREATED)
 async def create_feedback(
     body: FeedbackRequestCreate,
-    user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a feedback/change request."""
+    user = ensure_feedback_access(current_user)
     return await create_feedback_request(db, user, body)
 
 
 @router.get("/{feedback_id}", response_model=FeedbackRequestRead)
 async def get_feedback(
     feedback_id: UUID,
-    user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get one feedback request."""
+    user = ensure_feedback_access(current_user)
     return await get_feedback_request(db, user, feedback_id)
 
 
@@ -63,4 +73,5 @@ async def update_feedback(
     db: AsyncSession = Depends(get_db),
 ):
     """Manager update: status, reviewer, priority, resolution."""
+    ensure_feedback_access(user)
     return await update_feedback_request(db, user, feedback_id, body)

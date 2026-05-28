@@ -17,6 +17,7 @@ class UserBase(BaseModel):
     mpw: int = Field(..., ge=0)
     wip_limit: int = Field(default=2, ge=1)
     is_new_employee: bool = False
+    feedback_enabled: bool = False
     is_active: bool = True
 
 
@@ -29,6 +30,7 @@ class UserCreate(BaseModel):
     mpw: int = Field(60, gt=0)
     password: str = Field(..., min_length=6)
     is_new_employee: bool = False
+    feedback_enabled: bool = False
 
 
 class UserUpdate(BaseModel):
@@ -40,6 +42,7 @@ class UserUpdate(BaseModel):
     mpw: int | None = Field(None, gt=0)
     is_active: bool | None = None
     is_new_employee: bool | None = None
+    feedback_enabled: bool | None = None
 
 
 class UserRead(UserBase):
