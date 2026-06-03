@@ -22,7 +22,8 @@ def _round_q(value: float) -> float:
 async def rollover_period(db: AsyncSession, admin_id: UUID) -> dict:
     """
     Смена месяца. Только для admin.
-    Предыдущий месяц закрывается: снимки, обнуление main, сгорание 50% кармы.
+    Предыдущий месяц закрывается: снимки и обнуление main.
+    Karma полностью переносится в следующий период.
     Всё в одной транзакции БД. Повторный rollover за тот же период — 400.
     """
     result = await db.execute(select(User).where(User.id == admin_id))
@@ -109,19 +110,6 @@ async def rollover_period(db: AsyncSession, admin_id: UUID) -> dict:
             )
             total_main_reset += earned_main
 
-        burned = _round_q(earned_karma * 0.5)
-        if burned > 0:
-            user.wallet_karma -= Decimal(str(burned))
-            db.add(
-                QTransaction(
-                    user_id=user.id,
-                    amount=Decimal(str(-burned)),
-                    wallet_type=WalletType.karma,
-                    reason=f"Rollover {period}: сгорание кармы 50%",
-                )
-            )
-            total_karma_burned += burned
-
     from app.services.notifications import create_notification
     for user in users:
         await create_notification(
@@ -129,7 +117,7 @@ async def rollover_period(db: AsyncSession, admin_id: UUID) -> dict:
             user.id,
             "rollover",
             "Период закрыт",
-            message=f"Период {period} завершён. Main обнулён.",
+            message=f"Период {period} завершён. Main обнулён, Karma перенесена.",
             link="/profile",
         )
     await db.flush()
@@ -149,7 +137,6 @@ async def get_period_history(db: AsyncSession) -> list[dict]:
             func.min(PeriodSnapshot.created_at).label("closed_at"),
             func.count(PeriodSnapshot.id).label("users_count"),
             func.sum(PeriodSnapshot.earned_main).label("total_main"),
-            func.sum(PeriodSnapshot.earned_karma * 0.5).label("total_burned"),
         )
         .group_by(PeriodSnapshot.period)
         .order_by(PeriodSnapshot.period.desc())
@@ -161,7 +148,7 @@ async def get_period_history(db: AsyncSession) -> list[dict]:
             "closed_at": r.closed_at,
             "users_count": r.users_count,
             "total_main_reset": round(float(r.total_main or 0), 1),
-            "total_karma_burned": round(float(r.total_burned or 0), 1),
+            "total_karma_burned": 0.0,
         }
         for r in rows
     ]

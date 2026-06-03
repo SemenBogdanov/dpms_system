@@ -16,6 +16,7 @@ const SUGGESTED_TAGS = [
 interface TagInputProps {
   tags: string[]
   onChange: (tags: string[]) => void
+  suggestions?: Array<{ tag: string; count?: number }>
   placeholder?: string
   className?: string
 }
@@ -23,6 +24,7 @@ interface TagInputProps {
 export const TagInput: FC<TagInputProps> = ({
   tags,
   onChange,
+  suggestions,
   placeholder = 'Введите тег и нажмите Enter',
   className = '',
 }) => {
@@ -49,6 +51,10 @@ export const TagInput: FC<TagInputProps> = ({
   const removeTag = (tagToRemove: string) => {
     onChange(tags.filter((t) => t !== tagToRemove))
   }
+
+  const suggestedTags: Array<{ tag: string; count?: number }> = suggestions && suggestions.length > 0
+    ? suggestions
+    : SUGGESTED_TAGS.map((tag) => ({ tag }))
 
   return (
     <div className={className}>
@@ -88,14 +94,14 @@ export const TagInput: FC<TagInputProps> = ({
         </div>
       </div>
       <div className="mt-2 flex flex-wrap gap-1">
-        {SUGGESTED_TAGS.filter((t) => !tags.includes(t)).map((tag) => (
+        {suggestedTags.filter((item) => !tags.includes(item.tag)).map((item) => (
           <button
-            key={tag}
+            key={item.tag}
             type="button"
-            onClick={() => handleAddTag(tag)}
+            onClick={() => handleAddTag(item.tag)}
             className="rounded-full bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-600 hover:bg-slate-200"
           >
-            {tag}
+            {item.tag}
           </button>
         ))}
       </div>

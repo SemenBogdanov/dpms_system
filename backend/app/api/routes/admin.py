@@ -22,7 +22,7 @@ async def rollover_period_route(
     user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Закрыть предыдущий месяц: снимки, обнуление main, сгорание 50% кармы. Только admin."""
+    """Закрыть предыдущий месяц: снимки, обнуление main, перенос karma. Только admin."""
     admin_id = body.admin_id or user.id
     result = await rollover_period(db, admin_id)
     return RolloverResponse(**result)

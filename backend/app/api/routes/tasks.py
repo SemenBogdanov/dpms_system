@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user, require_role
@@ -16,6 +16,7 @@ from app.schemas.task import (
     TaskRead,
     TaskUpdate,
     TaskAttachmentRead,
+    TaskTagSuggestion,
     TaskExportRow,
     TasksExport,
     TaskImportCommitResponse,
@@ -31,7 +32,7 @@ from app.services.activity import record_activity_event
 from app.services.queue import create_bugfix
 from app.services.focus import start_focus, pause_focus, correct_active_time
 from app.services.task_import import commit_task_import, preview_task_import
-from app.services.task_policy import ensure_critical_priority_allowed
+from app.services.task_policy import ensure_critical_priority_allowed, resolve_task_estimator_id
 
 router = APIRouter()
 
@@ -88,6 +89,32 @@ async def list_tasks(
             data.deadline_zone = compute_deadline_zone(t)
         out.append(data)
     return out
+
+
+@router.get("/tags/suggestions", response_model=list[TaskTagSuggestion])
+async def tag_suggestions(
+    limit: int = Query(20, ge=1, le=50),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Теги, отсортированные по частоте использования."""
+    base = select(func.unnest(Task.tags).label("tag"))
+    if user.role == UserRole.executor:
+        base = base.where(Task.assignee_id == user.id)
+    tags_sq = base.subquery()
+    tag_col = tags_sq.c.tag
+    result = await db.execute(
+        select(tag_col, func.count().label("count"))
+        .select_from(tags_sq)
+        .where(tag_col.is_not(None), tag_col != "")
+        .group_by(tag_col)
+        .order_by(func.count().desc(), tag_col.asc())
+        .limit(limit)
+    )
+    return [
+        TaskTagSuggestion(tag=row._mapping["tag"], count=int(row._mapping["count"]))
+        for row in result.all()
+    ]
 
 
 @router.get("/export", response_model=TasksExport)
@@ -220,7 +247,7 @@ async def upload_task_attachment(
     user: User = Depends(require_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Загрузить изображение/скриншот к задаче до взятия её в работу."""
+    """Загрузить файл к задаче до взятия её в работу."""
     task = await _get_task_or_404(db, task_id)
     return await save_task_attachment(db, task=task, uploader=user, upload=file)
 
@@ -257,6 +284,7 @@ async def create_task(
 ):
     """Создать задачу (с оценкой или без)."""
     ensure_critical_priority_allowed(user, body.priority)
+    estimator_id = resolve_task_estimator_id(user, body.estimator_id)
     if body.task_type == TaskType.proactive and body.priority in (TaskPriority.critical, TaskPriority.high):
         raise HTTPException(
             status_code=400,
@@ -271,7 +299,7 @@ async def create_task(
         priority=body.priority,
         status=body.status,
         min_league=body.min_league,
-        estimator_id=body.estimator_id,
+        estimator_id=estimator_id,
         estimation_details=body.estimation_details,
     )
     db.add(task)

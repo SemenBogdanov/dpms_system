@@ -105,7 +105,7 @@ export function AdminUsersPage() {
       )
       .then((res) => {
         toast.success(
-          `Период ${res.period} закрыт. Обработано: ${res.users_processed}, Main обнулено: ${res.total_main_reset}, Karma списано: ${res.total_karma_burned}`
+          `Период ${res.period} закрыт. Обработано: ${res.users_processed}, Main обнулено: ${res.total_main_reset}, Karma перенесена полностью`
         )
         setRolloverConfirm(false)
         setRolloverInput('')

@@ -1,5 +1,7 @@
 """Shared task permission checks."""
 
+from uuid import UUID
+
 from fastapi import HTTPException
 
 from app.models.task import TaskPriority
@@ -21,3 +23,15 @@ def ensure_critical_priority_allowed(user: User, priority: TaskPriority | str | 
             status_code=403,
             detail="Критический приоритет может установить только администратор",
         )
+
+
+def resolve_task_estimator_id(user: User, requested_estimator_id: UUID) -> UUID:
+    """Only admins can create a task on behalf of another постановщик."""
+    if user.role == UserRole.admin:
+        return requested_estimator_id
+    if requested_estimator_id != user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Постановщика задачи может выбирать только администратор",
+        )
+    return user.id

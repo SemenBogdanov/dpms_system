@@ -10,7 +10,7 @@ from app.models import Base
 
 
 class TaskAttachment(Base):
-    """Image/screenshot attached to a task."""
+    """File attached to a task."""
 
     __tablename__ = "task_attachments"
 

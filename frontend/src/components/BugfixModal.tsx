@@ -1,6 +1,8 @@
 import type { FC, FormEvent } from 'react'
 import type { Task, User } from '@/api/types'
 
+const TASK_TITLE_MAX_LENGTH = 120
+
 interface BugfixModalProps {
   open: boolean
   parentTask: Task | null
@@ -78,9 +80,13 @@ export const BugfixModal: FC<BugfixModalProps> = ({
               type="text"
               value={title}
               onChange={(e) => onTitleChange(e.target.value)}
+              maxLength={TASK_TITLE_MAX_LENGTH}
               required
               className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             />
+            <p className="mt-1 text-xs text-slate-400">
+              {title.trim().length}/{TASK_TITLE_MAX_LENGTH} символов
+            </p>
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700">
@@ -119,7 +125,7 @@ export const BugfixModal: FC<BugfixModalProps> = ({
           </button>
           <button
             type="submit"
-            disabled={busy || !title.trim()}
+            disabled={busy || !title.trim() || title.trim().length > TASK_TITLE_MAX_LENGTH}
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
           >
             {busy ? '...' : 'Создать баг-фикс'}
@@ -129,4 +135,3 @@ export const BugfixModal: FC<BugfixModalProps> = ({
     </div>
   )
 }
-

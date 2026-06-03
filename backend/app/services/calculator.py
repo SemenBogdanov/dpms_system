@@ -15,7 +15,7 @@ from app.schemas.calculator import (
     EstimateBreakdownItem,
     CreateTaskFromCalcRequest,
 )
-from app.services.task_policy import ensure_critical_priority_allowed
+from app.services.task_policy import ensure_critical_priority_allowed, resolve_task_estimator_id
 
 _LEAGUE_ORDER = {League.C: 0, League.B: 1, League.A: 2}
 _COMPLEXITY_ORDER = {Complexity.S: 0, Complexity.M: 1, Complexity.L: 2, Complexity.XL: 3}
@@ -125,6 +125,7 @@ async def create_task_from_calc(
     complexity_enum = Complexity(complexity_str) if complexity_str in ("S", "M", "L", "XL") else Complexity.S
     priority_enum = TaskPriority(request.priority) if request.priority in ("low", "medium", "high", "critical") else TaskPriority.medium
     ensure_critical_priority_allowed(user, priority_enum)
+    estimator_id = resolve_task_estimator_id(user, request.estimator_id)
     if task_type == TaskType.proactive and priority_enum in (TaskPriority.critical, TaskPriority.high):
         from fastapi import HTTPException
         raise HTTPException(
@@ -150,7 +151,7 @@ async def create_task_from_calc(
         status=TaskStatus.in_queue,
         min_league=league_enum,
         assignee_id=None,
-        estimator_id=request.estimator_id,
+        estimator_id=estimator_id,
         validator_id=None,
         estimation_details=estimation_details,
         due_date=request.due_date,

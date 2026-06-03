@@ -95,7 +95,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
     try {
       await onSubmit({
         full_name: full_name.trim(),
-        email: email.trim(),
+        email: email.trim().toLowerCase(),
         role,
         league,
         mpw,

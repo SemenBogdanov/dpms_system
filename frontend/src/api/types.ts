@@ -107,6 +107,11 @@ export interface TaskAttachment {
   created_at: string
 }
 
+export interface TaskTagSuggestion {
+  tag: string
+  count: number
+}
+
 export interface TaskImportIssue {
   row_number: number
   field: string

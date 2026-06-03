@@ -22,6 +22,7 @@ const complexityStyles: Record<string, string> = {
 }
 
 const QUEUE_PAGE_SIZE = 50
+const TASK_TITLE_MAX_LENGTH = 120
 
 function formatQueueDuration(hours: number | undefined): string {
   const totalMinutes = Math.max(0, Math.round((hours ?? 0) * 60))
@@ -278,12 +279,16 @@ export function QueuePage() {
   const handleOpenBugfix = (task: Task) => {
     setDetailTask(null)
     setBugfixParent(task)
-    setBugfixTitle(`Баг: ${task.title}`)
+    setBugfixTitle(`Баг: ${task.title}`.slice(0, TASK_TITLE_MAX_LENGTH))
     setBugfixDescription('')
   }
 
   const handleCreateBugfix = async () => {
     if (!bugfixParent || !bugfixTitle.trim()) return
+    if (bugfixTitle.trim().length > TASK_TITLE_MAX_LENGTH) {
+      toast.error(`Название задачи не длиннее ${TASK_TITLE_MAX_LENGTH} символов`)
+      return
+    }
     setBugfixBusy(true)
     try {
       await api.post('/api/tasks/bugfix', {
@@ -333,6 +338,10 @@ export function QueuePage() {
 
   const handleSaveEdit = async () => {
     if (!editTask || !editTitle.trim()) return
+    if (editTitle.trim().length > TASK_TITLE_MAX_LENGTH) {
+      toast.error(`Название задачи не длиннее ${TASK_TITLE_MAX_LENGTH} символов`)
+      return
+    }
     setEditBusy(true)
     try {
       const updated = await api.patch<Task>(`/api/tasks/${editTask.id}`, {
@@ -483,7 +492,19 @@ export function QueuePage() {
       ) : (
         <>
         <div className="overflow-x-auto rounded-2xl border border-gray-100 bg-white">
-          <table className="min-w-full divide-y divide-gray-100">
+          <table className="min-w-[1320px] table-fixed divide-y divide-gray-100 xl:min-w-full">
+            <colgroup>
+              <col className="w-[36%]" />
+              <col className="w-[7%]" />
+              <col className="w-[7%]" />
+              <col className="w-[6%]" />
+              <col className="w-[6%]" />
+              <col className="w-[9%]" />
+              <col className="w-[8%]" />
+              <col className="w-[7%]" />
+              <col className="w-[8%]" />
+              <col className="w-[6%]" />
+            </colgroup>
             <thead className="bg-gray-50/50">
               <tr>
                 <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-gray-600" onClick={() => handleSort('title')}>
@@ -542,7 +563,7 @@ export function QueuePage() {
                       key={(row.task as Task).id}
                       className={`queue-task-row ${locked(row.task) ? 'opacity-60' : ''} ${taskType(row.task) === 'bugfix' ? 'border-l-3 border-red-300 bg-red-50/30' : ''}`}
                     >
-                      <td className="px-4 py-3 text-sm text-gray-700">
+                      <td className="px-4 py-3 text-sm text-gray-700 align-top">
                         <div className="min-w-0 space-y-1">
                           <div className="flex min-w-0 items-center gap-3">
                             <span className="shrink-0 font-mono text-xs font-semibold leading-5 text-gray-400">
@@ -551,7 +572,8 @@ export function QueuePage() {
                             <button
                               type="button"
                               onClick={() => openDetail(row.task.id)}
-                              className="min-w-0 flex-1 cursor-pointer truncate text-left font-medium leading-5 text-gray-700 transition-colors hover:text-accent-dark"
+                              className="min-w-0 flex-1 cursor-pointer whitespace-normal break-words text-left font-medium leading-5 text-gray-700 transition-colors hover:text-accent-dark [overflow-wrap:anywhere]"
+                              title={row.task.title}
                             >
                               {row.task.title}
                             </button>
@@ -813,8 +835,12 @@ export function QueuePage() {
                   type="text"
                   value={editTitle}
                   onChange={(e) => setEditTitle(e.target.value)}
+                  maxLength={TASK_TITLE_MAX_LENGTH}
                   className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                 />
+                <p className="mt-1 text-xs text-slate-400">
+                  {editTitle.trim().length}/{TASK_TITLE_MAX_LENGTH} символов
+                </p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Описание</label>
@@ -872,7 +898,7 @@ export function QueuePage() {
               <button
                 type="button"
                 onClick={handleSaveEdit}
-                disabled={editBusy || !editTitle.trim()}
+                disabled={editBusy || !editTitle.trim() || editTitle.trim().length > TASK_TITLE_MAX_LENGTH}
                 className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-dark disabled:opacity-50"
               >
                 {editBusy ? '...' : 'Сохранить'}

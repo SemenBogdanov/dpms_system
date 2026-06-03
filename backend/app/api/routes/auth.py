@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user
@@ -51,7 +51,8 @@ async def login(
     Если у пользователя password_hash is NULL — принять любой пароль и вернуть токен
     (фронт покажет форму установки пароля).
     """
-    result = await db.execute(select(User).where(User.email == body.email))
+    email = str(body.email).strip().lower()
+    result = await db.execute(select(User).where(func.lower(User.email) == email))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(

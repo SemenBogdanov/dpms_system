@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.core.limits import TASK_TITLE_MAX_LENGTH
+
 
 class CalcItemInput(BaseModel):
     """Одна позиция: catalog_id + количество."""
@@ -36,7 +38,7 @@ class EstimateResponse(BaseModel):
 
 class CreateTaskFromCalcRequest(BaseModel):
     """Создать задачу из калькулятора."""
-    title: str = Field(min_length=5, max_length=500)
+    title: str = Field(min_length=5, max_length=TASK_TITLE_MAX_LENGTH)
     description: str = ""
     priority: str = "medium"
     estimator_id: UUID

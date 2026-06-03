@@ -1,19 +1,32 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react'
+import { useEffect, useMemo, useState, type ChangeEvent, type ClipboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
-import type { CatalogItem, User, EstimateResponse, Task, TaskAttachment } from '@/api/types'
+import type { CatalogItem, User, EstimateResponse, Task, TaskAttachment, TaskTagSuggestion } from '@/api/types'
 import type { CartRow } from '@/components/EstimateCart'
 import { CatalogPicker } from '@/components/CatalogPicker'
 import { EstimateCart } from '@/components/EstimateCart'
 import { TagInput } from '@/components/TagInput'
-import { Paperclip, Search, X } from 'lucide-react'
+import { ImagePlus, Paperclip, Search, X } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 
 const MAX_TASK_ATTACHMENTS = 5
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
-const ATTACHMENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
-const ATTACHMENT_ACCEPT = 'image/png,image/jpeg,image/webp,image/gif'
+const TASK_TITLE_MAX_LENGTH = 120
+const IMAGE_ATTACHMENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+const DOCUMENT_ATTACHMENT_TYPES = new Set([
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+])
+const DOCUMENT_ATTACHMENT_EXTENSIONS = ['.docx', '.xlsx', '.xls']
+const ATTACHMENT_ACCEPT = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  ...DOCUMENT_ATTACHMENT_EXTENSIONS,
+].join(',')
 
 function formatAttachmentSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} Б`
@@ -25,7 +38,8 @@ export function CalculatorPage() {
   const navigate = useNavigate()
   const { user: currentUser } = useAuth()
   const [catalog, setCatalog] = useState<CatalogItem[]>([])
-  const [teamleads, setTeamleads] = useState<User[]>([])
+  const [tagSuggestions, setTagSuggestions] = useState<TaskTagSuggestion[]>([])
+  const [taskCreators, setTaskCreators] = useState<User[]>([])
   const [cart, setCart] = useState<CartRow[]>([])
   const [estimateResult, setEstimateResult] = useState<EstimateResponse | null>(null)
   const [loading, setLoading] = useState(false)
@@ -45,12 +59,25 @@ export function CalculatorPage() {
 
   useEffect(() => {
     api.get<CatalogItem[]>('/api/catalog', { is_active: 'true' }).then(setCatalog).catch(() => setCatalog([]))
-    api.get<User[]>('/api/users?role=teamlead').then(setTeamleads).catch(() => setTeamleads([]))
+    api.get<TaskTagSuggestion[]>('/api/tasks/tags/suggestions').then(setTagSuggestions).catch(() => setTagSuggestions([]))
   }, [])
 
   useEffect(() => {
-    if (teamleads.length > 0 && !createEstimatorId) setCreateEstimatorId(teamleads[0].id)
-  }, [teamleads, createEstimatorId])
+    if (isAdmin) {
+      api.get<User[]>('/api/users', { is_active: 'true' })
+        .then((users) => setTaskCreators(users.filter((u) => u.role === 'admin' || u.role === 'teamlead')))
+        .catch(() => setTaskCreators([]))
+    } else {
+      setTaskCreators(currentUser ? [currentUser] : [])
+    }
+  }, [currentUser, isAdmin])
+
+  useEffect(() => {
+    if (!createEstimatorId && taskCreators.length > 0) setCreateEstimatorId(taskCreators[0].id)
+    if (!isAdmin && currentUser && createEstimatorId !== currentUser.id) {
+      setCreateEstimatorId(currentUser.id)
+    }
+  }, [createEstimatorId, currentUser, isAdmin, taskCreators])
 
   useEffect(() => {
     if (!isAdmin && createPriority === 'critical') {
@@ -108,13 +135,20 @@ export function CalculatorPage() {
     setCreatePriority('medium')
     setCreateTags([])
     setCreateAttachments([])
-    setCreateEstimatorId(teamleads[0]?.id ?? '')
+    setCreateEstimatorId(isAdmin ? taskCreators[0]?.id ?? '' : currentUser?.id ?? '')
     setDueDate('')
     setCreateModalOpen(true)
   }
 
-  const handleAttachmentSelect = (event: ChangeEvent<HTMLInputElement>) => {
-    const selected = Array.from(event.target.files ?? [])
+  const isAllowedAttachment = (file: File, imagesOnly = false) => {
+    const suffix = `.${file.name.split('.').pop()?.toLowerCase() ?? ''}`
+    if (IMAGE_ATTACHMENT_TYPES.has(file.type)) return true
+    if (imagesOnly) return false
+    return DOCUMENT_ATTACHMENT_TYPES.has(file.type) || DOCUMENT_ATTACHMENT_EXTENSIONS.includes(suffix)
+  }
+
+  const addAttachments = (files: File[], imagesOnly = false) => {
+    const selected = files
     if (selected.length === 0) return
     const next = [...createAttachments]
     for (const file of selected) {
@@ -122,7 +156,7 @@ export function CalculatorPage() {
         toast.error(`Можно прикрепить не более ${MAX_TASK_ATTACHMENTS} файлов`)
         break
       }
-      if (!ATTACHMENT_TYPES.has(file.type)) {
+      if (!isAllowedAttachment(file, imagesOnly)) {
         toast.error(`Формат не поддерживается: ${file.name}`)
         continue
       }
@@ -139,7 +173,30 @@ export function CalculatorPage() {
       if (!duplicate) next.push(file)
     }
     setCreateAttachments(next)
+  }
+
+  const handleAttachmentSelect = (event: ChangeEvent<HTMLInputElement>) => {
+    addAttachments(Array.from(event.target.files ?? []))
     event.target.value = ''
+  }
+
+  const handleAttachmentPaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item, index) => {
+        const file = item.getAsFile()
+        if (!file) return null
+        const extension = file.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png'
+        const name = file.name && file.name !== 'image.png'
+          ? file.name
+          : `screenshot-${new Date().toISOString().replace(/[:.]/g, '-')}-${index + 1}.${extension}`
+        return new File([file], name, { type: file.type, lastModified: Date.now() })
+      })
+      .filter((file): file is File => Boolean(file))
+    if (files.length === 0) return
+    event.preventDefault()
+    addAttachments(files, true)
+    toast.success(`Добавлено из буфера: ${files.length}`)
   }
 
   const removeAttachment = (index: number) => {
@@ -167,7 +224,15 @@ export function CalculatorPage() {
       toast.error('Название задачи не менее 5 символов')
       return
     }
+    if (createTitle.trim().length > TASK_TITLE_MAX_LENGTH) {
+      toast.error(`Название задачи не длиннее ${TASK_TITLE_MAX_LENGTH} символов`)
+      return
+    }
     if (cart.length === 0) return
+    if (!createEstimatorId) {
+      toast.error('Не выбран постановщик задачи')
+      return
+    }
     const hasProactive = cart.some((r) => r.catalog.category === 'proactive')
     const adminSafePriority = !isAdmin && createPriority === 'critical' ? 'high' : createPriority
     const priorityToSend = hasProactive && (adminSafePriority === 'critical' || adminSafePriority === 'high') ? 'medium' : adminSafePriority
@@ -334,6 +399,7 @@ export function CalculatorPage() {
           <div
             className="max-h-[calc(100vh-3rem)] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 shadow-lg"
             onClick={(e) => e.stopPropagation()}
+            onPaste={handleAttachmentPaste}
           >
             <h3 className="text-lg font-semibold text-slate-900">
               Создать задачу и отправить в очередь
@@ -349,8 +415,11 @@ export function CalculatorPage() {
                 placeholder="Не менее 5 символов"
                 className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
                 minLength={5}
-                maxLength={500}
+                maxLength={TASK_TITLE_MAX_LENGTH}
               />
+              <p className="text-xs text-slate-400">
+                {createTitle.trim().length}/{TASK_TITLE_MAX_LENGTH} символов
+              </p>
               <label className="block text-sm font-medium text-slate-700">
                 Описание
               </label>
@@ -418,7 +487,12 @@ export function CalculatorPage() {
               <label className="block text-sm font-medium text-slate-700">
                 Теги
               </label>
-              <TagInput tags={createTags} onChange={setCreateTags} className="mt-1" />
+              <TagInput
+                tags={createTags}
+                onChange={setCreateTags}
+                suggestions={tagSuggestions}
+                className="mt-1"
+              />
               <div>
                 <label className="block text-sm font-medium text-slate-700">
                   Скриншоты и изображения
@@ -436,8 +510,12 @@ export function CalculatorPage() {
                   />
                 </label>
                 <p className="mt-1 text-xs text-slate-400">
-                  PNG, JPG, WEBP или GIF. До 10 МБ, максимум {MAX_TASK_ATTACHMENTS} файлов.
+                  PNG, JPG, WEBP, GIF, DOCX, XLS или XLSX. До 10 МБ, максимум {MAX_TASK_ATTACHMENTS} файлов. Скриншоты можно вставлять через Ctrl+V.
                 </p>
+                <div className="mt-2 flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-500">
+                  <ImagePlus className="h-4 w-4 shrink-0 text-slate-400" />
+                  <span>Скопируйте скриншот из чата и нажмите Ctrl+V в этом окне.</span>
+                </div>
                 {createAttachments.length > 0 && (
                   <ul className="mt-2 space-y-1">
                     {createAttachments.map((file, index) => (
@@ -468,19 +546,25 @@ export function CalculatorPage() {
                 )}
               </div>
               <label className="block text-sm font-medium text-slate-700">
-                Оценщик (тимлид)
+                Постановщик задачи
               </label>
-              <select
-                value={createEstimatorId}
-                onChange={(e) => setCreateEstimatorId(e.target.value)}
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              >
-                {teamleads.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.full_name}
-                  </option>
-                ))}
-              </select>
+              {isAdmin ? (
+                <select
+                  value={createEstimatorId}
+                  onChange={(e) => setCreateEstimatorId(e.target.value)}
+                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                >
+                  {taskCreators.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.full_name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  {currentUser?.full_name ?? 'Текущий пользователь'}
+                </div>
+              )}
             </div>
             <div className="mt-6 flex justify-end gap-2">
               <button
@@ -493,7 +577,12 @@ export function CalculatorPage() {
               <button
                 type="button"
                 onClick={handleCreateTask}
-                disabled={creating || createTitle.trim().length < 5}
+                disabled={
+                  creating ||
+                  createTitle.trim().length < 5 ||
+                  createTitle.trim().length > TASK_TITLE_MAX_LENGTH ||
+                  !createEstimatorId
+                }
                 className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
               >
                 {creating ? '...' : 'Создать и отправить в очередь'}

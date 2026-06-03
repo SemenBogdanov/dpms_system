@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user, require_role
@@ -64,14 +64,15 @@ async def create_user(
     """Создать сотрудника (только admin). Проверка уникальности email."""
     from app.core.security import get_password_hash
 
-    existing = await db.execute(select(User).where(User.email == body.email))
+    email = str(body.email).strip().lower()
+    existing = await db.execute(select(User).where(func.lower(User.email) == email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Пользователь с таким email уже существует")
     now = datetime.now(timezone.utc)
     onboarding_until = add_months(now, 3) if body.is_new_employee else None
     user = User(
         full_name=body.full_name,
-        email=body.email,
+        email=email,
         league=body.league,
         role=body.role,
         mpw=body.mpw,
@@ -105,10 +106,11 @@ async def update_user(
     if body.full_name is not None:
         user.full_name = body.full_name
     if body.email is not None:
-        other = await db.execute(select(User).where(User.email == body.email, User.id != user_id))
+        email = str(body.email).strip().lower()
+        other = await db.execute(select(User).where(func.lower(User.email) == email, User.id != user_id))
         if other.scalar_one_or_none():
             raise HTTPException(status_code=400, detail="Пользователь с таким email уже существует")
-        user.email = body.email
+        user.email = email
     if body.role is not None:
         user.role = body.role
     if body.league is not None:

@@ -5,6 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.core.limits import TASK_TITLE_MAX_LENGTH
 from app.models.task import TaskPriority, TaskStatus, TaskType
 from app.models.catalog import Complexity
 from app.models.user import League
@@ -23,6 +24,7 @@ class TaskBase(BaseModel):
 
 class TaskCreate(TaskBase):
     """Создание задачи (оценка может быть 0, потом через калькулятор)."""
+    title: str = Field(..., min_length=5, max_length=TASK_TITLE_MAX_LENGTH)
     status: TaskStatus = TaskStatus.new
     estimator_id: UUID
     estimation_details: dict | None = None
@@ -30,7 +32,7 @@ class TaskCreate(TaskBase):
 
 class TaskUpdate(BaseModel):
     """Обновление заявки без изменения оценки Q и workflow-статуса."""
-    title: str | None = Field(None, max_length=500)
+    title: str | None = Field(None, min_length=5, max_length=TASK_TITLE_MAX_LENGTH)
     description: str | None = None
     priority: TaskPriority | None = None
     tags: list[str] | None = None
@@ -82,6 +84,13 @@ class TaskAttachmentRead(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class TaskTagSuggestion(BaseModel):
+    """Подсказка тега с частотой использования."""
+
+    tag: str
+    count: int
 
 
 class FocusResponse(BaseModel):
@@ -186,7 +195,7 @@ class CreateBugfixRequest(BaseModel):
     """Создание гарантийного баг-фикса по принятой задаче."""
 
     parent_task_id: UUID
-    title: str = Field(..., max_length=500)
+    title: str = Field(..., min_length=5, max_length=TASK_TITLE_MAX_LENGTH)
     description: str | None = None
 
 

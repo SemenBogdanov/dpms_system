@@ -18,6 +18,11 @@ _IMAGE_EXTENSIONS = {
     "image/gif": ".gif",
     "image/webp": ".webp",
 }
+_DOCUMENT_EXTENSIONS = {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xls": "application/vnd.ms-excel",
+}
 _ATTACHABLE_STATUSES = {TaskStatus.new, TaskStatus.estimated, TaskStatus.in_queue}
 
 
@@ -31,6 +36,17 @@ def _detect_image_type(data: bytes) -> str | None:
     if len(data) >= 12 and data.startswith(b"RIFF") and data[8:12] == b"WEBP":
         return "image/webp"
     return None
+
+
+def _detect_document_type(filename: str, data: bytes) -> tuple[str, str] | None:
+    suffix = Path(filename).suffix.lower()
+    if suffix not in _DOCUMENT_EXTENSIONS:
+        return None
+    if suffix in {".docx", ".xlsx"} and not data.startswith(b"PK\x03\x04"):
+        return None
+    if suffix == ".xls" and not data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        return None
+    return _DOCUMENT_EXTENSIONS[suffix], suffix
 
 
 def _uploads_root() -> Path:
@@ -74,15 +90,20 @@ async def save_task_attachment(
         mb = settings.MAX_TASK_ATTACHMENT_BYTES // (1024 * 1024)
         raise HTTPException(status_code=400, detail=f"Файл больше {mb} МБ")
 
+    original_filename = Path(upload.filename or "attachment").name[:255] or "attachment"
     content_type = _detect_image_type(data)
+    extension = _IMAGE_EXTENSIONS.get(content_type or "")
     if content_type is None:
+        document_type = _detect_document_type(original_filename, data)
+        if document_type is not None:
+            content_type, extension = document_type
+    if content_type is None or extension is None:
         raise HTTPException(
             status_code=400,
-            detail="Поддерживаются только PNG, JPG, WEBP и GIF",
+            detail="Поддерживаются PNG, JPG, WEBP, GIF, DOCX, XLS и XLSX",
         )
 
-    original_filename = Path(upload.filename or "screenshot").name[:255] or "screenshot"
-    stored_filename = f"{task.id}/{uuid.uuid4()}{_IMAGE_EXTENSIONS[content_type]}"
+    stored_filename = f"{task.id}/{uuid.uuid4()}{extension}"
     file_path = _uploads_root() / stored_filename
     file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_bytes(data)

@@ -3,7 +3,7 @@ import { api } from '@/api/client'
 import type { Task, User, CatalogItem, TaskAttachment } from '@/api/types'
 import { DeadlineBadge } from './DeadlineBadge'
 import { PriorityBadge } from './PriorityBadge'
-import { Copy, X } from 'lucide-react'
+import { Copy, FileText, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 interface TaskDetailModalProps {
@@ -292,23 +292,32 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
                 <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {attachments.map((attachment) => {
                     const url = attachmentUrls[attachment.id]
+                    const isImage = attachment.content_type.startsWith('image/')
                     return (
                       <a
                         key={attachment.id}
                         href={url}
                         target="_blank"
+                        download={attachment.original_filename}
                         rel="noopener noreferrer"
                         className={`overflow-hidden rounded-lg border border-slate-200 bg-white text-left shadow-sm transition ${
                           url ? 'hover:border-primary hover:shadow' : 'pointer-events-none opacity-70'
                         }`}
                       >
                         <div className="flex h-28 items-center justify-center bg-slate-100">
-                          {url ? (
+                          {url && isImage ? (
                             <img
                               src={url}
                               alt={attachment.original_filename}
                               className="h-full w-full object-cover"
                             />
+                          ) : url ? (
+                            <div className="flex flex-col items-center gap-2 px-3 text-center text-slate-500">
+                              <FileText className="h-8 w-8" />
+                              <span className="text-xs font-medium uppercase">
+                                {attachment.original_filename.split('.').pop() || 'файл'}
+                              </span>
+                            </div>
                           ) : (
                             <span className="px-3 text-center text-xs text-slate-400">
                               Не удалось открыть файл

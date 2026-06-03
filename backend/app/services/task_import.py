@@ -13,6 +13,7 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.limits import TASK_TITLE_MAX_LENGTH
 from app.models.catalog import CatalogItem
 from app.models.task import Task, TaskPriority, TaskStatus, TaskType
 from app.models.user import User, UserRole
@@ -318,8 +319,14 @@ async def parse_task_import(
             errors.append(TaskImportIssue(row_number=row_number, field="title", message="Название обязательно"))
         elif len(title) < 5:
             errors.append(TaskImportIssue(row_number=row_number, field="title", message="Название должно быть не короче 5 символов"))
-        elif len(title) > 500:
-            errors.append(TaskImportIssue(row_number=row_number, field="title", message="Название длиннее 500 символов"))
+        elif len(title) > TASK_TITLE_MAX_LENGTH:
+            errors.append(
+                TaskImportIssue(
+                    row_number=row_number,
+                    field="title",
+                    message=f"Название длиннее {TASK_TITLE_MAX_LENGTH} символов",
+                )
+            )
 
         description = values.get("description", "").strip() or None
         if description and len(description) > MAX_DESCRIPTION_LENGTH:

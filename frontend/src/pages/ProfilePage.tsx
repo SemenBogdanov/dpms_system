@@ -25,6 +25,7 @@ export function ProfilePage() {
   const [profileError, setProfileError] = useState<string | null>(null)
   const [profileLoading, setProfileLoading] = useState(false)
   const [doneTasks, setDoneTasks] = useState<Task[]>([])
+  const [activeTasks, setActiveTasks] = useState<Task[]>([])
   const [transactions, setTransactions] = useState<QTransactionRead[]>([])
   const [transLimit, setTransLimit] = useState(PAGE_SIZE)
   const [walletFilter, setWalletFilter] = useState<'all' | 'main' | 'karma'>('all')
@@ -45,6 +46,7 @@ export function ProfilePage() {
       setUser(null)
       setProgress(null)
       setDoneTasks([])
+      setActiveTasks([])
       setTransactions([])
       setProfileError(null)
       return
@@ -52,19 +54,22 @@ export function ProfilePage() {
     setProfileError(null)
     setProfileLoading(true)
     try {
-      const promises: [Promise<User>, Promise<UserProgress>, Promise<Task[]>, Promise<QTransactionRead[]>] = [
+      const promises: [Promise<User>, Promise<UserProgress>, Promise<Task[]>, Promise<Task[]>, Promise<Task[]>, Promise<QTransactionRead[]>] = [
         api.get<User>(`/api/users/${currentId}`),
         api.get<UserProgress>(`/api/users/${currentId}/progress`),
         api.get<Task[]>(`/api/tasks?assignee_id=${currentId}&status=done`),
+        api.get<Task[]>(`/api/tasks?assignee_id=${currentId}&status=in_progress`),
+        api.get<Task[]>(`/api/tasks?assignee_id=${currentId}&status=review`),
         api.get<QTransactionRead[]>(`/api/users/${currentId}/transactions`, {
           ...(walletFilter !== 'all' && { wallet_type: walletFilter }),
           ...(directionFilter !== 'all' && { direction: directionFilter }),
         }),
       ]
-      const [u, p, tasks, trans] = await Promise.all(promises)
+      const [u, p, tasks, inProgress, review, trans] = await Promise.all(promises)
       setUser(u)
       setProgress(p)
       setDoneTasks(tasks)
+      setActiveTasks([...inProgress, ...review])
       setTransactions(trans)
       /*
       if (currentUser?.role === 'admin' || currentUser?.role === 'teamlead') {
@@ -96,6 +101,7 @@ export function ProfilePage() {
       setUser(null)
       setProgress(null)
       setDoneTasks([])
+      setActiveTasks([])
       setTransactions([])
       // setLeagueEval(null)
       setLeagueProgress(null)
@@ -242,6 +248,39 @@ export function ProfilePage() {
               <p className="text-sm font-medium text-slate-600">Лучший месяц</p>
               <p className="text-2xl font-semibold text-slate-900">—</p>
             </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <div className="border-b border-slate-200 p-4">
+              <h2 className="font-medium text-slate-800">Текущие задачи</h2>
+              <p className="mt-1 text-sm text-slate-500">Задачи в работе и на проверке у сотрудника</p>
+            </div>
+            {activeTasks.length > 0 ? (
+              <div className="divide-y divide-slate-100">
+                {activeTasks.map((task) => (
+                  <div key={task.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-slate-800">
+                        #{task.task_number} {task.title}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {task.status === 'in_progress' ? 'В работе' : 'На проверке'} · {Number(task.estimated_q).toFixed(1)} Q
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                      <span className="rounded-full bg-slate-100 px-2.5 py-1 font-medium text-slate-600">
+                        {task.priority}
+                      </span>
+                      {task.started_at && (
+                        <span>{new Date(task.started_at).toLocaleDateString('ru-RU')}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="p-4 text-sm text-slate-500">Нет задач в работе или на проверке</p>
+            )}
           </div>
 
           {/* История операций */}
