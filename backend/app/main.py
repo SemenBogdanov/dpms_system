@@ -10,11 +10,16 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.api.routes import absences, activity, admin, auth, calculator, catalog, competencies, dashboard, feedback, knowledge, notifications, queue, reports, shop, tasks, users
+from app.database import AsyncSessionLocal
+from app.services.competencies import ensure_builtin_competencies
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Жизненный цикл приложения (при необходимости — инициализация)."""
+    async with AsyncSessionLocal() as session:
+        await ensure_builtin_competencies(session)
+        await session.commit()
     yield
     # shutdown при необходимости
 

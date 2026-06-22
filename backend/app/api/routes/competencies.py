@@ -102,6 +102,31 @@ def _result_response(attempt: CompetencyAttempt, competency: Competency) -> Comp
     )
 
 
+async def _attempt_maps_for_user(
+    db: AsyncSession,
+    user_id: UUID,
+    competency_ids: list[UUID],
+) -> tuple[dict[UUID, CompetencyAttempt], dict[UUID, CompetencyAttempt]]:
+    """Вернуть latest/active attempts без отдельных запросов по каждой компетенции."""
+    if not competency_ids:
+        return {}, {}
+    result = await db.execute(
+        select(CompetencyAttempt)
+        .where(
+            CompetencyAttempt.user_id == user_id,
+            CompetencyAttempt.competency_id.in_(competency_ids),
+        )
+        .order_by(CompetencyAttempt.competency_id, CompetencyAttempt.started_at.desc())
+    )
+    latest_by_competency: dict[UUID, CompetencyAttempt] = {}
+    active_by_competency: dict[UUID, CompetencyAttempt] = {}
+    for attempt in result.scalars().all():
+        latest_by_competency.setdefault(attempt.competency_id, attempt)
+        if attempt.status == "in_progress":
+            active_by_competency.setdefault(attempt.competency_id, attempt)
+    return latest_by_competency, active_by_competency
+
+
 async def _constructor_counts(db: AsyncSession, competency_id: UUID) -> tuple[int, int, int]:
     assignments_result = await db.execute(
         select(CompetencyAssignment).where(CompetencyAssignment.competency_id == competency_id)
@@ -497,7 +522,6 @@ async def my_competencies(
 ):
     """List builtin competencies and user-visible custom assignments."""
     ensure_development_access(current_user)
-    await ensure_builtin_competencies(db)
 
     competencies_result = await db.execute(
         select(Competency)
@@ -536,12 +560,17 @@ async def my_competencies(
 
     items: list[CompetencySummary] = []
     seen: set[UUID] = set()
+    latest_by_competency, active_by_competency = await _attempt_maps_for_user(
+        db,
+        current_user.id,
+        [competency.id for competency in competencies],
+    )
     for competency in competencies:
         if competency.id in seen:
             continue
         seen.add(competency.id)
-        latest = await latest_attempt(db, current_user.id, competency.id)
-        active = await active_attempt(db, current_user.id, competency.id)
+        latest = latest_by_competency.get(competency.id)
+        active = active_by_competency.get(competency.id)
         status = "not_started"
         if active:
             status = "in_progress"
