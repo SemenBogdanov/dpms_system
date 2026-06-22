@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_current_user, require_role
+from app.api.deps import get_db, require_task_workspace_role
 from app.models.user import User
 from app.models.transaction import QTransaction, WalletType
 from app.schemas.dashboard import CapacityGauge, TeamSummary, PeriodStats, BurndownData
@@ -30,6 +30,7 @@ router = APIRouter()
 
 @router.get("/capacity", response_model=CapacityGauge)
 async def capacity(
+    _: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Метрика «Стакан»: загрузка vs ёмкость команды."""
@@ -39,6 +40,7 @@ async def capacity(
 
 @router.get("/team-summary", response_model=TeamSummary)
 async def team_summary(
+    _: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Сводка по команде (по лигам, earned vs target, in_progress_q, is_at_risk)."""
@@ -48,6 +50,7 @@ async def team_summary(
 
 @router.get("/plan-fact", response_model=TeamSummary)
 async def plan_fact(
+    _: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """План/факт по сотрудникам (то же что team-summary)."""
@@ -57,6 +60,7 @@ async def plan_fact(
 
 @router.get("/period-stats", response_model=PeriodStats)
 async def period_stats(
+    _: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Статистика текущего месяца для дашборда руководителя."""
@@ -66,6 +70,7 @@ async def period_stats(
 
 @router.get("/burndown", response_model=BurndownData)
 async def burndown(
+    _: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Данные для графика burn-down текущего месяца."""
@@ -76,7 +81,7 @@ async def burndown(
 @router.get("/capacity-history")
 async def capacity_history(
     weeks: int = Query(default=6, ge=1, le=12),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -135,7 +140,7 @@ async def capacity_history(
 
 @router.get("/focus-status", response_model=list[FocusStatus])
 async def focus_status(
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Статусы фокуса всех исполнителей (для дашборда тимлида/админа)."""
@@ -146,7 +151,7 @@ async def focus_status(
 @router.get("/calibration", response_model=CalibrationReportNew)
 async def calibration(
     period: str = Query(default="", description="YYYY-MM, пусто = текущий"),
-    user: User = Depends(require_role("admin")),
+    user: User = Depends(require_task_workspace_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -340,7 +345,7 @@ async def calibration(
 
 @router.get("/teamlead-accuracy", response_model=list[TeamleadAccuracy])
 async def teamlead_accuracy(
-    user: User = Depends(require_role("admin")),
+    user: User = Depends(require_task_workspace_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """Точность оценок тимлидов. Только admin."""

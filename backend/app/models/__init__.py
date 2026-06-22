@@ -23,6 +23,16 @@ from app.models.shop import ShopItem, Purchase, PeriodSnapshot
 from app.models.notification import Notification
 from app.models.activity import ActivityEvent
 from app.models.feedback import FeedbackRequest
+from app.models.competency import (
+    Competency,
+    CompetencyQuestion,
+    CompetencyChoice,
+    CompetencyInterpretation,
+    CompetencyAssignment,
+    CompetencyAttempt,
+    CompetencyAnswer,
+    IndividualDevelopmentPlanItem,
+)
 
 
 __all__ = [
@@ -41,4 +51,12 @@ __all__ = [
     "Notification",
     "ActivityEvent",
     "FeedbackRequest",
+    "Competency",
+    "CompetencyQuestion",
+    "CompetencyChoice",
+    "CompetencyInterpretation",
+    "CompetencyAssignment",
+    "CompetencyAttempt",
+    "CompetencyAnswer",
+    "IndividualDevelopmentPlanItem",
 ]

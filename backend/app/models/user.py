@@ -42,7 +42,10 @@ class User(Base):
     mpw: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # план на месяц в Q
     wip_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     is_new_employee: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    task_workspace_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     feedback_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    competency_development_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    competency_constructor_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     plan_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     onboarding_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     onboarding_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

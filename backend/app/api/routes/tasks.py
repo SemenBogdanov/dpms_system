@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_current_user, require_role
+from app.api.deps import get_db, require_task_workspace_access, require_task_workspace_role
 from app.models.attachment import TaskAttachment
 from app.models.user import User, UserRole
 from app.models.task import Task, TaskStatus, TaskType, TaskPriority
@@ -51,7 +51,7 @@ async def list_tasks(
     assignee_id: UUID | None = Query(None),
     task_type: str | None = Query(None),
     is_overdue: bool | None = Query(None),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Список задач с фильтрами."""
@@ -94,7 +94,7 @@ async def list_tasks(
 @router.get("/tags/suggestions", response_model=list[TaskTagSuggestion])
 async def tag_suggestions(
     limit: int = Query(20, ge=1, le=50),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Теги, отсортированные по частоте использования."""
@@ -122,7 +122,7 @@ async def export_tasks(
     period: str = Query(..., description="YYYY-MM"),
     assignee_id: UUID | None = Query(None),
     category: str | None = Query(None, description="task_type: widget, etl, api, docs"),
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Экспорт завершённых задач за период (admin/teamlead)."""
@@ -188,7 +188,7 @@ async def export_tasks(
 @router.post("/import/preview", response_model=TaskImportPreview)
 async def preview_tasks_import(
     file: UploadFile = File(...),
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Проверить CSV со списком задач без записи в БД."""
@@ -198,7 +198,7 @@ async def preview_tasks_import(
 @router.post("/import", response_model=TaskImportCommitResponse)
 async def import_tasks(
     file: UploadFile = File(...),
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Создать задачи из CSV: только валидные queued tasks, all-or-nothing."""
@@ -208,7 +208,7 @@ async def import_tasks(
 @router.get("/{task_id}", response_model=TaskRead)
 async def get_task(
     task_id: UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Детали задачи."""
@@ -227,7 +227,7 @@ async def get_task(
 @router.get("/{task_id}/attachments", response_model=list[TaskAttachmentRead])
 async def list_task_attachments(
     task_id: UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Список вложений задачи."""
@@ -244,7 +244,7 @@ async def list_task_attachments(
 async def upload_task_attachment(
     task_id: UUID,
     file: UploadFile = File(...),
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Загрузить файл к задаче до взятия её в работу."""
@@ -256,7 +256,7 @@ async def upload_task_attachment(
 async def get_task_attachment_content(
     task_id: UUID,
     attachment_id: UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Вернуть файл вложения задачи."""
@@ -279,7 +279,7 @@ async def get_task_attachment_content(
 @router.post("", response_model=TaskRead)
 async def create_task(
     body: TaskCreate,
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Создать задачу (с оценкой или без)."""
@@ -319,7 +319,7 @@ async def create_task(
 async def update_task(
     task_id: UUID,
     body: TaskUpdate,
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Обновить заявку без изменения оценки Q и workflow-статуса."""
@@ -354,7 +354,7 @@ async def update_task(
 async def set_due_date(
     task_id: UUID,
     body: SetDueDateRequest,
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -380,7 +380,7 @@ async def set_due_date(
 @router.delete("/{task_id}", status_code=204)
 async def cancel_task(
     task_id: UUID,
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Мягкое удаление (отмена) задачи."""
@@ -417,7 +417,7 @@ async def cancel_task(
 @router.post("/bugfix", response_model=TaskRead)
 async def create_bugfix_task(
     body: CreateBugfixRequest,
-    user: User = Depends(require_role("admin")),
+    user: User = Depends(require_task_workspace_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -437,7 +437,7 @@ async def create_bugfix_task(
 @router.post("/{task_id}/focus", response_model=FocusResponse)
 async def focus_task(
     task_id: UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Поставить задачу в фокус. Автопауза другой задачи если есть."""
@@ -454,7 +454,7 @@ async def focus_task(
 @router.post("/{task_id}/pause", response_model=FocusResponse)
 async def pause_task(
     task_id: UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Снять задачу с фокуса (пауза)."""
@@ -472,7 +472,7 @@ async def pause_task(
 async def correct_time(
     task_id: UUID,
     body: TimeCorrection,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Ручная коррекция продуктивного времени."""

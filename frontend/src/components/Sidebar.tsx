@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -9,6 +9,7 @@ import {
   User,
   Users,
   CalendarDays,
+  BookOpenCheck,
   BookOpen,
   Library,
   ShoppingBag,
@@ -16,36 +17,57 @@ import {
   MessageSquare,
   LogOut,
   Menu,
+  Paperclip,
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { LeagueBadge } from '@/components/LeagueBadge'
+import { hasDevelopmentAccess, hasFeedbackAccess, hasTaskWorkspaceAccess } from '@/lib/access'
 
 const nav: Array<
-  { to: string; label: string; icon: typeof LayoutDashboard; roles?: readonly ('executor' | 'teamlead' | 'admin')[] }
+  {
+    to: string
+    label: string
+    icon: typeof LayoutDashboard
+    section: 'task' | 'feedback' | 'development' | 'admin'
+    roles?: readonly ('executor' | 'teamlead' | 'admin')[]
+  }
 > = [
-  { to: '/', label: 'Дашборд', icon: LayoutDashboard, roles: ['teamlead', 'admin'] as const },
-  { to: '/calibration', label: 'Калибровка', icon: Scale, roles: ['admin'] },
-  { to: '/queue', label: 'Очередь', icon: ListTodo },
-  { to: '/my-tasks', label: 'Мои задачи', icon: ClipboardList },
-  { to: '/calculator', label: 'Калькулятор', icon: Calculator, roles: ['teamlead', 'admin'] },
-  { to: '/profile', label: 'Профиль', icon: User },
-  { to: '/shop', label: 'Магазин', icon: ShoppingBag },
-  { to: '/feedback', label: 'Обратная связь', icon: MessageSquare },
-  { to: '/reports', label: 'Отчёты', icon: BarChart3, roles: ['teamlead', 'admin'] },
-  { to: '/absences', label: 'Отсутствия', icon: CalendarDays, roles: ['teamlead', 'admin'] },
-  { to: '/admin/users', label: 'Админ', icon: Users, roles: ['admin'] },
-  { to: '/catalog', label: 'Каталог операций', icon: Library },
-  { to: '/knowledge', label: 'База знаний', icon: BookOpen },
+  { to: '/', label: 'Дашборд', icon: LayoutDashboard, section: 'task', roles: ['teamlead', 'admin'] as const },
+  { to: '/calibration', label: 'Калибровка', icon: Scale, section: 'task', roles: ['admin'] },
+  { to: '/queue', label: 'Очередь', icon: ListTodo, section: 'task' },
+  { to: '/my-tasks', label: 'Мои задачи', icon: ClipboardList, section: 'task' },
+  { to: '/calculator', label: 'Калькулятор', icon: Calculator, section: 'task', roles: ['teamlead', 'admin'] },
+  { to: '/profile', label: 'Профиль', icon: User, section: 'task' },
+  { to: '/shop', label: 'Магазин', icon: ShoppingBag, section: 'task' },
+  { to: '/feedback', label: 'Обратная связь', icon: MessageSquare, section: 'feedback' },
+  { to: '/competencies', label: 'Развитие', icon: BookOpenCheck, section: 'development' },
+  { to: '/reports', label: 'Отчёты', icon: BarChart3, section: 'task', roles: ['teamlead', 'admin'] },
+  { to: '/absences', label: 'Отсутствия', icon: CalendarDays, section: 'task', roles: ['teamlead', 'admin'] },
+  { to: '/admin/users', label: 'Админ', icon: Users, section: 'admin', roles: ['admin'] },
+  { to: '/catalog', label: 'Каталог операций', icon: Library, section: 'task' },
+  { to: '/knowledge', label: 'База знаний', icon: BookOpen, section: 'task' },
 ]
 
 export function Sidebar() {
   const { user, logout } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [desktopPinned, setDesktopPinned] = useState(() => {
+    if (typeof window === 'undefined') return true
+    return window.localStorage.getItem('dpms.sidebarPinned') !== 'false'
+  })
+  const [desktopHoverOpen, setDesktopHoverOpen] = useState(false)
+
+  useEffect(() => {
+    window.localStorage.setItem('dpms.sidebarPinned', String(desktopPinned))
+  }, [desktopPinned])
 
   const visibleNav = nav.filter((item) => {
-    if (item.to === '/feedback') return Boolean(user?.feedback_enabled)
+    if (item.section === 'task' && !hasTaskWorkspaceAccess(user)) return false
+    if (item.section === 'feedback' && !hasFeedbackAccess(user)) return false
+    if (item.section === 'development' && !hasDevelopmentAccess(user)) return false
+    if (item.section === 'admin' && user?.role !== 'admin') return false
     if (!item.roles) return true
     return user && item.roles.includes(user.role)
   })
@@ -69,14 +91,42 @@ export function Sidebar() {
         />
       )}
 
+      {!desktopPinned && (
+        <div
+          className="fixed left-0 top-0 z-30 hidden h-screen w-3 lg:block"
+          onMouseEnter={() => setDesktopHoverOpen(true)}
+          aria-hidden
+        />
+      )}
+
       <aside
+        onMouseEnter={() => {
+          if (!desktopPinned) setDesktopHoverOpen(true)
+        }}
+        onMouseLeave={() => {
+          if (!desktopPinned) setDesktopHoverOpen(false)
+        }}
         className={cn(
-          'fixed left-0 top-0 z-40 flex h-full w-56 flex-col border-r border-gray-200/50 bg-white transition-transform lg:static lg:translate-x-0',
-          mobileOpen ? 'translate-x-0' : '-translate-x-full'
+          'fixed left-0 top-0 z-40 flex h-full w-56 flex-col border-r border-gray-200/50 bg-white shadow-sm transition-transform duration-200 ease-out',
+          mobileOpen ? 'translate-x-0' : '-translate-x-full',
+          desktopPinned && 'lg:static lg:translate-x-0 lg:shadow-none',
+          !desktopPinned && (desktopHoverOpen ? 'lg:translate-x-0' : 'lg:-translate-x-full')
         )}
       >
-        <div className="flex items-center justify-center px-4 py-5 border-b border-gray-100">
+        <div className="relative flex items-center justify-center border-b border-gray-100 px-4 py-5">
           <img src="/logo_prosto_sdelal.svg" alt="Просто Сделал" className="app-logo h-9" />
+          <button
+            type="button"
+            onClick={() => setDesktopPinned((value) => !value)}
+            className={cn(
+              'absolute right-2 top-4 hidden h-8 w-8 items-center justify-center rounded-md border border-gray-200 text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-700 lg:inline-flex',
+              desktopPinned && 'bg-gray-50 text-gray-700'
+            )}
+            title={desktopPinned ? 'Открепить боковую панель' : 'Закрепить боковую панель'}
+            aria-label={desktopPinned ? 'Открепить боковую панель' : 'Закрепить боковую панель'}
+          >
+            <Paperclip className="h-4 w-4" />
+          </button>
         </div>
         {user && (
           <div className="border-b border-gray-100 px-4 py-3">

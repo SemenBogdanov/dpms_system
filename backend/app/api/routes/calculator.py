@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, require_role
+from app.api.deps import get_db, require_task_workspace_role
 from app.models.user import User
 from app.schemas.calculator import (
     EstimateRequest,
@@ -19,6 +19,7 @@ router = APIRouter()
 @router.post("/estimate", response_model=EstimateResponse)
 async def estimate(
     body: EstimateRequest,
+    _: User = Depends(require_task_workspace_role("teamlead", "admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """Рассчитать стоимость задачи по выбранным позициям каталога."""
@@ -28,7 +29,7 @@ async def estimate(
 @router.post("/create-task", response_model=TaskRead)
 async def create_task(
     body: CreateTaskFromCalcRequest,
-    user: User = Depends(require_role("teamlead", "admin")),
+    user: User = Depends(require_task_workspace_role("teamlead", "admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """Создать задачу из калькулятора и отправить в очередь (in_queue)."""

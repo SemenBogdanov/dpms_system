@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_current_user, require_role
+from app.api.deps import get_db, get_current_user, require_role, ensure_task_workspace_access
 from app.models.user import User, League, UserRole
 from app.schemas.user import UserCreate, UserRead, UserUpdate
 from app.schemas.dashboard import UserProgress, RunRate
@@ -48,6 +48,7 @@ async def get_user(
     """Профиль пользователя."""
     if current_user.id != user_id and current_user.role not in (UserRole.admin, UserRole.teamlead):
         raise HTTPException(status_code=403, detail="Недостаточно прав")
+    ensure_task_workspace_access(current_user)
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user:
@@ -79,7 +80,10 @@ async def create_user(
         wip_limit=2,
         is_active=True,
         is_new_employee=body.is_new_employee,
+        task_workspace_enabled=body.task_workspace_enabled,
         feedback_enabled=body.feedback_enabled,
+        competency_development_enabled=body.competency_development_enabled,
+        competency_constructor_enabled=body.competency_constructor_enabled,
         plan_started_at=now,
         onboarding_started_at=now if body.is_new_employee else None,
         onboarding_until=onboarding_until,
@@ -121,6 +125,10 @@ async def update_user(
         user.is_active = body.is_active
     if body.feedback_enabled is not None:
         user.feedback_enabled = body.feedback_enabled
+    if body.competency_development_enabled is not None:
+        user.competency_development_enabled = body.competency_development_enabled
+    if body.competency_constructor_enabled is not None:
+        user.competency_constructor_enabled = body.competency_constructor_enabled
     if body.is_new_employee is not None:
         now = datetime.now(timezone.utc)
         if body.is_new_employee:
@@ -135,6 +143,8 @@ async def update_user(
             user.is_new_employee = False
             user.onboarding_started_at = None
             user.onboarding_until = None
+    if body.task_workspace_enabled is not None:
+        user.task_workspace_enabled = body.task_workspace_enabled
     await db.flush()
     await db.refresh(user)
     return user
@@ -149,6 +159,7 @@ async def get_user_progress_route(
     """Прогресс пользователя: earned/target/karma."""
     if current_user.id != user_id and current_user.role not in (UserRole.admin, UserRole.teamlead):
         raise HTTPException(status_code=403, detail="Недостаточно прав")
+    ensure_task_workspace_access(current_user)
     progress = await get_user_progress(db, user_id)
     if not progress:
         raise HTTPException(status_code=404, detail="User not found")
@@ -164,6 +175,7 @@ async def get_league_progress_route(
     """Прогресс к следующей лиге. Свои данные — всегда; чужие — admin/teamlead."""
     if current_user.id != user_id and current_user.role not in (UserRole.admin, UserRole.teamlead):
         raise HTTPException(status_code=403, detail="Недостаточно прав")
+    ensure_task_workspace_access(current_user)
     progress = await get_league_progress_svc(db, user_id)
     if not progress:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
@@ -179,6 +191,7 @@ async def get_user_run_rate(
     """Run Rate — прогноз выполнения плана. Свои данные — всегда; чужие — admin/teamlead."""
     if current_user.id != user_id and current_user.role not in (UserRole.admin, UserRole.teamlead):
         raise HTTPException(status_code=403, detail="Недостаточно прав")
+    ensure_task_workspace_access(current_user)
     run_rate = await get_run_rate(db, user_id)
     if not run_rate:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
@@ -198,6 +211,7 @@ async def get_user_transactions(
 
     if current_user.id != user_id and current_user.role.value not in ("admin", "teamlead"):
         raise HTTPException(status_code=403, detail="Недостаточно прав")
+    ensure_task_workspace_access(current_user)
     from app.models.transaction import QTransaction, WalletType
 
     stmt = select(QTransaction).where(QTransaction.user_id == user_id)

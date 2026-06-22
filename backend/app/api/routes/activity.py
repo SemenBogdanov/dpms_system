@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, require_role
+from app.api.deps import get_db, require_task_workspace_role
 from app.models.user import User
 from app.schemas.activity import ActivityEventListResponse
 from app.services.activity import list_activity_events
@@ -32,7 +32,7 @@ async def activity_events(
     end_date: date | None = Query(None),
     event_type: str | None = Query(None),
     limit: int = Query(200, ge=1, le=500),
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Журнал активности с фильтрами по сотруднику, периоду и типу события."""

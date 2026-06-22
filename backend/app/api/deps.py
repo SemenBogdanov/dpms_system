@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.core.security import decode_access_token
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
@@ -98,3 +98,37 @@ def require_role(*allowed_roles: str) -> Callable:
         return user
 
     return _require_role
+
+
+def ensure_task_workspace_access(user: User) -> User:
+    """Allow task workspace APIs only for admins or users enabled by admin."""
+    if user.role == UserRole.admin or user.task_workspace_enabled:
+        return user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Раздел работы с задачами недоступен",
+    )
+
+
+async def require_task_workspace_access(
+    user: User = Depends(get_current_user),
+) -> User:
+    """Dependency: current user must have the task workspace feature enabled."""
+    return ensure_task_workspace_access(user)
+
+
+def require_task_workspace_role(*allowed_roles: str) -> Callable:
+    """Dependency factory: feature gate + role gate for task workspace APIs."""
+
+    async def _require_task_workspace_role(
+        user: User = Depends(get_current_user),
+    ) -> User:
+        ensure_task_workspace_access(user)
+        if user.role.value not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Недостаточно прав",
+            )
+        return user
+
+    return _require_task_workspace_role

@@ -23,12 +23,12 @@ from app.models.shop import ShopItem
 
 # --- Пользователи (6 штук) ---
 USERS = [
-    {"full_name": "Семёнова Ксения", "email": "semenova@ac.gov.ru", "league": League.A, "role": UserRole.teamlead, "mpw": 90, "quality_score": 95.0},
-    {"full_name": "Орловская Валентина", "email": "orlovskaya@ac.gov.ru", "league": League.B, "role": UserRole.executor, "mpw": 80, "quality_score": 88.0},
-    {"full_name": "Завьялова Екатерина", "email": "zavyalova@ac.gov.ru", "league": League.B, "role": UserRole.executor, "mpw": 80, "quality_score": 92.0},
-    {"full_name": "Скачков Егор", "email": "petrov@ac.gov.ru", "league": League.C, "role": UserRole.executor, "mpw": 70, "quality_score": 72.0},
-    {"full_name": "Богданов Семён", "email": "bogdanov@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0, "quality_score": 100.0, "feedback_enabled": True},
-    {"full_name": "Админ Системы", "email": "admin@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0, "quality_score": 100.0, "feedback_enabled": True},
+    {"full_name": "Семёнова Ксения", "email": "semenova@ac.gov.ru", "league": League.A, "role": UserRole.teamlead, "mpw": 90, "quality_score": 95.0, "task_workspace_enabled": True},
+    {"full_name": "Орловская Валентина", "email": "orlovskaya@ac.gov.ru", "league": League.B, "role": UserRole.executor, "mpw": 80, "quality_score": 88.0, "task_workspace_enabled": True},
+    {"full_name": "Завьялова Екатерина", "email": "zavyalova@ac.gov.ru", "league": League.B, "role": UserRole.executor, "mpw": 80, "quality_score": 92.0, "task_workspace_enabled": True},
+    {"full_name": "Скачков Егор", "email": "petrov@ac.gov.ru", "league": League.C, "role": UserRole.executor, "mpw": 70, "quality_score": 72.0, "task_workspace_enabled": True},
+    {"full_name": "Богданов Семён", "email": "bogdanov@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0, "quality_score": 100.0, "task_workspace_enabled": True, "feedback_enabled": True, "competency_development_enabled": True, "competency_constructor_enabled": True},
+    {"full_name": "Админ Системы", "email": "admin@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0, "quality_score": 100.0, "task_workspace_enabled": True, "feedback_enabled": True, "competency_development_enabled": True, "competency_constructor_enabled": True},
 ]
 
 WIP_BY_LEAGUE = {"C": 2, "B": 3, "A": 4}
@@ -217,6 +217,8 @@ async def ensure_users(session: AsyncSession) -> dict[str, User]:
             league_value = getattr(u.league, "value", str(u.league))
             if not getattr(u, "wip_limit", None):
                 u.wip_limit = WIP_BY_LEAGUE.get(league_value, 2)
+            if u.role == UserRole.admin:
+                u.task_workspace_enabled = True
             session.add(u)
         return {u.email: u for u in users_list}
 

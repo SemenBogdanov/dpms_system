@@ -9,7 +9,10 @@ export type UserFormPayload = {
   league: User['league']
   mpw: number
   is_new_employee: boolean
+  task_workspace_enabled: boolean
   feedback_enabled: boolean
+  competency_development_enabled: boolean
+  competency_constructor_enabled: boolean
   password?: string
 }
 
@@ -38,7 +41,10 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
   const [league, setLeague] = useState<User['league']>('C')
   const [mpw, setMpw] = useState(60)
   const [isNewEmployee, setIsNewEmployee] = useState(false)
+  const [taskWorkspaceEnabled, setTaskWorkspaceEnabled] = useState(false)
   const [feedbackEnabled, setFeedbackEnabled] = useState(false)
+  const [competencyDevelopmentEnabled, setCompetencyDevelopmentEnabled] = useState(false)
+  const [competencyConstructorEnabled, setCompetencyConstructorEnabled] = useState(false)
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
@@ -53,19 +59,40 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setLeague(initial.league)
       setMpw(initial.mpw)
       setIsNewEmployee(Boolean(initial.is_new_employee))
+      setTaskWorkspaceEnabled(Boolean(initial.task_workspace_enabled))
       setFeedbackEnabled(Boolean(initial.feedback_enabled))
+      setCompetencyDevelopmentEnabled(Boolean(initial.competency_development_enabled))
+      setCompetencyConstructorEnabled(Boolean(initial.competency_constructor_enabled))
       setPassword('')
     } else {
       setFullName('')
       setEmail('')
       setRole('executor')
       setLeague('C')
-      setMpw(60)
+      setMpw(0)
       setIsNewEmployee(false)
+      setTaskWorkspaceEnabled(false)
       setFeedbackEnabled(false)
+      setCompetencyDevelopmentEnabled(false)
+      setCompetencyConstructorEnabled(false)
       setPassword('')
     }
   }, [open, mode, initial])
+
+  const handleDevelopmentChange = (checked: boolean) => {
+    setCompetencyDevelopmentEnabled(checked)
+    if (!checked) setCompetencyConstructorEnabled(false)
+  }
+
+  const handleConstructorChange = (checked: boolean) => {
+    setCompetencyConstructorEnabled(checked)
+    if (checked) setCompetencyDevelopmentEnabled(true)
+  }
+
+  const handleTaskWorkspaceChange = (checked: boolean) => {
+    setTaskWorkspaceEnabled(checked)
+    if (checked && mpw === 0) setMpw(60)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -86,8 +113,8 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setValidationError('Пароль не менее 6 символов')
       return
     }
-    if (mpw <= 0) {
-      setValidationError('План (MPW) должен быть больше 0')
+    if (mpw < 0) {
+      setValidationError('План (MPW) не может быть меньше 0')
       return
     }
     setValidationError(null)
@@ -100,7 +127,10 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
         league,
         mpw,
         is_new_employee: isNewEmployee,
+        task_workspace_enabled: taskWorkspaceEnabled,
         feedback_enabled: feedbackEnabled,
+        competency_development_enabled: competencyDevelopmentEnabled,
+        competency_constructor_enabled: competencyConstructorEnabled,
         ...(mode === 'create' ? { password } : undefined),
       })
       onClose()
@@ -121,7 +151,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       onClick={(e) => e.target === e.currentTarget && onClose()}
       onKeyDown={(e) => e.key === 'Escape' && onClose()}
     >
-      <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
         <h3 className="text-lg font-semibold text-slate-900">
           {mode === 'create' ? 'Добавить сотрудника' : 'Редактировать сотрудника'}
         </h3>
@@ -164,7 +194,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
           <label className="block text-sm font-medium text-slate-700">План (MPW)</label>
           <input
             type="number"
-            min={1}
+            min={0}
             value={mpw}
             onChange={(e) => setMpw(Number(e.target.value) || 0)}
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
@@ -181,18 +211,62 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
               <span className="block text-xs text-slate-500">План считается с адаптацией: 50% на первые 3 месяца и пропорционально оставшимся рабочим дням месяца.</span>
             </span>
           </label>
-          <label className="flex items-start gap-3 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-            <input
-              type="checkbox"
-              checked={feedbackEnabled}
-              onChange={(e) => setFeedbackEnabled(e.target.checked)}
-              className="mt-1 h-4 w-4 rounded border-slate-300"
-            />
-            <span>
-              <span className="block font-medium text-slate-800">Доступ к обратной связи</span>
-              <span className="block text-xs text-slate-500">Показывает раздел «Обратная связь» и разрешает создавать или рассматривать обращения.</span>
-            </span>
-          </label>
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p className="text-sm font-semibold text-slate-800">Доступ к разделам</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Роль определяет действия внутри раздела. Галочка ниже открывает сам раздел в оболочке DPMS.
+            </p>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              <label className="flex items-start gap-3 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={taskWorkspaceEnabled}
+                  onChange={(e) => handleTaskWorkspaceChange(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-slate-300"
+                />
+                <span>
+                  <span className="block font-medium text-slate-800">Работа с задачами</span>
+                  <span className="block text-xs text-slate-500">Очередь, мои задачи, профиль, магазин, база знаний, отчеты и каталог.</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-3 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={competencyDevelopmentEnabled}
+                  onChange={(e) => handleDevelopmentChange(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-slate-300"
+                />
+                <span>
+                  <span className="block font-medium text-slate-800">Развитие</span>
+                  <span className="block text-xs text-slate-500">Оценка компетенций, ИПР, отчеты по развитию.</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-3 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={competencyConstructorEnabled}
+                  onChange={(e) => handleConstructorChange(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-slate-300"
+                />
+                <span>
+                  <span className="block font-medium text-slate-800">Конструктор компетенций</span>
+                  <span className="block text-xs text-slate-500">Создание custom-опросов и назначение сотрудникам DPMS.</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-3 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={feedbackEnabled}
+                  onChange={(e) => setFeedbackEnabled(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-slate-300"
+                />
+                <span>
+                  <span className="block font-medium text-slate-800">Обратная связь</span>
+                  <span className="block text-xs text-slate-500">Создание и рассмотрение обращений по системе.</span>
+                </span>
+              </label>
+            </div>
+          </div>
           {mode === 'create' && (
             <>
               <label className="block text-sm font-medium text-slate-700">Пароль * (мин. 6 символов)</label>

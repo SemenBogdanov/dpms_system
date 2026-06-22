@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db, require_role
+from app.api.deps import get_db, require_task_workspace_access, require_task_workspace_role
 from app.models.knowledge import KnowledgeArticle, KnowledgeStatus
 from app.models.user import User
 from app.schemas.knowledge import (
@@ -65,7 +65,7 @@ async def list_knowledge_articles(
     section: str | None = Query(None),
     status_filter: KnowledgeStatus | None = Query(None, alias="status"),
     search: str | None = Query(None),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Список статей базы знаний."""
@@ -95,7 +95,7 @@ async def list_knowledge_articles(
 @router.get("/{slug}", response_model=KnowledgeArticleRead)
 async def get_knowledge_article(
     slug: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Одна статья базы знаний по slug."""
@@ -111,7 +111,7 @@ async def get_knowledge_article(
 @router.post("", response_model=KnowledgeArticleRead)
 async def create_knowledge_article(
     body: KnowledgeArticleCreate,
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Создать статью базы знаний."""
@@ -140,7 +140,7 @@ async def create_knowledge_article(
 async def update_knowledge_article(
     article_id: UUID,
     body: KnowledgeArticleUpdate,
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Частично обновить статью базы знаний."""

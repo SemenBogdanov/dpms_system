@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_current_user, require_role
+from app.api.deps import get_db, require_task_workspace_access, require_task_workspace_role
 from app.models.user import User, UserRole
 from app.schemas.queue import (
     AssignRequest,
@@ -38,7 +38,7 @@ def _jwt_actor_id(user: User, body_user_id: UUID | None) -> UUID:
 @router.get("", response_model=list[QueueTaskResponse])
 async def queue_list(
     category: str | None = Query(None, description="proactive | !proactive | все"),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Задачи в очереди. category=proactive — только проактивные, !proactive — обычные."""
@@ -48,7 +48,7 @@ async def queue_list(
 @router.post("/pull", response_model=TaskRead)
 async def queue_pull(
     body: PullRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Взять задачу из очереди (с блокировкой FOR UPDATE)."""
@@ -61,7 +61,7 @@ async def queue_pull(
 @router.post("/submit", response_model=TaskRead)
 async def queue_submit(
     body: SubmitRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Сдать задачу на проверку (result_url, comment опционально)."""
@@ -82,7 +82,7 @@ async def queue_submit(
 @router.post("/validate", response_model=TaskRead)
 async def queue_validate(
     body: ValidateRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Принять или отклонить задачу (при reject comment обязателен)."""
@@ -101,7 +101,7 @@ async def queue_validate(
 @router.post("/assign", response_model=TaskRead)
 async def queue_assign(
     body: AssignRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Назначить задачу. Teamlead — исполнителю, admin — исполнителю или тимлиду."""
@@ -115,7 +115,7 @@ async def queue_assign(
 @router.get("/candidates/{task_id}", response_model=list[AssignCandidate])
 async def queue_candidates(
     task_id: UUID,
-    user: User = Depends(require_role("teamlead", "admin")),
+    user: User = Depends(require_task_workspace_role("teamlead", "admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """Список кандидатов для назначения задачи."""

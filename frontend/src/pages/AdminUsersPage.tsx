@@ -125,7 +125,10 @@ export function AdminUsersPage() {
         league: payload.league,
         mpw: payload.mpw,
         is_new_employee: payload.is_new_employee,
+        task_workspace_enabled: payload.task_workspace_enabled,
         feedback_enabled: payload.feedback_enabled,
+        competency_development_enabled: payload.competency_development_enabled,
+        competency_constructor_enabled: payload.competency_constructor_enabled,
       })
       toast.success('Изменения сохранены')
     } else {
@@ -136,7 +139,10 @@ export function AdminUsersPage() {
         league: payload.league,
         mpw: payload.mpw,
         is_new_employee: payload.is_new_employee,
+        task_workspace_enabled: payload.task_workspace_enabled,
         feedback_enabled: payload.feedback_enabled,
+        competency_development_enabled: payload.competency_development_enabled,
+        competency_constructor_enabled: payload.competency_constructor_enabled,
         password: payload.password,
       })
       toast.success('Сотрудник добавлен')
@@ -201,7 +207,9 @@ export function AdminUsersPage() {
                 <th className="px-4 py-3 text-left font-medium text-slate-600">MPW</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">QS</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Статус</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Задачи</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">ОС</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Развитие</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Действия</th>
               </tr>
             </thead>
@@ -258,11 +266,30 @@ export function AdminUsersPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
+                    {u.task_workspace_enabled ? (
+                      <span className="rounded bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">Вкл</span>
+                    ) : (
+                      <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">Выкл</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
                     {u.feedback_enabled ? (
                       <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Вкл</span>
                     ) : (
                       <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">Выкл</span>
                     )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {u.competency_development_enabled ? (
+                        <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">Доступ</span>
+                      ) : (
+                        <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">Нет</span>
+                      )}
+                      {u.competency_constructor_enabled && (
+                        <span className="rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">Конструктор</span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, require_role
+from app.api.deps import get_db, require_task_workspace_role
 from app.models.user import User
 from app.schemas.activity import EmployeePeriodSummary
 from app.schemas.reports import EmployeeScorecardResponse, PeriodReport
@@ -21,7 +21,7 @@ async def get_employee_summary(
     user_id: UUID = Query(...),
     start_date: date = Query(...),
     end_date: date = Query(...),
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Сводка по сотруднику за дату или период."""
@@ -44,7 +44,7 @@ async def get_employee_summary(
 async def get_employee_scorecard(
     start_date: date = Query(...),
     end_date: date = Query(...),
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Рейтинг сотрудников за период: прозрачная scorecard v1."""
@@ -56,7 +56,7 @@ async def get_employee_scorecard(
 @router.get("/{period}", response_model=PeriodReport)
 async def get_period_report(
     period: str,
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Отчёт за период (YYYY-MM)."""

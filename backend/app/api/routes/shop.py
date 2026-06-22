@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_current_user, require_role
+from app.api.deps import get_db, require_task_workspace_access, require_task_workspace_role
 from app.models.user import User
 from app.models.shop import ShopItem
 from app.schemas.shop import (
@@ -39,8 +39,11 @@ def _decision_actor_id(user: User, body_user_id: UUID | None) -> UUID:
 
 
 @router.get("", response_model=list[ShopItemResponse])
-async def list_shop_items(db: AsyncSession = Depends(get_db)):
-    """Список активных товаров (публичный)."""
+async def list_shop_items(
+    _: User = Depends(require_task_workspace_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """Список активных товаров."""
     items = await get_shop_items(db)
     return items
 
@@ -48,7 +51,7 @@ async def list_shop_items(db: AsyncSession = Depends(get_db)):
 @router.post("/purchase", response_model=PurchaseResponse)
 async def create_purchase(
     body: PurchaseRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """Купить товар за карму. Возвращает созданную покупку (status=pending)."""
@@ -71,7 +74,7 @@ async def create_purchase(
 @router.get("/purchases/{user_id}", response_model=list[PurchaseResponse])
 async def list_user_purchases(
     user_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_task_workspace_access),
     db: AsyncSession = Depends(get_db),
 ):
     """История покупок. Свои — всегда; чужие — только admin/teamlead."""
@@ -82,7 +85,7 @@ async def list_user_purchases(
 
 @router.get("/approvals", response_model=list[PurchaseResponse])
 async def list_purchase_approvals(
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Ожидающие согласования покупки для экрана «Мои задачи»."""
@@ -92,7 +95,7 @@ async def list_purchase_approvals(
 @router.post("/approve", response_model=PurchaseResponse)
 async def approve_purchase_route(
     body: ApprovePurchaseRequest,
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Тимлид/админ подтверждает покупку."""
@@ -104,7 +107,7 @@ async def approve_purchase_route(
 @router.post("/reject", response_model=PurchaseResponse)
 async def reject_purchase_route(
     body: ApprovePurchaseRequest,
-    user: User = Depends(require_role("admin", "teamlead")),
+    user: User = Depends(require_task_workspace_role("admin", "teamlead")),
     db: AsyncSession = Depends(get_db),
 ):
     """Тимлид/админ отклоняет покупку."""

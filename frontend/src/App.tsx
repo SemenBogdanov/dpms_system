@@ -19,19 +19,40 @@ import { NotFoundPage } from '@/pages/NotFoundPage'
 import { ReportsPage } from '@/pages/ReportsPage'
 import { SetPasswordPage } from '@/pages/SetPasswordPage'
 import { FeedbackPage } from '@/pages/FeedbackPage'
+import { CompetenciesPage } from '@/pages/CompetenciesPage'
+import {
+  firstAvailablePath,
+  hasDevelopmentAccess,
+  hasFeedbackAccess,
+  hasTaskWorkspaceAccess,
+} from '@/lib/access'
 
 function DashboardRoute() {
   const { user } = useAuth()
+  if (!hasTaskWorkspaceAccess(user)) {
+    return <Navigate to={firstAvailablePath(user)} replace />
+  }
   if (user?.role === 'executor') {
     return <Navigate to="/my-tasks" replace />
   }
   return <DashboardPage />
 }
 
+function TaskWorkspaceRoute({ children }: { children: ReactElement }) {
+  const { user } = useAuth()
+  if (!hasTaskWorkspaceAccess(user)) {
+    return <Navigate to={firstAvailablePath(user)} replace />
+  }
+  return children
+}
+
 function TeamleadAdminRoute({ children }: { children: ReactElement }) {
   const { user } = useAuth()
+  if (!hasTaskWorkspaceAccess(user)) {
+    return <Navigate to={firstAvailablePath(user)} replace />
+  }
   if (user?.role !== 'teamlead' && user?.role !== 'admin') {
-    return <Navigate to="/queue" replace />
+    return <Navigate to={firstAvailablePath(user)} replace />
   }
   return children
 }
@@ -39,17 +60,38 @@ function TeamleadAdminRoute({ children }: { children: ReactElement }) {
 function AdminRoute({ children }: { children: ReactElement }) {
   const { user } = useAuth()
   if (user?.role !== 'admin') {
-    return <Navigate to="/queue" replace />
+    return <Navigate to={firstAvailablePath(user)} replace />
   }
   return children
 }
 
 function FeedbackAccessRoute({ children }: { children: ReactElement }) {
   const { user } = useAuth()
-  if (!user?.feedback_enabled) {
-    return <Navigate to="/queue" replace />
+  if (!hasFeedbackAccess(user)) {
+    return <Navigate to={firstAvailablePath(user)} replace />
   }
   return children
+}
+
+function CompetenciesAccessRoute({ children }: { children: ReactElement }) {
+  const { user } = useAuth()
+  if (!hasDevelopmentAccess(user)) {
+    return <Navigate to={firstAvailablePath(user)} replace />
+  }
+  return children
+}
+
+function NoAccessPage() {
+  return (
+    <div className="mx-auto flex min-h-[60vh] max-w-xl flex-col justify-center">
+      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h1 className="text-xl font-semibold text-slate-900">Нет открытых разделов</h1>
+        <p className="mt-2 text-sm text-slate-500">
+          Доступ в систему создан, но администратор еще не включил для пользователя рабочие разделы.
+        </p>
+      </div>
+    </div>
+  )
 }
 
 function App() {
@@ -74,8 +116,8 @@ function App() {
             </AdminRoute>
           }
         />
-        <Route path="queue" element={<QueuePage />} />
-        <Route path="my-tasks" element={<MyTasksPage />} />
+        <Route path="queue" element={<TaskWorkspaceRoute><QueuePage /></TaskWorkspaceRoute>} />
+        <Route path="my-tasks" element={<TaskWorkspaceRoute><MyTasksPage /></TaskWorkspaceRoute>} />
         <Route
           path="calculator"
           element={
@@ -84,8 +126,8 @@ function App() {
             </TeamleadAdminRoute>
           }
         />
-        <Route path="profile" element={<ProfilePage />} />
-        <Route path="shop" element={<ShopPage />} />
+        <Route path="profile" element={<TaskWorkspaceRoute><ProfilePage /></TaskWorkspaceRoute>} />
+        <Route path="shop" element={<TaskWorkspaceRoute><ShopPage /></TaskWorkspaceRoute>} />
         <Route
           path="feedback"
           element={
@@ -94,7 +136,30 @@ function App() {
             </FeedbackAccessRoute>
           }
         />
-        <Route path="admin/users" element={<AdminUsersPage />} />
+        <Route
+          path="competencies"
+          element={
+            <CompetenciesAccessRoute>
+              <CompetenciesPage />
+            </CompetenciesAccessRoute>
+          }
+        />
+        <Route
+          path="competencies/assignments/:assignmentId"
+          element={
+            <CompetenciesAccessRoute>
+              <CompetenciesPage />
+            </CompetenciesAccessRoute>
+          }
+        />
+        <Route
+          path="admin/users"
+          element={
+            <AdminRoute>
+              <AdminUsersPage />
+            </AdminRoute>
+          }
+        />
         <Route
           path="absences"
           element={
@@ -103,9 +168,17 @@ function App() {
             </TeamleadAdminRoute>
           }
         />
-        <Route path="catalog" element={<CatalogPage />} />
-        <Route path="knowledge" element={<KnowledgePage />} />
-        <Route path="reports" element={<ReportsPage />} />
+        <Route path="catalog" element={<TaskWorkspaceRoute><CatalogPage /></TaskWorkspaceRoute>} />
+        <Route path="knowledge" element={<TaskWorkspaceRoute><KnowledgePage /></TaskWorkspaceRoute>} />
+        <Route
+          path="reports"
+          element={
+            <TeamleadAdminRoute>
+              <ReportsPage />
+            </TeamleadAdminRoute>
+          }
+        />
+        <Route path="no-access" element={<NoAccessPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
