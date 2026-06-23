@@ -247,9 +247,9 @@ healthcheck() {
   if [[ -f "$DPMS_COMPOSE_FILE" ]]; then
     docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" ps || true
   fi
-  backend=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/health || true)
-  https_health=$(curl -k -sS -o /dev/null -w '%{http_code}' -H "Host: ${DPMS_DOMAIN_PUNY}" https://127.0.0.1/health || true)
-  https_root=$(curl -k -sS -o /dev/null -w '%{http_code}' -H "Host: ${DPMS_DOMAIN_PUNY}" https://127.0.0.1/ || true)
+  backend=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/health || true)
+  https_health=$(curl -k -s -o /dev/null -w '%{http_code}' -H "Host: ${DPMS_DOMAIN_PUNY}" https://127.0.0.1/health || true)
+  https_root=$(curl -k -s -o /dev/null -w '%{http_code}' -H "Host: ${DPMS_DOMAIN_PUNY}" https://127.0.0.1/ || true)
   log "backend_health=$backend"
   log "https_health=$https_health"
   log "https_root=$https_root"
@@ -258,6 +258,23 @@ healthcheck() {
     return 0
   fi
   log "healthcheck_failed=1"
+  return 1
+}
+
+wait_for_healthcheck() {
+  local attempts="${DPMS_HEALTHCHECK_ATTEMPTS:-30}"
+  local interval="${DPMS_HEALTHCHECK_INTERVAL_SECONDS:-2}"
+  local attempt
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if healthcheck; then
+      log "healthcheck_attempt=$attempt"
+      return 0
+    fi
+    if (( attempt < attempts )); then
+      log "healthcheck_retry=${attempt}/${attempts}"
+      sleep "$interval"
+    fi
+  done
   return 1
 }
 
@@ -639,7 +656,7 @@ promote_release() {
   DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml up -d --no-build --force-recreate backend
   nginx -t
   systemctl reload nginx
-  healthcheck
+  wait_for_healthcheck
   printf '%s\n' "$release_id" > "$DPMS_LIVE_ROOT/current-release"
   manifest_mark_promoted "$manifest" "$backup_dir" "$backup_id"
   log "promote_ok=1"
