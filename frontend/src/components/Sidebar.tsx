@@ -16,6 +16,7 @@ import {
   BarChart3,
   MessageSquare,
   Settings,
+  StickyNote,
   LogOut,
   Menu,
   Paperclip,
@@ -31,7 +32,7 @@ const nav: Array<
     to: string
     label: string
     icon: typeof LayoutDashboard
-    section: 'task' | 'feedback' | 'development' | 'settings' | 'admin'
+    section: 'task' | 'feedback' | 'development' | 'personal' | 'settings' | 'admin'
     roles?: readonly ('executor' | 'teamlead' | 'admin')[]
   }
 > = [
@@ -44,6 +45,7 @@ const nav: Array<
   { to: '/shop', label: 'Магазин', icon: ShoppingBag, section: 'task' },
   { to: '/feedback', label: 'Обратная связь', icon: MessageSquare, section: 'feedback' },
   { to: '/competencies', label: 'Развитие', icon: BookOpenCheck, section: 'development' },
+  { to: '/quick-notes', label: 'Заметки', icon: StickyNote, section: 'personal' },
   { to: '/settings', label: 'Настройки', icon: Settings, section: 'settings' },
   { to: '/reports', label: 'Отчёты', icon: BarChart3, section: 'task', roles: ['teamlead', 'admin'] },
   { to: '/absences', label: 'Отсутствия', icon: CalendarDays, section: 'task', roles: ['teamlead', 'admin'] },
@@ -69,6 +71,7 @@ export function Sidebar() {
     if (item.section === 'task' && !hasTaskWorkspaceAccess(user)) return false
     if (item.section === 'feedback' && !hasFeedbackAccess(user)) return false
     if (item.section === 'development' && !hasDevelopmentAccess(user)) return false
+    if (item.section === 'personal') return true
     if (item.section === 'settings') return true
     if (item.section === 'admin' && user?.role !== 'admin') return false
     if (!item.roles) return true

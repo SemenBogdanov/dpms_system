@@ -22,6 +22,7 @@ export type FeedbackCategory = 'improvement' | 'disagreement' | 'bug' | 'process
 export type FeedbackStatus = 'new' | 'in_review' | 'triage' | 'needs_info' | 'accepted' | 'planned' | 'rejected' | 'done' | 'withdrawn'
 export type FeedbackPriority = 'low' | 'medium' | 'high'
 export type FeedbackObjectType = 'task' | 'shop' | 'report' | 'rule' | 'kb' | 'other'
+export type QuickNoteStatus = 'draft' | 'processed' | 'archived'
 
 export interface User {
   id: string
@@ -46,6 +47,33 @@ export interface User {
   onboarding_until: string | null
   created_at: string
   updated_at: string
+}
+
+export interface QuickNote {
+  id: string
+  owner_id: string
+  title: string
+  body: string
+  context: string | null
+  status: QuickNoteStatus
+  tags: string[]
+  created_at: string
+  updated_at: string
+}
+
+export interface QuickNoteCreate {
+  title?: string | null
+  body: string
+  context?: string | null
+  tags: string[]
+}
+
+export interface QuickNoteUpdate {
+  title?: string | null
+  body?: string
+  context?: string | null
+  status?: QuickNoteStatus
+  tags?: string[]
 }
 
 export interface CatalogItem {

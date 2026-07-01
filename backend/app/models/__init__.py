@@ -23,6 +23,7 @@ from app.models.shop import ShopItem, Purchase, PeriodSnapshot
 from app.models.notification import Notification
 from app.models.activity import ActivityEvent
 from app.models.feedback import FeedbackRequest
+from app.models.quick_note import QuickNote
 from app.models.competency import (
     Competency,
     CompetencyQuestion,
@@ -51,6 +52,7 @@ __all__ = [
     "Notification",
     "ActivityEvent",
     "FeedbackRequest",
+    "QuickNote",
     "Competency",
     "CompetencyQuestion",
     "CompetencyChoice",
