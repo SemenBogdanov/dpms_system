@@ -6,6 +6,7 @@ import { LeagueBadge } from '@/components/LeagueBadge'
 import { UserModal, type UserFormPayload } from '@/components/UserModal'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
+import { Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
 
 const MONTHS = [
   'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
@@ -175,6 +176,64 @@ export function AdminUsersPage() {
     executor: 'bg-slate-100 text-slate-700',
   }
 
+  const accessBadgeClass = (enabled: boolean, enabledClass: string) =>
+    cn(
+      'rounded px-2 py-0.5 text-xs font-medium',
+      enabled ? enabledClass : 'bg-slate-100 text-slate-500'
+    )
+
+  const renderAccessBadges = (u: User) => (
+    <div className="flex flex-wrap gap-1.5">
+      <span className={accessBadgeClass(u.task_workspace_enabled, 'bg-sky-50 text-sky-700')}>
+        Задачи: {u.task_workspace_enabled ? 'вкл' : 'выкл'}
+      </span>
+      <span className={accessBadgeClass(u.feedback_enabled, 'bg-emerald-50 text-emerald-700')}>
+        ОС: {u.feedback_enabled ? 'вкл' : 'выкл'}
+      </span>
+      <span className={accessBadgeClass(u.competency_development_enabled, 'bg-blue-50 text-blue-700')}>
+        Развитие: {u.competency_development_enabled ? 'вкл' : 'выкл'}
+      </span>
+      {u.competency_constructor_enabled && (
+        <span className="rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">Конструктор</span>
+      )}
+    </div>
+  )
+
+  const renderUserActions = (u: User, mobile = false) => (
+    <div className={cn('flex items-center gap-2', mobile && 'justify-end')}>
+      <button
+        type="button"
+        onClick={() => { setEditingUser(u); setUserModalOpen(true) }}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
+        title="Редактировать"
+        aria-label={`Редактировать ${u.full_name}`}
+      >
+        <Pencil className="h-4 w-4" />
+      </button>
+      {u.is_active ? (
+        <button
+          type="button"
+          onClick={() => handleDeactivate(u)}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+          title="Деактивировать"
+          aria-label={`Деактивировать ${u.full_name}`}
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => handleRestore(u)}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-600"
+          title="Восстановить"
+          aria-label={`Восстановить ${u.full_name}`}
+        >
+          <RotateCcw className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  )
+
   if (loading) return <div className="text-slate-500">Загрузка...</div>
   if (error) return <div className="text-red-600">{error}</div>
 
@@ -190,14 +249,56 @@ export function AdminUsersPage() {
             <button
               type="button"
               onClick={() => { setEditingUser(null); setUserModalOpen(true) }}
-              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
             >
-              + Добавить сотрудника
+              <Plus className="h-4 w-4" />
+              Добавить сотрудника
             </button>
           )}
         </div>
-        <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
-          <table className="min-w-full text-sm">
+        <div className="mt-4 grid gap-3 lg:hidden">
+          {users.map((u) => (
+            <article
+              key={u.id}
+              className={cn(
+                'rounded-lg border border-slate-200 bg-white p-3 shadow-sm',
+                !u.is_active && 'bg-slate-50 opacity-75'
+              )}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-medium text-slate-900">{u.full_name}</h3>
+                  <p className="mt-1 truncate text-xs text-slate-500">{u.email}</p>
+                </div>
+                {renderUserActions(u, true)}
+              </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className={cn('rounded px-2 py-0.5 text-xs font-medium', roleBadgeClass[u.role] ?? 'bg-slate-100')}>
+                  {u.role}
+                </span>
+                <LeagueBadge league={u.league} />
+                <span
+                  className={cn(
+                    'rounded px-2 py-0.5 text-xs font-medium',
+                    u.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                  )}
+                >
+                  {u.is_active ? 'Активен' : 'Неактивен'}
+                </span>
+                {isOnboardingActive(u) && (
+                  <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">Новый</span>
+                )}
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
+                <div className="rounded-md bg-slate-50 px-2 py-1.5">MPW: {u.mpw} Q</div>
+                <div className="rounded-md bg-slate-50 px-2 py-1.5">QS: {Number(u.quality_score).toFixed(0)}%</div>
+              </div>
+              <div className="mt-3">{renderAccessBadges(u)}</div>
+            </article>
+          ))}
+        </div>
+        <div className="mt-4 hidden overflow-x-auto rounded-lg border border-slate-200 lg:block">
+          <table className="min-w-[1120px] text-sm">
             <thead className="bg-slate-50">
               <tr>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">ФИО</th>
@@ -266,18 +367,14 @@ export function AdminUsersPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    {u.task_workspace_enabled ? (
-                      <span className="rounded bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">Вкл</span>
-                    ) : (
-                      <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">Выкл</span>
-                    )}
+                    <span className={accessBadgeClass(u.task_workspace_enabled, 'bg-sky-50 text-sky-700')}>
+                      {u.task_workspace_enabled ? 'Вкл' : 'Выкл'}
+                    </span>
                   </td>
                   <td className="px-4 py-3">
-                    {u.feedback_enabled ? (
-                      <span className="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">Вкл</span>
-                    ) : (
-                      <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">Выкл</span>
-                    )}
+                    <span className={accessBadgeClass(u.feedback_enabled, 'bg-emerald-50 text-emerald-700')}>
+                      {u.feedback_enabled ? 'Вкл' : 'Выкл'}
+                    </span>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1">
@@ -292,35 +389,7 @@ export function AdminUsersPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => { setEditingUser(u); setUserModalOpen(true) }}
-                        className="text-slate-500 hover:text-slate-700"
-                        title="Редактировать"
-                      >
-                        ✏️
-                      </button>
-                      {u.is_active ? (
-                        <button
-                          type="button"
-                          onClick={() => handleDeactivate(u)}
-                          className="text-slate-500 hover:text-red-600"
-                          title="Деактивировать"
-                        >
-                          🗑️
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleRestore(u)}
-                          className="text-slate-500 hover:text-emerald-600"
-                          title="Восстановить"
-                        >
-                          ♻️ Восстановить
-                        </button>
-                      )}
-                    </div>
+                    {renderUserActions(u)}
                   </td>
                 </tr>
               ))}
@@ -343,9 +412,9 @@ export function AdminUsersPage() {
             </button>
           </div>
         )}
-        <div className="mt-4 overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white">
           <h3 className="border-b border-slate-200 px-4 py-2 text-sm font-medium text-slate-700">История периодов</h3>
-          <table className="w-full text-sm">
+          <table className="min-w-[760px] text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
                 <th className="px-4 py-2 text-left font-medium text-slate-600">Период</th>
@@ -397,8 +466,8 @@ export function AdminUsersPage() {
           )}
         </div>
         {leagueEvaluations.length > 0 && (
-          <div className="mt-4 overflow-hidden rounded-lg border border-slate-200">
-            <table className="w-full text-sm">
+          <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200">
+            <table className="min-w-[820px] text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
                   <th className="px-4 py-2 text-left font-medium text-slate-600">ФИО</th>

@@ -20,6 +20,7 @@ import { ReportsPage } from '@/pages/ReportsPage'
 import { SetPasswordPage } from '@/pages/SetPasswordPage'
 import { FeedbackPage } from '@/pages/FeedbackPage'
 import { CompetenciesPage } from '@/pages/CompetenciesPage'
+import { SettingsPage } from '@/pages/SettingsPage'
 import {
   firstAvailablePath,
   hasDevelopmentAccess,
@@ -127,6 +128,7 @@ function App() {
           }
         />
         <Route path="profile" element={<TaskWorkspaceRoute><ProfilePage /></TaskWorkspaceRoute>} />
+        <Route path="settings" element={<SettingsPage />} />
         <Route path="shop" element={<TaskWorkspaceRoute><ShopPage /></TaskWorkspaceRoute>} />
         <Route
           path="feedback"

@@ -18,5 +18,5 @@ export function firstAvailablePath(user: User | null | undefined) {
   if (hasDevelopmentAccess(user)) return '/competencies'
   if (hasFeedbackAccess(user)) return '/feedback'
   if (user.role === 'admin') return '/admin/users'
-  return '/no-access'
+  return '/settings'
 }

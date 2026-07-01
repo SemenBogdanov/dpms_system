@@ -89,11 +89,6 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
     if (checked) setCompetencyDevelopmentEnabled(true)
   }
 
-  const handleTaskWorkspaceChange = (checked: boolean) => {
-    setTaskWorkspaceEnabled(checked)
-    if (checked && mpw === 0) setMpw(60)
-  }
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!full_name.trim()) {
@@ -221,7 +216,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
                 <input
                   type="checkbox"
                   checked={taskWorkspaceEnabled}
-                  onChange={(e) => handleTaskWorkspaceChange(e.target.checked)}
+                  onChange={(e) => setTaskWorkspaceEnabled(e.target.checked)}
                   className="mt-1 h-4 w-4 rounded border-slate-300"
                 />
                 <span>
