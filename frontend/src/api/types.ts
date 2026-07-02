@@ -23,6 +23,21 @@ export type FeedbackStatus = 'new' | 'in_review' | 'triage' | 'needs_info' | 'ac
 export type FeedbackPriority = 'low' | 'medium' | 'high'
 export type FeedbackObjectType = 'task' | 'shop' | 'report' | 'rule' | 'kb' | 'other'
 export type QuickNoteStatus = 'draft' | 'processed' | 'archived'
+export type PersonalTaskStatus = 'inbox' | 'planned' | 'next' | 'in_progress' | 'waiting' | 'blocked' | 'done' | 'archived'
+export type PersonalTaskPriority = 'low' | 'medium' | 'high' | 'critical'
+export type PersonalTaskCategory = 'work' | 'meeting' | 'follow_up' | 'research' | 'decision' | 'admin' | 'other'
+export type PersonalTaskEventType =
+  | 'task_created'
+  | 'task_updated'
+  | 'status_changed'
+  | 'meeting'
+  | 'follow_up'
+  | 'note'
+  | 'checkpoint_created'
+  | 'checkpoint_updated'
+  | 'checkpoint_done'
+  | 'promoted'
+export type PersonalTaskCheckpointStatus = 'planned' | 'in_progress' | 'waiting' | 'blocked' | 'done'
 
 export interface User {
   id: string
@@ -74,6 +89,169 @@ export interface QuickNoteUpdate {
   context?: string | null
   status?: QuickNoteStatus
   tags?: string[]
+}
+
+export interface PersonalTask {
+  id: string
+  task_number: number
+  task_key: string
+  owner_id: string
+  title: string
+  description: string | null
+  notes: string | null
+  status: PersonalTaskStatus
+  priority: PersonalTaskPriority
+  category: PersonalTaskCategory
+  project: string | null
+  context: string | null
+  responsible: string | null
+  tags: string[]
+  acceptance_criteria: string | null
+  next_step: string | null
+  next_step_at: string | null
+  due_at: string | null
+  waiting_for: string | null
+  blocked_reason: string | null
+  impact: number | null
+  effort: number | null
+  linked_task_id: string | null
+  source_quick_note_id: string | null
+  promoted_task_id: string | null
+  promoted_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonalTaskCreate {
+  title: string
+  description?: string | null
+  notes?: string | null
+  status?: PersonalTaskStatus
+  priority?: PersonalTaskPriority
+  category?: PersonalTaskCategory
+  project?: string | null
+  context?: string | null
+  responsible?: string | null
+  tags?: string[]
+  acceptance_criteria?: string | null
+  next_step?: string | null
+  next_step_at?: string | null
+  due_at?: string | null
+  waiting_for?: string | null
+  blocked_reason?: string | null
+  impact?: number | null
+  effort?: number | null
+  linked_task_id?: string | null
+  source_quick_note_id?: string | null
+}
+
+export interface PersonalTaskUpdate {
+  title?: string
+  description?: string | null
+  notes?: string | null
+  status?: PersonalTaskStatus
+  priority?: PersonalTaskPriority
+  category?: PersonalTaskCategory
+  project?: string | null
+  context?: string | null
+  responsible?: string | null
+  tags?: string[]
+  acceptance_criteria?: string | null
+  next_step?: string | null
+  next_step_at?: string | null
+  due_at?: string | null
+  waiting_for?: string | null
+  blocked_reason?: string | null
+  impact?: number | null
+  effort?: number | null
+  linked_task_id?: string | null
+  source_quick_note_id?: string | null
+}
+
+export interface PersonalTaskPromoteRequest {
+  task_type: TaskType
+  complexity: Complexity
+  estimated_q: number
+  priority: TaskPriority
+  min_league: League
+  due_date?: string | null
+  tags?: string[] | null
+}
+
+export interface PersonalTaskEvent {
+  id: string
+  task_id: string
+  actor_id: string | null
+  event_type: PersonalTaskEventType
+  title: string | null
+  body: string | null
+  from_status: string | null
+  to_status: string | null
+  next_step: string | null
+  waiting_for: string | null
+  due_at: string | null
+  metadata_json: Record<string, unknown> | null
+  created_at: string
+}
+
+export interface PersonalTaskEventCreate {
+  event_type: PersonalTaskEventType
+  title?: string | null
+  body?: string | null
+  next_step?: string | null
+  waiting_for?: string | null
+  due_at?: string | null
+  metadata_json?: Record<string, unknown> | null
+}
+
+export interface PersonalTaskCheckpoint {
+  id: string
+  task_id: string
+  title: string
+  status: PersonalTaskCheckpointStatus
+  next_step: string | null
+  waiting_for: string | null
+  notes: string | null
+  due_at: string | null
+  completed_at: string | null
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonalTaskCheckpointCreate {
+  title: string
+  status?: PersonalTaskCheckpointStatus
+  next_step?: string | null
+  waiting_for?: string | null
+  notes?: string | null
+  due_at?: string | null
+  sort_order?: number
+}
+
+export interface PersonalTaskCheckpointUpdate {
+  title?: string
+  status?: PersonalTaskCheckpointStatus
+  next_step?: string | null
+  waiting_for?: string | null
+  notes?: string | null
+  due_at?: string | null
+  sort_order?: number
+}
+
+export interface PersonalTaskDeadline {
+  item_type: 'task' | 'checkpoint'
+  item_id: string
+  task_id: string
+  task_key: string
+  task_title: string
+  title: string
+  status: string
+  due_at: string
+  start_at: string
+  responsible: string | null
+  waiting_for: string | null
+  project: string | null
 }
 
 export interface CatalogItem {

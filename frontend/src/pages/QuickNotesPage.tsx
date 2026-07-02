@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Archive,
+  ArrowRightCircle,
   CheckCircle2,
   Pencil,
   RotateCcw,
@@ -12,7 +13,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
-import type { QuickNote, QuickNoteCreate, QuickNoteStatus, QuickNoteUpdate } from '@/api/types'
+import type { PersonalTask, QuickNote, QuickNoteCreate, QuickNoteStatus, QuickNoteUpdate } from '@/api/types'
 import { cn } from '@/lib/utils'
 
 type NoteFilter = QuickNoteStatus | 'all'
@@ -180,6 +181,23 @@ export function QuickNotesPage() {
     }
   }
 
+  const createPersonalTask = async (note: QuickNote) => {
+    try {
+      await api.post<PersonalTask>('/api/personal-tasks', {
+        title: note.title,
+        description: note.context,
+        notes: note.body,
+        priority: 'medium',
+        status: 'planned',
+        source_quick_note_id: note.id,
+      })
+      await loadNotes()
+      toast.success('Личная задача создана')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка создания личной задачи')
+    }
+  }
+
   return (
     <div className="mx-auto max-w-5xl space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -316,6 +334,15 @@ export function QuickNotesPage() {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => createPersonalTask(note)}
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-blue-600 hover:bg-blue-50"
+                    title="Создать личную задачу"
+                    aria-label="Создать личную задачу"
+                  >
+                    <ArrowRightCircle className="h-4 w-4" />
+                  </button>
                   {note.status !== 'processed' && (
                     <button
                       type="button"

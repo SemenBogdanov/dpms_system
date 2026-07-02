@@ -22,6 +22,7 @@ import { FeedbackPage } from '@/pages/FeedbackPage'
 import { CompetenciesPage } from '@/pages/CompetenciesPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { QuickNotesPage } from '@/pages/QuickNotesPage'
+import { PersonalTasksPage } from '@/pages/PersonalTasksPage'
 import {
   firstAvailablePath,
   hasDevelopmentAccess,
@@ -131,6 +132,7 @@ function App() {
         <Route path="profile" element={<TaskWorkspaceRoute><ProfilePage /></TaskWorkspaceRoute>} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="quick-notes" element={<QuickNotesPage />} />
+        <Route path="personal-tasks" element={<PersonalTasksPage />} />
         <Route path="shop" element={<TaskWorkspaceRoute><ShopPage /></TaskWorkspaceRoute>} />
         <Route
           path="feedback"

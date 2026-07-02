@@ -1,0 +1,1168 @@
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  Archive,
+  ArrowUpRight,
+  CalendarClock,
+  CheckCircle2,
+  Circle,
+  Clock3,
+  Flag,
+  History,
+  Inbox,
+  Link2,
+  MessageSquare,
+  Milestone,
+  Pencil,
+  PlayCircle,
+  Plus,
+  Save,
+  Search,
+  ShieldAlert,
+  Trash2,
+  UserRound,
+  X,
+} from 'lucide-react'
+import toast from 'react-hot-toast'
+import { api } from '@/api/client'
+import type {
+  Complexity,
+  League,
+  PersonalTask,
+  PersonalTaskCategory,
+  PersonalTaskCheckpoint,
+  PersonalTaskCheckpointCreate,
+  PersonalTaskCheckpointStatus,
+  PersonalTaskDeadline,
+  PersonalTaskEvent,
+  PersonalTaskEventCreate,
+  PersonalTaskEventType,
+  PersonalTaskCreate,
+  PersonalTaskPriority,
+  PersonalTaskPromoteRequest,
+  PersonalTaskStatus,
+  PersonalTaskUpdate,
+  QuickNote,
+  Task,
+  TaskPriority,
+  TaskType,
+} from '@/api/types'
+import { cn } from '@/lib/utils'
+
+type TaskFilter = PersonalTaskStatus | 'active' | 'all'
+
+const emptyForm = {
+  title: '',
+  description: '',
+  notes: '',
+  status: 'inbox' as PersonalTaskStatus,
+  priority: 'medium' as PersonalTaskPriority,
+  category: 'work' as PersonalTaskCategory,
+  project: '',
+  context: '',
+  responsible: '',
+  tags: '',
+  acceptanceCriteria: '',
+  nextStep: '',
+  nextStepAt: '',
+  dueAt: '',
+  waitingFor: '',
+  blockedReason: '',
+  impact: '',
+  effort: '',
+  linkedTaskId: '',
+  sourceQuickNoteId: '',
+}
+
+const emptyEventForm = {
+  eventType: 'meeting' as PersonalTaskEventType,
+  title: '',
+  body: '',
+  nextStep: '',
+  waitingFor: '',
+  dueAt: '',
+}
+
+const emptyCheckpointForm = {
+  title: '',
+  status: 'planned' as PersonalTaskCheckpointStatus,
+  nextStep: '',
+  waitingFor: '',
+  notes: '',
+  dueAt: '',
+}
+
+const defaultPromote = {
+  taskType: 'proactive' as TaskType,
+  complexity: 'S' as Complexity,
+  estimatedQ: '0',
+  priority: 'medium' as TaskPriority,
+  minLeague: 'C' as League,
+}
+
+const statusLabel: Record<PersonalTaskStatus, string> = {
+  inbox: 'Входящие',
+  planned: 'План',
+  next: 'Следующее',
+  in_progress: 'В работе',
+  waiting: 'Ожидание',
+  blocked: 'Блок',
+  done: 'Готово',
+  archived: 'Архив',
+}
+
+const statusTone: Record<PersonalTaskStatus, string> = {
+  inbox: 'bg-slate-100 text-slate-700 border-slate-200',
+  planned: 'bg-sky-50 text-sky-700 border-sky-200',
+  next: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+  in_progress: 'bg-amber-50 text-amber-700 border-amber-200',
+  waiting: 'bg-violet-50 text-violet-700 border-violet-200',
+  blocked: 'bg-rose-50 text-rose-700 border-rose-200',
+  done: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  archived: 'bg-slate-50 text-slate-500 border-slate-200',
+}
+
+const priorityLabel: Record<PersonalTaskPriority, string> = {
+  low: 'Низкий',
+  medium: 'Средний',
+  high: 'Высокий',
+  critical: 'Критичный',
+}
+
+const categoryLabel: Record<PersonalTaskCategory, string> = {
+  work: 'Работа',
+  meeting: 'Совещание',
+  follow_up: 'Follow-up',
+  research: 'Разбор',
+  decision: 'Решение',
+  admin: 'Админ',
+  other: 'Другое',
+}
+
+const filters: Array<{ value: TaskFilter; label: string }> = [
+  { value: 'active', label: 'Активные' },
+  { value: 'inbox', label: 'Входящие' },
+  { value: 'next', label: 'Следующее' },
+  { value: 'in_progress', label: 'В работе' },
+  { value: 'waiting', label: 'Ожидание' },
+  { value: 'blocked', label: 'Блок' },
+  { value: 'done', label: 'Готово' },
+  { value: 'all', label: 'Все' },
+]
+
+function toPayloadDate(value: string): string | null {
+  return value ? new Date(value).toISOString() : null
+}
+
+function toInputDate(value: string | null): string {
+  if (!value) return ''
+  const date = new Date(value)
+  const offset = date.getTimezoneOffset()
+  const local = new Date(date.getTime() - offset * 60_000)
+  return local.toISOString().slice(0, 16)
+}
+
+function formatDate(value: string | null): string {
+  if (!value) return 'не задано'
+  return new Date(value).toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function splitTags(value: string): string[] {
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 20)
+}
+
+function priorityRank(priority: PersonalTaskPriority): number {
+  return { critical: 4, high: 3, medium: 2, low: 1 }[priority]
+}
+
+function isOverdue(task: PersonalTask): boolean {
+  if (!task.due_at || task.status === 'done' || task.status === 'archived') return false
+  return new Date(task.due_at).getTime() < Date.now()
+}
+
+function isDueSoon(task: PersonalTask): boolean {
+  if (!task.due_at || isOverdue(task) || task.status === 'done' || task.status === 'archived') return false
+  return new Date(task.due_at).getTime() - Date.now() < 3 * 24 * 60 * 60 * 1000
+}
+
+function deadlineProgress(item: PersonalTaskDeadline): number {
+  const start = new Date(item.start_at).getTime()
+  const end = new Date(item.due_at).getTime()
+  const now = Date.now()
+  if (end <= start) return 100
+  return Math.max(0, Math.min(100, Math.round(((now - start) / (end - start)) * 100)))
+}
+
+function deadlineTone(item: PersonalTaskDeadline): 'danger' | 'warn' | 'ok' {
+  const due = new Date(item.due_at).getTime()
+  const left = due - Date.now()
+  if (left < 0) return 'danger'
+  if (left < 3 * 24 * 60 * 60 * 1000) return 'warn'
+  return 'ok'
+}
+
+export function PersonalTasksPage() {
+  const [tasks, setTasks] = useState<PersonalTask[]>([])
+  const [quickNotes, setQuickNotes] = useState<QuickNote[]>([])
+  const [deadlines, setDeadlines] = useState<PersonalTaskDeadline[]>([])
+  const [events, setEvents] = useState<Record<string, PersonalTaskEvent[]>>({})
+  const [checkpoints, setCheckpoints] = useState<Record<string, PersonalTaskCheckpoint[]>>({})
+  const [filter, setFilter] = useState<TaskFilter>('active')
+  const [search, setSearch] = useState('')
+  const [form, setForm] = useState(emptyForm)
+  const [editing, setEditing] = useState<PersonalTask | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [promoting, setPromoting] = useState<PersonalTask | null>(null)
+  const [promoteForm, setPromoteForm] = useState(defaultPromote)
+  const [eventForm, setEventForm] = useState(emptyEventForm)
+  const [checkpointForm, setCheckpointForm] = useState(emptyCheckpointForm)
+
+  const loadTasks = useCallback(async () => {
+    const params = new URLSearchParams()
+    params.set('status', filter)
+    if (search.trim()) params.set('search', search.trim())
+    const data = await api.get<PersonalTask[]>(`/api/personal-tasks?${params.toString()}`)
+    setTasks(data)
+  }, [filter, search])
+
+  const loadQuickNotes = useCallback(async () => {
+    const data = await api.get<QuickNote[]>('/api/quick-notes?status=draft')
+    setQuickNotes(data)
+  }, [])
+
+  const loadDeadlines = useCallback(async () => {
+    const data = await api.get<PersonalTaskDeadline[]>('/api/personal-tasks/deadlines')
+    setDeadlines(data)
+  }, [])
+
+  const loadTaskDetails = useCallback(async (taskId: string) => {
+    const [eventData, checkpointData] = await Promise.all([
+      api.get<PersonalTaskEvent[]>(`/api/personal-tasks/${taskId}/events`),
+      api.get<PersonalTaskCheckpoint[]>(`/api/personal-tasks/${taskId}/checkpoints`),
+    ])
+    setEvents((prev) => ({ ...prev, [taskId]: eventData }))
+    setCheckpoints((prev) => ({ ...prev, [taskId]: checkpointData }))
+  }, [])
+
+  useEffect(() => {
+    void loadTasks().catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка загрузки личных задач'))
+  }, [loadTasks])
+
+  useEffect(() => {
+    void loadQuickNotes().catch(() => undefined)
+  }, [loadQuickNotes])
+
+  useEffect(() => {
+    void loadDeadlines().catch(() => undefined)
+  }, [loadDeadlines])
+
+  const stats = useMemo(() => {
+    const active = tasks.filter((task) => !['done', 'archived'].includes(task.status)).length
+    const blocked = tasks.filter((task) => task.status === 'blocked').length
+    const overdue = tasks.filter(isOverdue).length
+    const next = tasks.filter((task) => task.status === 'next').length
+    return { active, next, blocked, overdue }
+  }, [tasks])
+
+  const sortedTasks = useMemo(() => {
+    return [...tasks].sort((a, b) => {
+      if (isOverdue(a) !== isOverdue(b)) return isOverdue(a) ? -1 : 1
+      if (a.status === 'next' && b.status !== 'next') return -1
+      if (b.status === 'next' && a.status !== 'next') return 1
+      const dueA = a.due_at ? new Date(a.due_at).getTime() : Number.MAX_SAFE_INTEGER
+      const dueB = b.due_at ? new Date(b.due_at).getTime() : Number.MAX_SAFE_INTEGER
+      if (dueA !== dueB) return dueA - dueB
+      return priorityRank(b.priority) - priorityRank(a.priority)
+    })
+  }, [tasks])
+
+  const resetForm = () => {
+    setForm(emptyForm)
+    setEditing(null)
+  }
+
+  const toggleTaskDetails = (task: PersonalTask) => {
+    setExpandedId((current) => {
+      const next = current === task.id ? null : task.id
+      if (next) {
+        setEventForm(emptyEventForm)
+        setCheckpointForm(emptyCheckpointForm)
+        void loadTaskDetails(task.id).catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка загрузки истории'))
+      }
+      return next
+    })
+  }
+
+  const editTask = (task: PersonalTask) => {
+    setEditing(task)
+    setExpandedId(task.id)
+    setForm({
+      title: task.title,
+      description: task.description || '',
+      notes: task.notes || '',
+      status: task.status,
+      priority: task.priority,
+      category: task.category,
+      project: task.project || '',
+      context: task.context || '',
+      responsible: task.responsible || '',
+      tags: task.tags.join(', '),
+      acceptanceCriteria: task.acceptance_criteria || '',
+      nextStep: task.next_step || '',
+      nextStepAt: toInputDate(task.next_step_at),
+      dueAt: toInputDate(task.due_at),
+      waitingFor: task.waiting_for || '',
+      blockedReason: task.blocked_reason || '',
+      impact: task.impact ? String(task.impact) : '',
+      effort: task.effort ? String(task.effort) : '',
+      linkedTaskId: task.linked_task_id || '',
+      sourceQuickNoteId: task.source_quick_note_id || '',
+    })
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const payloadFromForm = (): PersonalTaskCreate | PersonalTaskUpdate => ({
+    title: form.title,
+    description: form.description || null,
+    notes: form.notes || null,
+    status: form.status,
+    priority: form.priority,
+    category: form.category,
+    project: form.project || null,
+    context: form.context || null,
+    responsible: form.responsible || null,
+    tags: splitTags(form.tags),
+    acceptance_criteria: form.acceptanceCriteria || null,
+    next_step: form.nextStep || null,
+    next_step_at: toPayloadDate(form.nextStepAt),
+    due_at: toPayloadDate(form.dueAt),
+    waiting_for: form.waitingFor || null,
+    blocked_reason: form.blockedReason || null,
+    impact: form.impact ? Number(form.impact) : null,
+    effort: form.effort ? Number(form.effort) : null,
+    linked_task_id: form.linkedTaskId || null,
+    source_quick_note_id: form.sourceQuickNoteId || null,
+  })
+
+  const saveTask = async () => {
+    if (!form.title.trim()) {
+      toast.error('Укажите название')
+      return
+    }
+    setLoading(true)
+    try {
+      if (editing) {
+        await api.patch<PersonalTask>(`/api/personal-tasks/${editing.id}`, payloadFromForm())
+        toast.success('Личная задача обновлена')
+      } else {
+        await api.post<PersonalTask>('/api/personal-tasks', payloadFromForm())
+        toast.success('Личная задача создана')
+      }
+      resetForm()
+      await Promise.all([loadTasks(), loadQuickNotes(), loadDeadlines()])
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка сохранения')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const updateStatus = async (task: PersonalTask, status: PersonalTaskStatus) => {
+    try {
+      await api.patch<PersonalTask>(`/api/personal-tasks/${task.id}`, { status })
+      await Promise.all([loadTasks(), loadDeadlines(), loadTaskDetails(task.id)])
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка статуса')
+    }
+  }
+
+  const deleteTask = async (task: PersonalTask) => {
+    if (!window.confirm(`Удалить ${task.task_key}?`)) return
+    try {
+      await api.delete(`/api/personal-tasks/${task.id}`)
+      if (editing?.id === task.id) resetForm()
+      await Promise.all([loadTasks(), loadDeadlines()])
+      toast.success('Личная задача удалена')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка удаления')
+    }
+  }
+
+  const openPromote = (task: PersonalTask) => {
+    setPromoting(task)
+    setPromoteForm({
+      ...defaultPromote,
+      priority: task.priority === 'critical' ? 'critical' : task.priority,
+    })
+  }
+
+  const promoteTask = async () => {
+    if (!promoting) return
+    try {
+      const payload: PersonalTaskPromoteRequest = {
+        task_type: promoteForm.taskType,
+        complexity: promoteForm.complexity,
+        estimated_q: Number(promoteForm.estimatedQ || 0),
+        priority: promoteForm.priority,
+        min_league: promoteForm.minLeague,
+        due_date: promoting.due_at,
+        tags: promoting.tags,
+      }
+      const task = await api.post<Task>(`/api/personal-tasks/${promoting.id}/promote`, payload)
+      toast.success(`Выведено в очередь: #${task.task_number}`)
+      setPromoting(null)
+      await Promise.all([loadTasks(), loadDeadlines(), loadTaskDetails(promoting.id)])
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка вывода в очередь')
+    }
+  }
+
+  const createEvent = async (task: PersonalTask) => {
+    if (!eventForm.title.trim() && !eventForm.body.trim()) {
+      toast.error('Заполните заголовок или заметку')
+      return
+    }
+    try {
+      const payload: PersonalTaskEventCreate = {
+        event_type: eventForm.eventType,
+        title: eventForm.title || null,
+        body: eventForm.body || null,
+        next_step: eventForm.nextStep || null,
+        waiting_for: eventForm.waitingFor || null,
+        due_at: toPayloadDate(eventForm.dueAt),
+      }
+      await api.post<PersonalTaskEvent>(`/api/personal-tasks/${task.id}/events`, payload)
+      setEventForm(emptyEventForm)
+      await Promise.all([loadTasks(), loadDeadlines(), loadTaskDetails(task.id)])
+      toast.success('Запись добавлена')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка записи')
+    }
+  }
+
+  const createCheckpoint = async (task: PersonalTask) => {
+    if (!checkpointForm.title.trim()) {
+      toast.error('Укажите этап')
+      return
+    }
+    try {
+      const payload: PersonalTaskCheckpointCreate = {
+        title: checkpointForm.title,
+        status: checkpointForm.status,
+        next_step: checkpointForm.nextStep || null,
+        waiting_for: checkpointForm.waitingFor || null,
+        notes: checkpointForm.notes || null,
+        due_at: toPayloadDate(checkpointForm.dueAt),
+      }
+      await api.post<PersonalTaskCheckpoint>(`/api/personal-tasks/${task.id}/checkpoints`, payload)
+      setCheckpointForm(emptyCheckpointForm)
+      await Promise.all([loadTasks(), loadDeadlines(), loadTaskDetails(task.id)])
+      toast.success('Этап добавлен')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка этапа')
+    }
+  }
+
+  const updateCheckpointStatus = async (task: PersonalTask, checkpoint: PersonalTaskCheckpoint, status: PersonalTaskCheckpointStatus) => {
+    try {
+      await api.patch<PersonalTaskCheckpoint>(`/api/personal-tasks/${task.id}/checkpoints/${checkpoint.id}`, { status })
+      await Promise.all([loadTasks(), loadDeadlines(), loadTaskDetails(task.id)])
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка этапа')
+    }
+  }
+
+  const deleteCheckpoint = async (task: PersonalTask, checkpoint: PersonalTaskCheckpoint) => {
+    if (!window.confirm('Удалить этап контроля?')) return
+    try {
+      await api.delete(`/api/personal-tasks/${task.id}/checkpoints/${checkpoint.id}`)
+      await Promise.all([loadDeadlines(), loadTaskDetails(task.id)])
+      toast.success('Этап удален')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка удаления этапа')
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-7xl space-y-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Personal tracker</p>
+          <h1 className="mt-1 text-2xl font-semibold text-slate-950">Личные задачи</h1>
+          <p className="mt-1 max-w-2xl text-sm text-slate-500">
+            Приватный контур для поручений, заметок, следующих шагов и подготовки задач перед выводом в глобальную очередь.
+          </p>
+        </div>
+        <div className="grid grid-cols-4 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <Metric label="активно" value={stats.active} />
+          <Metric label="следующее" value={stats.next} />
+          <Metric label="блок" value={stats.blocked} tone={stats.blocked ? 'danger' : 'muted'} />
+          <Metric label="сроки" value={stats.overdue} tone={stats.overdue ? 'danger' : 'muted'} />
+        </div>
+      </div>
+
+      {deadlines.length > 0 && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Контроль сроков</h2>
+              <p className="text-xs text-slate-500">Задачи и этапы, где скоро нужен следующий шаг.</p>
+            </div>
+            <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-500">{deadlines.length}</span>
+          </div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            {deadlines.slice(0, 8).map((item) => {
+              const progress = deadlineProgress(item)
+              const tone = deadlineTone(item)
+              return (
+                <button
+                  key={`${item.item_type}-${item.item_id}`}
+                  type="button"
+                  onClick={() => {
+                    const task = tasks.find((candidate) => candidate.id === item.task_id)
+                    if (task) toggleTaskDetails(task)
+                  }}
+                  className="rounded-lg border border-slate-200 p-3 text-left hover:bg-slate-50"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-600">{item.task_key}</span>
+                        <span className="rounded bg-white px-2 py-0.5 text-xs text-slate-500">{item.item_type === 'task' ? 'задача' : 'этап'}</span>
+                      </div>
+                      <p className="mt-2 truncate text-sm font-medium text-slate-900">{item.title}</p>
+                      <p className="mt-1 truncate text-xs text-slate-500">
+                        {item.project || item.task_title}
+                        {item.responsible ? ` · ${item.responsible}` : ''}
+                      </p>
+                    </div>
+                    <span className={cn('shrink-0 text-xs font-medium', tone === 'danger' ? 'text-rose-600' : tone === 'warn' ? 'text-amber-600' : 'text-emerald-600')}>
+                      {formatDate(item.due_at)}
+                    </span>
+                  </div>
+                  <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className={cn('h-full rounded-full', tone === 'danger' ? 'bg-rose-500' : tone === 'warn' ? 'bg-amber-500' : 'bg-emerald-500')}
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-950 text-white">
+              {editing ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+            </span>
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">
+                {editing ? `Редактирование ${editing.task_key}` : 'Новая личная задача'}
+              </h2>
+              <p className="text-xs text-slate-500">Минимум: название и следующий шаг. Остальное можно уточнить позже.</p>
+            </div>
+          </div>
+          {editing && (
+            <button
+              type="button"
+              onClick={resetForm}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+            >
+              <X className="h-4 w-4" />
+              Отмена
+            </button>
+          )}
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_180px_160px_160px]">
+          <input
+            value={form.title}
+            onChange={(e) => setForm((prev) => ({ ...prev, title: e.target.value }))}
+            placeholder="Название"
+            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+          />
+          <select
+            value={form.status}
+            onChange={(e) => setForm((prev) => ({ ...prev, status: e.target.value as PersonalTaskStatus }))}
+            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+          >
+            {Object.entries(statusLabel).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+          <select
+            value={form.priority}
+            onChange={(e) => setForm((prev) => ({ ...prev, priority: e.target.value as PersonalTaskPriority }))}
+            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+          >
+            {Object.entries(priorityLabel).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+          <select
+            value={form.category}
+            onChange={(e) => setForm((prev) => ({ ...prev, category: e.target.value as PersonalTaskCategory }))}
+            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+          >
+            {Object.entries(categoryLabel).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="mt-3 grid gap-3 lg:grid-cols-4">
+          <input
+            value={form.nextStep}
+            onChange={(e) => setForm((prev) => ({ ...prev, nextStep: e.target.value }))}
+            placeholder="Следующий шаг"
+            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+          />
+          <input
+            value={form.project}
+            onChange={(e) => setForm((prev) => ({ ...prev, project: e.target.value }))}
+            placeholder="Проект / поток"
+            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+          />
+          <input
+            value={form.context}
+            onChange={(e) => setForm((prev) => ({ ...prev, context: e.target.value }))}
+            placeholder="Контекст: встреча, поручение, источник"
+            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+          />
+          <input
+            value={form.responsible}
+            onChange={(e) => setForm((prev) => ({ ...prev, responsible: e.target.value }))}
+            placeholder="Ответственный / кому поручено"
+            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+          />
+        </div>
+
+        <div className="mt-3 grid gap-3 lg:grid-cols-4">
+          <input
+            type="datetime-local"
+            value={form.nextStepAt}
+            onChange={(e) => setForm((prev) => ({ ...prev, nextStepAt: e.target.value }))}
+            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+          />
+          <input
+            type="datetime-local"
+            value={form.dueAt}
+            onChange={(e) => setForm((prev) => ({ ...prev, dueAt: e.target.value }))}
+            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+          />
+          <select
+            value={form.impact}
+            onChange={(e) => setForm((prev) => ({ ...prev, impact: e.target.value }))}
+            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+          >
+            <option value="">Влияние</option>
+            {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+          <select
+            value={form.effort}
+            onChange={(e) => setForm((prev) => ({ ...prev, effort: e.target.value }))}
+            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+          >
+            <option value="">Усилие</option>
+            {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+        </div>
+
+        <details className="mt-3 rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+          <summary className="cursor-pointer text-sm font-medium text-slate-700">Атрибуты tracker</summary>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            <textarea
+              value={form.description}
+              onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+              placeholder="Описание"
+              rows={4}
+              className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+            />
+            <textarea
+              value={form.acceptanceCriteria}
+              onChange={(e) => setForm((prev) => ({ ...prev, acceptanceCriteria: e.target.value }))}
+              placeholder="Критерии готовности / приемки"
+              rows={4}
+              className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+            />
+            <textarea
+              value={form.notes}
+              onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
+              placeholder="Рабочие заметки"
+              rows={4}
+              className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+            />
+            <div className="grid gap-3">
+              <input
+                value={form.tags}
+                onChange={(e) => setForm((prev) => ({ ...prev, tags: e.target.value }))}
+                placeholder="Теги через запятую"
+                className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+              />
+              <input
+                value={form.waitingFor}
+                onChange={(e) => setForm((prev) => ({ ...prev, waitingFor: e.target.value }))}
+                placeholder="Кого / чего ждем"
+                className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+              />
+              <input
+                value={form.blockedReason}
+                onChange={(e) => setForm((prev) => ({ ...prev, blockedReason: e.target.value }))}
+                placeholder="Причина блока"
+                className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+              />
+              <select
+                value={form.sourceQuickNoteId}
+                onChange={(e) => setForm((prev) => ({ ...prev, sourceQuickNoteId: e.target.value }))}
+                className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+              >
+                <option value="">Без связанной заметки</option>
+                {quickNotes.map((note) => (
+                  <option key={note.id} value={note.id}>{note.title}</option>
+                ))}
+              </select>
+              <input
+                value={form.linkedTaskId}
+                onChange={(e) => setForm((prev) => ({ ...prev, linkedTaskId: e.target.value }))}
+                placeholder="UUID связанной DPMS-задачи"
+                className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+              />
+            </div>
+          </div>
+        </details>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void saveTask()}
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+          >
+            <Save className="h-4 w-4" />
+            {editing ? 'Сохранить' : 'Создать задачу'}
+          </button>
+          {!editing && (
+            <button
+              type="button"
+              onClick={() => setForm((prev) => ({ ...prev, status: 'next' }))}
+              className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm text-slate-700 hover:bg-slate-50"
+            >
+              Сделать следующим
+            </button>
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-3 border-b border-slate-200 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-slate-200 px-3 py-2">
+            <Search className="h-4 w-4 shrink-0 text-slate-400" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Поиск по названию, проекту, заметкам"
+              className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+            />
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {filters.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                onClick={() => setFilter(item.value)}
+                className={cn(
+                  'shrink-0 rounded-lg border px-3 py-2 text-sm',
+                  filter === item.value
+                    ? 'border-slate-950 bg-slate-950 text-white'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                )}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="divide-y divide-slate-200">
+          {sortedTasks.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 px-4 py-12 text-center text-slate-500">
+              <Inbox className="h-8 w-8 text-slate-300" />
+              <p className="text-sm">Личных задач пока нет.</p>
+            </div>
+          ) : (
+            sortedTasks.map((task) => (
+              <article key={task.id} className="p-4">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <button
+                    type="button"
+                  onClick={() => toggleTaskDetails(task)}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-xs font-semibold text-slate-600">
+                        {task.task_key}
+                      </span>
+                      <span className={cn('rounded-md border px-2 py-1 text-xs font-medium', statusTone[task.status])}>
+                        {statusLabel[task.status]}
+                      </span>
+                      <span className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500">
+                        {priorityLabel[task.priority]}
+                      </span>
+                      <span className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500">
+                        {categoryLabel[task.category]}
+                      </span>
+                      {task.promoted_task_id && (
+                        <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+                          в очереди
+                        </span>
+                      )}
+                    </div>
+                    <h3 className="mt-2 break-words text-base font-semibold text-slate-950">{task.title}</h3>
+                    <div className="mt-2 grid gap-2 text-sm text-slate-500 lg:grid-cols-4">
+                      <Info icon={<PlayCircle className="h-4 w-4" />} text={task.next_step || 'следующий шаг не задан'} />
+                      <Info icon={<CalendarClock className="h-4 w-4" />} text={`срок: ${formatDate(task.due_at)}`} danger={isOverdue(task)} warn={isDueSoon(task)} />
+                      <Info icon={<Flag className="h-4 w-4" />} text={task.project || task.context || 'без проекта'} />
+                      <Info icon={<UserRound className="h-4 w-4" />} text={task.responsible || 'без ответственного'} />
+                    </div>
+                  </button>
+
+                  <div className="flex flex-wrap gap-2 lg:justify-end">
+                    <IconButton label="Следующее" onClick={() => void updateStatus(task, 'next')}>
+                      <Circle className="h-4 w-4" />
+                    </IconButton>
+                    <IconButton label="В работу" onClick={() => void updateStatus(task, 'in_progress')}>
+                      <Clock3 className="h-4 w-4" />
+                    </IconButton>
+                    <IconButton label="Ожидание" onClick={() => void updateStatus(task, 'waiting')}>
+                      <UserRound className="h-4 w-4" />
+                    </IconButton>
+                    <IconButton label="Блок" onClick={() => void updateStatus(task, 'blocked')}>
+                      <ShieldAlert className="h-4 w-4" />
+                    </IconButton>
+                    <IconButton label="Готово" onClick={() => void updateStatus(task, 'done')}>
+                      <CheckCircle2 className="h-4 w-4" />
+                    </IconButton>
+                    <IconButton label="В очередь" onClick={() => openPromote(task)} disabled={Boolean(task.promoted_task_id)}>
+                      <ArrowUpRight className="h-4 w-4" />
+                    </IconButton>
+                    <IconButton label="Редактировать" onClick={() => editTask(task)}>
+                      <Pencil className="h-4 w-4" />
+                    </IconButton>
+                    <IconButton label="Архив" onClick={() => void updateStatus(task, 'archived')}>
+                      <Archive className="h-4 w-4" />
+                    </IconButton>
+                    <IconButton label="Удалить" onClick={() => void deleteTask(task)} danger>
+                      <Trash2 className="h-4 w-4" />
+                    </IconButton>
+                  </div>
+                </div>
+
+                {expandedId === task.id && (
+                  <div className="mt-4 space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <Detail title="Описание" text={task.description} />
+                      <Detail title="Критерии готовности" text={task.acceptance_criteria} />
+                      <Detail title="Заметки" text={task.notes} />
+                      <div className="space-y-2">
+                        <Detail title="Кого ждем" text={task.waiting_for} />
+                        <Detail title="Причина блока" text={task.blocked_reason} />
+                        <p className="text-xs text-slate-500">Следующий шаг: {formatDate(task.next_step_at)}</p>
+                        <p className="text-xs text-slate-500">Impact/Effort: {task.impact || '-'} / {task.effort || '-'}</p>
+                        {task.linked_task_id && (
+                          <p className="inline-flex items-center gap-1 text-xs text-slate-500">
+                            <Link2 className="h-3 w-3" />
+                            Связь DPMS: {task.linked_task_id}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                      <section className="rounded-lg border border-slate-200 bg-white p-3">
+                        <div className="mb-3 flex items-center justify-between gap-2">
+                          <h4 className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                            <Milestone className="h-4 w-4" />
+                            Этапы контроля
+                          </h4>
+                          <span className="text-xs text-slate-400">{checkpoints[task.id]?.length || 0}</span>
+                        </div>
+                        <div className="space-y-2">
+                          {(checkpoints[task.id] || []).map((checkpoint) => (
+                            <div key={checkpoint.id} className="rounded-lg border border-slate-200 p-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="font-medium text-slate-900">{checkpoint.title}</p>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    {checkpoint.next_step || 'следующий шаг не задан'}
+                                  </p>
+                                  <p className="mt-1 text-xs text-slate-500">
+                                    срок: {formatDate(checkpoint.due_at)}
+                                    {checkpoint.waiting_for ? ` · ждем: ${checkpoint.waiting_for}` : ''}
+                                  </p>
+                                </div>
+                                <span className={cn('shrink-0 rounded border px-2 py-1 text-xs', statusTone[checkpoint.status as PersonalTaskStatus] || 'border-slate-200 text-slate-500')}>
+                                  {statusLabel[checkpoint.status as PersonalTaskStatus] || checkpoint.status}
+                                </span>
+                              </div>
+                              {checkpoint.notes && <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{checkpoint.notes}</p>}
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <button type="button" onClick={() => void updateCheckpointStatus(task, checkpoint, 'in_progress')} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
+                                  В работу
+                                </button>
+                                <button type="button" onClick={() => void updateCheckpointStatus(task, checkpoint, 'waiting')} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
+                                  Ожидание
+                                </button>
+                                <button type="button" onClick={() => void updateCheckpointStatus(task, checkpoint, 'done')} className="rounded border border-emerald-200 px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50">
+                                  Готово
+                                </button>
+                                <button type="button" onClick={() => void deleteCheckpoint(task, checkpoint)} className="rounded border border-rose-200 px-2 py-1 text-xs text-rose-600 hover:bg-rose-50">
+                                  Удалить
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                          {(checkpoints[task.id] || []).length === 0 && (
+                            <p className="rounded-lg border border-dashed border-slate-200 p-3 text-xs text-slate-400">Этапы пока не добавлены.</p>
+                          )}
+                        </div>
+                        <div className="mt-3 grid gap-2">
+                          <input value={checkpointForm.title} onChange={(e) => setCheckpointForm((prev) => ({ ...prev, title: e.target.value }))} placeholder="Новый этап / контрольная точка" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                          <input value={checkpointForm.nextStep} onChange={(e) => setCheckpointForm((prev) => ({ ...prev, nextStep: e.target.value }))} placeholder="Что делаю на этом этапе" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <input value={checkpointForm.waitingFor} onChange={(e) => setCheckpointForm((prev) => ({ ...prev, waitingFor: e.target.value }))} placeholder="Что / кого жду" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                            <input type="datetime-local" value={checkpointForm.dueAt} onChange={(e) => setCheckpointForm((prev) => ({ ...prev, dueAt: e.target.value }))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                          </div>
+                          <textarea value={checkpointForm.notes} onChange={(e) => setCheckpointForm((prev) => ({ ...prev, notes: e.target.value }))} placeholder="Заметка по этапу" rows={2} className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                          <button type="button" onClick={() => void createCheckpoint(task)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-slate-950 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800">
+                            <Plus className="h-4 w-4" />
+                            Добавить этап
+                          </button>
+                        </div>
+                      </section>
+
+                      <section className="rounded-lg border border-slate-200 bg-white p-3">
+                        <div className="mb-3 flex items-center justify-between gap-2">
+                          <h4 className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
+                            <History className="h-4 w-4" />
+                            Журнал
+                          </h4>
+                          <span className="text-xs text-slate-400">{events[task.id]?.length || 0}</span>
+                        </div>
+                        <div className="max-h-72 space-y-3 overflow-auto pr-1">
+                          {(events[task.id] || []).map((event) => (
+                            <div key={event.id} className="border-l-2 border-slate-200 pl-3">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{event.event_type}</span>
+                                <span className="text-xs text-slate-400">{formatDate(event.created_at)}</span>
+                              </div>
+                              <p className="mt-1 font-medium text-slate-900">{event.title || 'Запись'}</p>
+                              {event.from_status && event.to_status && (
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {statusLabel[event.from_status as PersonalTaskStatus] || event.from_status} → {statusLabel[event.to_status as PersonalTaskStatus] || event.to_status}
+                                </p>
+                              )}
+                              {event.body && <p className="mt-1 whitespace-pre-wrap text-xs text-slate-600">{event.body}</p>}
+                              {(event.next_step || event.waiting_for || event.due_at) && (
+                                <p className="mt-1 text-xs text-slate-500">
+                                  {event.next_step ? `шаг: ${event.next_step}` : ''}
+                                  {event.waiting_for ? ` · ждем: ${event.waiting_for}` : ''}
+                                  {event.due_at ? ` · срок: ${formatDate(event.due_at)}` : ''}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                          {(events[task.id] || []).length === 0 && (
+                            <p className="rounded-lg border border-dashed border-slate-200 p-3 text-xs text-slate-400">Журнал пока пуст.</p>
+                          )}
+                        </div>
+                        <div className="mt-3 grid gap-2">
+                          <select value={eventForm.eventType} onChange={(e) => setEventForm((prev) => ({ ...prev, eventType: e.target.value as PersonalTaskEventType }))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400">
+                            <option value="meeting">Встреча</option>
+                            <option value="follow_up">Follow-up</option>
+                            <option value="note">Заметка</option>
+                          </select>
+                          <input value={eventForm.title} onChange={(e) => setEventForm((prev) => ({ ...prev, title: e.target.value }))} placeholder="Заголовок записи" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                          <textarea value={eventForm.body} onChange={(e) => setEventForm((prev) => ({ ...prev, body: e.target.value }))} placeholder="Итоги встречи, follow-up, договоренности" rows={3} className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                          <input value={eventForm.nextStep} onChange={(e) => setEventForm((prev) => ({ ...prev, nextStep: e.target.value }))} placeholder="Новый следующий шаг" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <input value={eventForm.waitingFor} onChange={(e) => setEventForm((prev) => ({ ...prev, waitingFor: e.target.value }))} placeholder="Что / кого жду" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                            <input type="datetime-local" value={eventForm.dueAt} onChange={(e) => setEventForm((prev) => ({ ...prev, dueAt: e.target.value }))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                          </div>
+                          <button type="button" onClick={() => void createEvent(task)} className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                            <MessageSquare className="h-4 w-4" />
+                            Добавить запись
+                          </button>
+                        </div>
+                      </section>
+                    </div>
+
+                    {task.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        {task.tags.map((tag) => (
+                          <span key={tag} className="rounded-full bg-white px-2 py-1 text-xs text-slate-500">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </article>
+            ))
+          )}
+        </div>
+      </section>
+
+      {promoting && (
+        <div className="fixed inset-0 z-50 flex items-end bg-slate-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center">
+          <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-4 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Вывод в глобальную очередь</p>
+                <h2 className="mt-1 text-lg font-semibold text-slate-950">{promoting.task_key} · {promoting.title}</h2>
+                <p className="mt-1 text-sm text-slate-500">После подтверждения будет создана обычная DPMS-задача со статусом в очереди.</p>
+              </div>
+              <button type="button" onClick={() => setPromoting(null)} className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-50">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <select
+                value={promoteForm.taskType}
+                onChange={(e) => setPromoteForm((prev) => ({ ...prev, taskType: e.target.value as TaskType }))}
+                className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
+              >
+                {(['proactive', 'widget', 'etl', 'api', 'docs', 'bugfix'] as TaskType[]).map((value) => (
+                  <option key={value} value={value}>{value}</option>
+                ))}
+              </select>
+              <select
+                value={promoteForm.complexity}
+                onChange={(e) => setPromoteForm((prev) => ({ ...prev, complexity: e.target.value as Complexity }))}
+                className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
+              >
+                {(['S', 'M', 'L', 'XL'] as Complexity[]).map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={promoteForm.estimatedQ}
+                onChange={(e) => setPromoteForm((prev) => ({ ...prev, estimatedQ: e.target.value }))}
+                placeholder="Q"
+                className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
+              />
+              <select
+                value={promoteForm.priority}
+                onChange={(e) => setPromoteForm((prev) => ({ ...prev, priority: e.target.value as TaskPriority }))}
+                className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
+              >
+                {(['low', 'medium', 'high', 'critical'] as TaskPriority[]).map((value) => (
+                  <option key={value} value={value}>{value}</option>
+                ))}
+              </select>
+              <select
+                value={promoteForm.minLeague}
+                onChange={(e) => setPromoteForm((prev) => ({ ...prev, minLeague: e.target.value as League }))}
+                className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
+              >
+                {(['C', 'B', 'A'] as League[]).map((value) => <option key={value} value={value}>Лига {value}</option>)}
+              </select>
+            </div>
+
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              <ShieldAlert className="mr-2 inline h-4 w-4" />
+              Если Q/лига выбраны приблизительно, задача попадет в очередь как предварительно оцененная. Дальше ее можно уточнить в обычном контуре DPMS.
+            </div>
+
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => setPromoting(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">
+                Отмена
+              </button>
+              <button type="button" onClick={() => void promoteTask()} className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">
+                Вывести в очередь
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Metric({ label, value, tone = 'default' }: { label: string; value: number; tone?: 'default' | 'muted' | 'danger' }) {
+  return (
+    <div className="min-w-20 border-l border-slate-200 px-3 py-2 text-center first:border-l-0">
+      <div className={cn('text-lg font-semibold', tone === 'danger' ? 'text-rose-600' : tone === 'muted' ? 'text-slate-400' : 'text-slate-950')}>
+        {value}
+      </div>
+      <div className="text-xs text-slate-400">{label}</div>
+    </div>
+  )
+}
+
+function Info({ icon, text, danger, warn }: { icon: ReactNode; text: string; danger?: boolean; warn?: boolean }) {
+  return (
+    <span className={cn('inline-flex min-w-0 items-center gap-1', danger ? 'text-rose-600' : warn ? 'text-amber-600' : 'text-slate-500')}>
+      {icon}
+      <span className="truncate">{text}</span>
+    </span>
+  )
+}
+
+function Detail({ title, text }: { title: string; text: string | null }) {
+  if (!text) return null
+  return (
+    <div>
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{title}</p>
+      <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{text}</p>
+    </div>
+  )
+}
+
+function IconButton({
+  label,
+  onClick,
+  children,
+  danger,
+  disabled,
+}: {
+  label: string
+  onClick: () => void
+  children: ReactNode
+  danger?: boolean
+  disabled?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      disabled={disabled}
+      className={cn(
+        'inline-flex h-9 w-9 items-center justify-center rounded-lg border text-sm transition disabled:cursor-not-allowed disabled:opacity-40',
+        danger
+          ? 'border-rose-200 text-rose-600 hover:bg-rose-50'
+          : 'border-slate-200 text-slate-600 hover:bg-slate-50',
+      )}
+    >
+      {children}
+    </button>
+  )
+}
