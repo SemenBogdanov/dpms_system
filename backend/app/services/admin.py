@@ -98,17 +98,21 @@ async def rollover_period(db: AsyncSession, admin_id: UUID) -> dict:
             )
         )
 
-        if earned_main > 0:
-            user.wallet_main = Decimal("0")
+        effective_target = _round_q(float(period_plan.effective_target or 0))
+        rollover_burn = min(earned_main, effective_target) if effective_target > 0 else 0.0
+        carry_over = _round_q(max(0.0, earned_main - rollover_burn))
+
+        if rollover_burn > 0:
+            user.wallet_main = Decimal(str(carry_over))
             db.add(
                 QTransaction(
                     user_id=user.id,
-                    amount=Decimal(str(-earned_main)),
+                    amount=Decimal(str(-rollover_burn)),
                     wallet_type=WalletType.main,
-                    reason=f"Rollover {period}: обнуление",
+                    reason=f"Rollover {period}: закрытие базового плана",
                 )
             )
-            total_main_reset += earned_main
+            total_main_reset += rollover_burn
 
     from app.services.notifications import create_notification
     for user in users:

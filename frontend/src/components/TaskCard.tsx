@@ -1,5 +1,5 @@
 import type { Task } from '@/api/types'
-import { Check } from 'lucide-react'
+import { CalendarClock, Check } from 'lucide-react'
 import { QBadge } from './QBadge'
 import { PriorityBadge } from './PriorityBadge'
 import { cn } from '@/lib/utils'
@@ -21,6 +21,9 @@ interface TaskCardProps {
   currentUserId?: string | null
   /** Имя валидатора для карточки DONE */
   validatorName?: string
+  onToggleTracker?: (task: Task) => void
+  isInTracker?: boolean
+  trackerBusy?: boolean
   className?: string
 }
 
@@ -58,6 +61,9 @@ export function TaskCard({
   busyTaskId,
   currentUserId,
   validatorName,
+  onToggleTracker,
+  isInTracker,
+  trackerBusy,
   className,
 }: TaskCardProps) {
   const inQueue = task.status === 'in_queue'
@@ -174,6 +180,22 @@ export function TaskCard({
           )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1">
+          {onToggleTracker && (
+            <button
+              type="button"
+              onClick={() => onToggleTracker(task)}
+              disabled={trackerBusy}
+              className={cn(
+                'inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm font-medium disabled:opacity-50',
+                isInTracker
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                  : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50',
+              )}
+            >
+              <CalendarClock className="h-3.5 w-3.5" />
+              {trackerBusy ? '...' : isInTracker ? 'В трекере' : 'В трекер'}
+            </button>
+          )}
           {canPull && (
             <button
               type="button"

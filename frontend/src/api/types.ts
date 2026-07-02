@@ -38,6 +38,8 @@ export type PersonalTaskEventType =
   | 'checkpoint_done'
   | 'promoted'
 export type PersonalTaskCheckpointStatus = 'planned' | 'in_progress' | 'waiting' | 'blocked' | 'done'
+export type DeadlineTrackerType = 'subscription' | 'system' | 'password' | 'task' | 'document' | 'payment' | 'other'
+export type DeadlineTrackerStatus = 'active' | 'paused' | 'done' | 'archived'
 
 export interface User {
   id: string
@@ -252,6 +254,59 @@ export interface PersonalTaskDeadline {
   responsible: string | null
   waiting_for: string | null
   project: string | null
+}
+
+export interface DeadlineTracker {
+  id: string
+  owner_id: string
+  title: string
+  description: string | null
+  tracker_type: DeadlineTrackerType
+  status: DeadlineTrackerStatus
+  starts_at: string
+  due_at: string
+  pause_started_at: string | null
+  paused_seconds: number
+  shifted_due_at: string | null
+  total_pause_seconds: number
+  next_action: string | null
+  responsible: string | null
+  tags: string[]
+  personal_task_id: string | null
+  linked_task_id: string | null
+  personal_task_key: string | null
+  personal_task_title: string | null
+  completed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface DeadlineTrackerCreate {
+  title: string
+  description?: string | null
+  tracker_type?: DeadlineTrackerType
+  status?: DeadlineTrackerStatus
+  starts_at: string
+  due_at: string
+  next_action?: string | null
+  responsible?: string | null
+  tags?: string[]
+  personal_task_id?: string | null
+  linked_task_id?: string | null
+}
+
+export interface DeadlineTrackerUpdate {
+  title?: string
+  description?: string | null
+  tracker_type?: DeadlineTrackerType
+  status?: DeadlineTrackerStatus
+  starts_at?: string
+  due_at?: string
+  next_action?: string | null
+  responsible?: string | null
+  tags?: string[]
+  personal_task_id?: string | null
+  linked_task_id?: string | null
 }
 
 export interface CatalogItem {

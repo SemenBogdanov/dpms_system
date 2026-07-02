@@ -373,8 +373,6 @@ async def create_personal_task_event(
         task.waiting_for = body.waiting_for
         if task.status not in ("done", "archived"):
             task.status = "waiting"
-    if body.due_at is not None:
-        task.due_at = body.due_at
     task.updated_at = datetime.now(timezone.utc)
     await db.flush()
     await db.refresh(event)

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '@/api/client'
-import type { Purchase, Task, User, RunRate, UserProgress } from '@/api/types'
+import type { DeadlineTracker, Purchase, Task, User, RunRate, UserProgress } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { RunRateCard } from '@/components/RunRateCard'
 import { TaskCard } from '@/components/TaskCard'
@@ -39,6 +39,7 @@ export function MyTasksPage() {
   const [bugfixBusy, setBugfixBusy] = useState(false)
   const [runRate, setRunRate] = useState<RunRate | null>(null)
   const [progress, setProgress] = useState<UserProgress | null>(null)
+  const [deadlineTrackers, setDeadlineTrackers] = useState<DeadlineTracker[]>([])
 
   const [deadlineTask, setDeadlineTask] = useState<Task | null>(null)
   const [deadlineValue, setDeadlineValue] = useState('')
@@ -46,6 +47,7 @@ export function MyTasksPage() {
   const [detailTask, setDetailTask] = useState<Task | null>(null)
 
   const [focusBusyId, setFocusBusyId] = useState<string | null>(null)
+  const [trackerBusyId, setTrackerBusyId] = useState<string | null>(null)
 
   useEffect(() => {
     api.get<User[]>('/api/users').then(setUsers).catch(() => setUsers([])).finally(() => setLoading(false))
@@ -57,6 +59,7 @@ export function MyTasksPage() {
     api.get<Task[]>(`/api/tasks?assignee_id=${currentUser.id}`).then((list) => !cancelled && setTasks(list)).catch(() => !cancelled && setTasks([]))
     api.get<RunRate>(`/api/users/${currentUser.id}/run-rate`).then((r) => !cancelled && setRunRate(r)).catch(() => !cancelled && setRunRate(null))
     api.get<UserProgress>(`/api/users/${currentUser.id}/progress`).then((p) => !cancelled && setProgress(p)).catch(() => !cancelled && setProgress(null))
+    api.get<DeadlineTracker[]>('/api/deadline-trackers?include_archived=true&limit=300').then((list) => !cancelled && setDeadlineTrackers(list)).catch(() => !cancelled && setDeadlineTrackers([]))
     return () => { cancelled = true }
   }, [currentUser])
 
@@ -101,10 +104,36 @@ export function MyTasksPage() {
       api.get<User[]>('/api/users')
         .then((u) => setUsers(u))
         .catch(() => {}),
+      api.get<DeadlineTracker[]>('/api/deadline-trackers?include_archived=true&limit=300')
+        .then((list) => setDeadlineTrackers(list))
+        .catch(() => setDeadlineTrackers([])),
       loadPurchaseApprovals(),
     ])
     setTasks(newTasks)
   }, [currentUser, loadReviewTasks, loadPurchaseApprovals])
+
+  const isTaskInTracker = useCallback((taskId: string) => {
+    return deadlineTrackers.some((tracker) => tracker.linked_task_id === taskId && tracker.status !== 'archived')
+  }, [deadlineTrackers])
+
+  const handleToggleTracker = useCallback(async (task: Task) => {
+    setTrackerBusyId(task.id)
+    try {
+      if (isTaskInTracker(task.id)) {
+        await api.delete(`/api/deadline-trackers/by-task/${task.id}`)
+        toast.success('Задача убрана из трекера')
+      } else {
+        await api.post<DeadlineTracker>(`/api/deadline-trackers/from-task/${task.id}`, {})
+        toast.success('Задача добавлена в трекер')
+      }
+      const trackers = await api.get<DeadlineTracker[]>('/api/deadline-trackers?include_archived=true&limit=300')
+      setDeadlineTrackers(trackers)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка трекера')
+    } finally {
+      setTrackerBusyId(null)
+    }
+  }, [isTaskInTracker])
 
   const handleFocus = async (taskId: string) => {
     setFocusBusyId(taskId)
@@ -438,6 +467,9 @@ export function MyTasksPage() {
                   <TaskCard
                     task={t}
                     onOpenDetail={setDetailTask}
+                    onToggleTracker={handleToggleTracker}
+                    isInTracker={isTaskInTracker(t.id)}
+                    trackerBusy={trackerBusyId === t.id}
                     className={`${isFocused ? 'focused-task-inner' : ''} border-0 p-0 shadow-none`}
                   />
 
@@ -468,6 +500,9 @@ export function MyTasksPage() {
                   currentUserId={currentUser?.id ?? ''}
                   validatorName={validatorNames[t.validator_id ?? '']}
                   onOpenDetail={setDetailTask}
+                  onToggleTracker={handleToggleTracker}
+                  isInTracker={isTaskInTracker(t.id)}
+                  trackerBusy={trackerBusyId === t.id}
                 />
                 {isTeamleadOrAdmin && (
                   <button
@@ -494,6 +529,9 @@ export function MyTasksPage() {
                   task={t}
                   validatorName={validatorNames[t.validator_id ?? '']}
                   onOpenDetail={setDetailTask}
+                  onToggleTracker={handleToggleTracker}
+                  isInTracker={isTaskInTracker(t.id)}
+                  trackerBusy={trackerBusyId === t.id}
                 />
                 {isTeamleadOrAdmin && (
                   <button
@@ -533,6 +571,9 @@ export function MyTasksPage() {
           setDeadlineTask(t)
           setDeadlineValue(t.due_date ? new Date(t.due_date).toISOString().slice(0, 16) : '')
         }}
+        onToggleTracker={handleToggleTracker}
+        isInTracker={detailTask ? isTaskInTracker(detailTask.id) : false}
+        trackerBusy={detailTask ? trackerBusyId === detailTask.id : false}
       />
 
       {isTeamleadOrAdmin && (reviewTasks.length > 0 || purchaseApprovals.length > 0) && (
@@ -550,6 +591,9 @@ export function MyTasksPage() {
                 currentUserId={currentUser?.id ?? ''}
                 validatorName={validatorNames[t.validator_id ?? '']}
                 onOpenDetail={setDetailTask}
+                onToggleTracker={handleToggleTracker}
+                isInTracker={isTaskInTracker(t.id)}
+                trackerBusy={trackerBusyId === t.id}
               />
             ))}
             {purchaseApprovals.map((purchase) => {

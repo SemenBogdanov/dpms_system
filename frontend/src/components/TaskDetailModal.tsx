@@ -3,7 +3,7 @@ import { api } from '@/api/client'
 import type { Task, User, CatalogItem, TaskAttachment } from '@/api/types'
 import { DeadlineBadge } from './DeadlineBadge'
 import { PriorityBadge } from './PriorityBadge'
-import { Copy, FileText, X } from 'lucide-react'
+import { CalendarClock, Copy, FileText, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 
 interface TaskDetailModalProps {
@@ -14,6 +14,9 @@ interface TaskDetailModalProps {
   isTeamleadOrAdmin?: boolean
   onOpenBugfix?: (task: Task) => void
   onOpenDeadline?: (task: Task) => void
+  onToggleTracker?: (task: Task) => void
+  isInTracker?: boolean
+  trackerBusy?: boolean
 }
 
 const statusLabels: Record<string, string> = {
@@ -63,6 +66,9 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
   isTeamleadOrAdmin,
   onOpenBugfix,
   onOpenDeadline,
+  onToggleTracker,
+  isInTracker,
+  trackerBusy,
 }) => {
   const taskId = task?.id
   const [attachments, setAttachments] = useState<TaskAttachment[]>([])
@@ -406,6 +412,21 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
 
           {/* Кнопки */}
           <div className="flex flex-wrap gap-2 border-t border-slate-200 pt-4">
+            {onToggleTracker && (
+              <button
+                type="button"
+                onClick={() => onToggleTracker(task)}
+                disabled={trackerBusy}
+                className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-sm font-medium disabled:opacity-50 ${
+                  isInTracker
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                    : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <CalendarClock className="h-3.5 w-3.5" />
+                {trackerBusy ? '...' : isInTracker ? 'В трекере' : 'Поставить в трекер'}
+              </button>
+            )}
             {isTeamleadOrAdmin && onOpenDeadline && (
               <button
                 type="button"

@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { FileSpreadsheet, Lock, Pencil, Search } from 'lucide-react'
 import { api } from '@/api/client'
-import type { AssignCandidate, QueueTaskResponse, Task, User, TaskStatus } from '@/api/types'
+import type { AssignCandidate, DeadlineTracker, QueueTaskResponse, Task, User, TaskStatus } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { PriorityBadge } from '@/components/PriorityBadge'
 import { LeagueBadge } from '@/components/LeagueBadge'
@@ -75,6 +75,8 @@ export function QueuePage() {
   const [confirmPull, setConfirmPull] = useState<QueueTaskResponse | Task | null>(null)
   const [myTasks, setMyTasks] = useState<Task[]>([])
   const [detailTask, setDetailTask] = useState<Task | null>(null)
+  const [deadlineTrackers, setDeadlineTrackers] = useState<DeadlineTracker[]>([])
+  const [trackerBusyId, setTrackerBusyId] = useState<string | null>(null)
   const [users, setUsers] = useState<User[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [includeArchived, setIncludeArchived] = useState(false)
@@ -110,6 +112,15 @@ export function QueuePage() {
       .finally(() => setLoading(false))
   }, [currentUser])
 
+  const loadDeadlineTrackers = useCallback(async () => {
+    try {
+      const list = await api.get<DeadlineTracker[]>('/api/deadline-trackers?include_archived=true&limit=300')
+      setDeadlineTrackers(list)
+    } catch {
+      setDeadlineTrackers([])
+    }
+  }, [])
+
   const loadArchivedTasks = useCallback(() => {
     if (!currentUser) return
     const endpoint =
@@ -122,7 +133,8 @@ export function QueuePage() {
   useEffect(() => {
     if (!currentUser) return
     loadQueue()
-  }, [currentUser, loadQueue])
+    void loadDeadlineTrackers()
+  }, [currentUser, loadQueue, loadDeadlineTrackers])
 
   useEffect(() => {
     if (!currentUser) return
@@ -135,6 +147,28 @@ export function QueuePage() {
   useEffect(() => {
     api.get<User[]>('/api/users').then(setUsers).catch(() => setUsers([]))
   }, [])
+
+  const isTaskInTracker = useCallback((taskId: string) => {
+    return deadlineTrackers.some((tracker) => tracker.linked_task_id === taskId && tracker.status !== 'archived')
+  }, [deadlineTrackers])
+
+  const handleToggleTracker = useCallback(async (task: Task) => {
+    setTrackerBusyId(task.id)
+    try {
+      if (isTaskInTracker(task.id)) {
+        await api.delete(`/api/deadline-trackers/by-task/${task.id}`)
+        toast.success('Задача убрана из трекера')
+      } else {
+        await api.post<DeadlineTracker>(`/api/deadline-trackers/from-task/${task.id}`, {})
+        toast.success('Задача добавлена в трекер')
+      }
+      await loadDeadlineTrackers()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка трекера')
+    } finally {
+      setTrackerBusyId(null)
+    }
+  }, [isTaskInTracker, loadDeadlineTrackers])
 
   useEffect(() => {
     if (!includeArchived) {
@@ -795,6 +829,9 @@ export function QueuePage() {
             })
             .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
         }}
+        onToggleTracker={handleToggleTracker}
+        isInTracker={detailTask ? isTaskInTracker(detailTask.id) : false}
+        trackerBusy={detailTask ? trackerBusyId === detailTask.id : false}
       />
 
       {bugfixParent && (

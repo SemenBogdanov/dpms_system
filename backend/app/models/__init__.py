@@ -25,6 +25,7 @@ from app.models.activity import ActivityEvent
 from app.models.feedback import FeedbackRequest
 from app.models.quick_note import QuickNote
 from app.models.personal_task import PersonalTask, PersonalTaskCheckpoint, PersonalTaskEvent
+from app.models.deadline_tracker import DeadlineTracker
 from app.models.competency import (
     Competency,
     CompetencyQuestion,
@@ -57,6 +58,7 @@ __all__ = [
     "PersonalTask",
     "PersonalTaskEvent",
     "PersonalTaskCheckpoint",
+    "DeadlineTracker",
     "Competency",
     "CompetencyQuestion",
     "CompetencyChoice",
