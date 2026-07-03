@@ -1,6 +1,7 @@
 """Схемы для пользователей."""
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
@@ -64,7 +65,14 @@ class UserRead(UserBase):
     plan_started_at: datetime | None = None
     onboarding_started_at: datetime | None = None
     onboarding_until: datetime | None = None
+    sidebar_menu_order: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class SidebarMenuOrderUpdate(BaseModel):
+    """Пользовательский порядок левого меню."""
+
+    sidebar_menu_order: dict[str, Any] | None = None

@@ -426,8 +426,6 @@ async def create_personal_task_checkpoint(
         task.next_step = body.next_step
     if body.waiting_for:
         task.waiting_for = body.waiting_for
-    if body.due_at and (task.due_at is None or body.due_at < task.due_at):
-        task.due_at = body.due_at
     if task.status == "inbox":
         task.status = "planned"
     task.updated_at = datetime.now(timezone.utc)
@@ -479,8 +477,6 @@ async def update_personal_task_checkpoint(
         task.next_step = checkpoint.next_step
     if checkpoint.waiting_for:
         task.waiting_for = checkpoint.waiting_for
-    if checkpoint.due_at and (task.due_at is None or checkpoint.due_at < task.due_at):
-        task.due_at = checkpoint.due_at
     task.updated_at = datetime.now(timezone.utc)
     event_type = "checkpoint_done" if checkpoint.status == "done" and old_status != "done" else "checkpoint_updated"
     _add_event(

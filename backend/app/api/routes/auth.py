@@ -9,7 +9,7 @@ from app.api.deps import get_db, get_current_user
 from app.core.security import verify_password, get_password_hash, create_access_token, validate_password_strength
 from app.models.user import User
 from app.schemas.auth import LoginRequest, TokenResponse, SetPasswordRequest, ChangePasswordRequest
-from app.schemas.user import UserRead
+from app.schemas.user import SidebarMenuOrderUpdate, UserRead
 from app.services.activity import record_activity_event
 
 router = APIRouter()
@@ -37,9 +37,55 @@ def _user_to_read(user: User) -> UserRead:
         plan_started_at=user.plan_started_at,
         onboarding_started_at=user.onboarding_started_at,
         onboarding_until=user.onboarding_until,
+        sidebar_menu_order=user.sidebar_menu_order,
         created_at=user.created_at,
         updated_at=user.updated_at,
     )
+
+
+def _clean_sidebar_menu_order(value: dict | None) -> dict | None:
+    if value is None:
+        return None
+    groups = value.get("groups") or []
+    items = value.get("items") or {}
+    item_labels = value.get("item_labels") or value.get("itemLabels") or {}
+    if not isinstance(groups, list) or not isinstance(items, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Некорректный формат порядка меню",
+        )
+    if not isinstance(item_labels, dict):
+        item_labels = {}
+    cleaned_groups: list[str | dict[str, object]] = []
+    for index, group in enumerate(groups):
+        if isinstance(group, str):
+            cleaned_groups.append(group[:64])
+            continue
+        if not isinstance(group, dict):
+            continue
+        group_id = group.get("id") or group.get("key") or f"custom-{index + 1}"
+        group_label = group.get("label") or f"Кнопка {index + 1}"
+        item_ids = group.get("item_ids") or group.get("itemIds") or []
+        if not isinstance(item_ids, list):
+            item_ids = []
+        cleaned_groups.append(
+            {
+                "id": str(group_id)[:64],
+                "label": str(group_label)[:80],
+                "item_ids": [str(item_id)[:64] for item_id in item_ids if isinstance(item_id, str)],
+            }
+        )
+    cleaned_items: dict[str, list[str]] = {}
+    for group, item_ids in items.items():
+        if not isinstance(group, str) or not isinstance(item_ids, list):
+            continue
+        cleaned_items[group[:64]] = [str(item_id)[:64] for item_id in item_ids if isinstance(item_id, str)]
+    cleaned_item_labels = {
+        str(item_id)[:64]: str(label).strip()[:80]
+        for item_id, label in item_labels.items()
+        if isinstance(item_id, str) and isinstance(label, str) and label.strip()
+    }
+    return {"groups": cleaned_groups, "items": cleaned_items, "item_labels": cleaned_item_labels}
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -154,3 +200,17 @@ async def me(
 ):
     """Текущий пользователь по JWT."""
     return _user_to_read(user)
+
+
+@router.patch("/me/sidebar-menu", response_model=UserRead)
+async def update_sidebar_menu_order(
+    body: SidebarMenuOrderUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Сохранить персональный порядок левого меню."""
+    merged = await db.merge(user)
+    merged.sidebar_menu_order = _clean_sidebar_menu_order(body.sidebar_menu_order)
+    await db.commit()
+    await db.refresh(merged)
+    return _user_to_read(merged)

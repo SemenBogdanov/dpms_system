@@ -41,6 +41,13 @@ export type PersonalTaskCheckpointStatus = 'planned' | 'in_progress' | 'waiting'
 export type DeadlineTrackerType = 'subscription' | 'system' | 'password' | 'task' | 'document' | 'payment' | 'other'
 export type DeadlineTrackerStatus = 'active' | 'paused' | 'done' | 'archived'
 
+export interface SidebarMenuOrder {
+  groups?: Array<string | { id?: string; key?: string; label?: string; item_ids?: string[]; itemIds?: string[] }>
+  items?: Record<string, string[]>
+  item_labels?: Record<string, string>
+  itemLabels?: Record<string, string>
+}
+
 export interface User {
   id: string
   full_name: string
@@ -62,6 +69,7 @@ export interface User {
   plan_started_at: string | null
   onboarding_started_at: string | null
   onboarding_until: string | null
+  sidebar_menu_order: SidebarMenuOrder | null
   created_at: string
   updated_at: string
 }

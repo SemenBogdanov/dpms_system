@@ -362,13 +362,18 @@ export function MyTasksPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-slate-900">Мои задачи</h1>
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900">Q-план</h1>
+          <p className="mt-1 max-w-3xl text-sm text-slate-500">
+            Задачи из глобальной очереди, которые закрывают базовый минимум сотрудника и начисляют Q.
+          </p>
+        </div>
       </div>
 
       {currentUser && (
         <div className="rounded-lg border border-slate-200 bg-white p-4">
           <div className="mb-2 flex items-center justify-between text-sm">
-            <span className="text-slate-600">Кошелёк / план</span>
+            <span className="text-slate-600">Выполнение Q-плана</span>
             <span className="whitespace-nowrap font-medium text-slate-900">
               {Number(progressEarned).toFixed(1)} / {Number(progressTarget).toFixed(1)} Q
             </span>
