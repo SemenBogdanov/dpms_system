@@ -11,15 +11,40 @@ import {
   hasFeedbackAccess,
   hasTaskWorkspaceAccess,
 } from '@/lib/access'
+import { DeadlineTrackersPage } from '@/pages/DeadlineTrackersPage'
+import { LoginPage } from '@/pages/LoginPage'
+import { PersonalTasksPage } from '@/pages/PersonalTasksPage'
+import { QuickNotesPage } from '@/pages/QuickNotesPage'
+import { SetPasswordPage } from '@/pages/SetPasswordPage'
 
 function lazyPage<T extends ComponentType<object>>(loader: () => Promise<Record<string, T>>, exportName: string) {
   return lazy(async () => {
-    const mod = await loader()
-    return { default: mod[exportName] }
+    try {
+      const mod = await loader()
+      return { default: mod[exportName] }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const isModuleLoadFailure = /import|module|script|fetch|load/i.test(message)
+
+      if (isModuleLoadFailure) {
+        try {
+          const key = `dpms-chunk-reload:${exportName}`
+          if (sessionStorage.getItem(key) !== '1') {
+            sessionStorage.setItem(key, '1')
+            const nextUrl = new URL(window.location.href)
+            nextUrl.searchParams.set('chunk_reload', '1')
+            window.location.replace(nextUrl.toString())
+          }
+        } catch {
+          window.location.reload()
+        }
+      }
+
+      throw error
+    }
   })
 }
 
-const LoginPage = lazyPage(() => import('@/pages/LoginPage'), 'LoginPage')
 const DashboardPage = lazyPage(() => import('@/pages/DashboardPage'), 'DashboardPage')
 const QueuePage = lazyPage(() => import('@/pages/QueuePage'), 'QueuePage')
 const MyTasksPage = lazyPage(() => import('@/pages/MyTasksPage'), 'MyTasksPage')
@@ -33,13 +58,9 @@ const AbsencesPage = lazyPage(() => import('@/pages/AbsencesPage'), 'AbsencesPag
 const CalibrationPage = lazyPage(() => import('@/pages/CalibrationPage'), 'CalibrationPage')
 const NotFoundPage = lazyPage(() => import('@/pages/NotFoundPage'), 'NotFoundPage')
 const ReportsPage = lazyPage(() => import('@/pages/ReportsPage'), 'ReportsPage')
-const SetPasswordPage = lazyPage(() => import('@/pages/SetPasswordPage'), 'SetPasswordPage')
 const FeedbackPage = lazyPage(() => import('@/pages/FeedbackPage'), 'FeedbackPage')
 const CompetenciesPage = lazyPage(() => import('@/pages/CompetenciesPage'), 'CompetenciesPage')
 const SettingsPage = lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage')
-const QuickNotesPage = lazyPage(() => import('@/pages/QuickNotesPage'), 'QuickNotesPage')
-const PersonalTasksPage = lazyPage(() => import('@/pages/PersonalTasksPage'), 'PersonalTasksPage')
-const DeadlineTrackersPage = lazyPage(() => import('@/pages/DeadlineTrackersPage'), 'DeadlineTrackersPage')
 
 function DashboardRoute() {
   const { user } = useAuth()
