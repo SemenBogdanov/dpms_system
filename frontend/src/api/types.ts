@@ -1302,6 +1302,9 @@ export interface RolloverResponse {
 export interface PeriodHistoryItem {
   period: string
   closed_at: string | null
+  status: 'closed' | 'cancelled' | string
+  mode: 'manual' | 'auto' | 'legacy' | string
+  cancelled_at: string | null
   users_count: number
   total_main_reset: number
   total_karma_burned: number

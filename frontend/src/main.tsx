@@ -5,9 +5,12 @@ import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { ThemedToaster } from '@/components/ThemedToaster'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { ThemeProvider } from '@/contexts/ThemeProvider'
+import { installClientDiagnostics } from '@/lib/clientDiagnostics'
 import App from './App'
 import '@fontsource-variable/victor-mono'
 import './index.css'
+
+installClientDiagnostics()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

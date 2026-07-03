@@ -1,35 +1,45 @@
+import { Suspense, lazy } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import type { ReactElement } from 'react'
+import type { ComponentType, ReactElement } from 'react'
 import { Layout } from '@/components/Layout'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
+import { SkeletonCard } from '@/components/Skeleton'
 import { useAuth } from '@/contexts/AuthContext'
-import { LoginPage } from '@/pages/LoginPage'
-import { DashboardPage } from '@/pages/DashboardPage'
-import { QueuePage } from '@/pages/QueuePage'
-import { MyTasksPage } from '@/pages/MyTasksPage'
-import { CalculatorPage } from '@/pages/CalculatorPage'
-import { ProfilePage } from '@/pages/ProfilePage'
-import { ShopPage } from '@/pages/ShopPage'
-import { AdminUsersPage } from '@/pages/AdminUsersPage'
-import { CatalogPage } from '@/pages/CatalogPage'
-import { KnowledgePage } from '@/pages/KnowledgePage'
-import { AbsencesPage } from '@/pages/AbsencesPage'
-import { CalibrationPage } from '@/pages/CalibrationPage'
-import { NotFoundPage } from '@/pages/NotFoundPage'
-import { ReportsPage } from '@/pages/ReportsPage'
-import { SetPasswordPage } from '@/pages/SetPasswordPage'
-import { FeedbackPage } from '@/pages/FeedbackPage'
-import { CompetenciesPage } from '@/pages/CompetenciesPage'
-import { SettingsPage } from '@/pages/SettingsPage'
-import { QuickNotesPage } from '@/pages/QuickNotesPage'
-import { PersonalTasksPage } from '@/pages/PersonalTasksPage'
-import { DeadlineTrackersPage } from '@/pages/DeadlineTrackersPage'
 import {
   firstAvailablePath,
   hasDevelopmentAccess,
   hasFeedbackAccess,
   hasTaskWorkspaceAccess,
 } from '@/lib/access'
+
+function lazyPage<T extends ComponentType<object>>(loader: () => Promise<Record<string, T>>, exportName: string) {
+  return lazy(async () => {
+    const mod = await loader()
+    return { default: mod[exportName] }
+  })
+}
+
+const LoginPage = lazyPage(() => import('@/pages/LoginPage'), 'LoginPage')
+const DashboardPage = lazyPage(() => import('@/pages/DashboardPage'), 'DashboardPage')
+const QueuePage = lazyPage(() => import('@/pages/QueuePage'), 'QueuePage')
+const MyTasksPage = lazyPage(() => import('@/pages/MyTasksPage'), 'MyTasksPage')
+const CalculatorPage = lazyPage(() => import('@/pages/CalculatorPage'), 'CalculatorPage')
+const ProfilePage = lazyPage(() => import('@/pages/ProfilePage'), 'ProfilePage')
+const ShopPage = lazyPage(() => import('@/pages/ShopPage'), 'ShopPage')
+const AdminUsersPage = lazyPage(() => import('@/pages/AdminUsersPage'), 'AdminUsersPage')
+const CatalogPage = lazyPage(() => import('@/pages/CatalogPage'), 'CatalogPage')
+const KnowledgePage = lazyPage(() => import('@/pages/KnowledgePage'), 'KnowledgePage')
+const AbsencesPage = lazyPage(() => import('@/pages/AbsencesPage'), 'AbsencesPage')
+const CalibrationPage = lazyPage(() => import('@/pages/CalibrationPage'), 'CalibrationPage')
+const NotFoundPage = lazyPage(() => import('@/pages/NotFoundPage'), 'NotFoundPage')
+const ReportsPage = lazyPage(() => import('@/pages/ReportsPage'), 'ReportsPage')
+const SetPasswordPage = lazyPage(() => import('@/pages/SetPasswordPage'), 'SetPasswordPage')
+const FeedbackPage = lazyPage(() => import('@/pages/FeedbackPage'), 'FeedbackPage')
+const CompetenciesPage = lazyPage(() => import('@/pages/CompetenciesPage'), 'CompetenciesPage')
+const SettingsPage = lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage')
+const QuickNotesPage = lazyPage(() => import('@/pages/QuickNotesPage'), 'QuickNotesPage')
+const PersonalTasksPage = lazyPage(() => import('@/pages/PersonalTasksPage'), 'PersonalTasksPage')
+const DeadlineTrackersPage = lazyPage(() => import('@/pages/DeadlineTrackersPage'), 'DeadlineTrackersPage')
 
 function DashboardRoute() {
   const { user } = useAuth()
@@ -98,9 +108,19 @@ function NoAccessPage() {
   )
 }
 
+function RouteFallback() {
+  return (
+    <div className="mx-auto w-full max-w-5xl space-y-3 p-4">
+      <SkeletonCard />
+      <SkeletonCard />
+    </div>
+  )
+}
+
 function App() {
   return (
-    <Routes>
+    <Suspense fallback={<RouteFallback />}>
+      <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/set-password" element={<SetPasswordPage />} />
       <Route
@@ -189,7 +209,8 @@ function App() {
         <Route path="no-access" element={<NoAccessPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
-    </Routes>
+      </Routes>
+    </Suspense>
   )
 }
 

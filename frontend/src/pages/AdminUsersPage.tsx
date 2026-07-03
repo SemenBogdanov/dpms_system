@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/client'
-import type { User, PeriodHistoryItem, LeagueEvaluation, LeagueChange } from '@/api/types'
+import type { User, PeriodHistoryItem, LeagueEvaluation, LeagueChange, RolloverResponse } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { UserModal, type UserFormPayload } from '@/components/UserModal'
@@ -13,6 +13,17 @@ const MONTHS = [
   'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь',
 ]
 
+const ROLLOVER_CONFIRM_TEXT = 'ROLLOVER'
+const CANCEL_CONFIRM_TEXT = 'CANCEL'
+
+function monthInputValue(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+}
+
+function previousMonthValue(date = new Date()) {
+  return monthInputValue(new Date(date.getFullYear(), date.getMonth() - 1, 1))
+}
+
 export function AdminUsersPage() {
   const { user: currentUser } = useAuth()
   const [users, setUsers] = useState<User[]>([])
@@ -22,6 +33,11 @@ export function AdminUsersPage() {
   const [rolloverConfirm, setRolloverConfirm] = useState(false)
   const [rolloverInput, setRolloverInput] = useState('')
   const [rolloverBusy, setRolloverBusy] = useState(false)
+  const [rolloverMode, setRolloverMode] = useState<'manual' | 'auto'>('manual')
+  const [periodToClose, setPeriodToClose] = useState(() => previousMonthValue())
+  const [cancelPeriod, setCancelPeriod] = useState<PeriodHistoryItem | null>(null)
+  const [cancelInput, setCancelInput] = useState('')
+  const [cancelBusy, setCancelBusy] = useState(false)
   const [leagueEvaluations, setLeagueEvaluations] = useState<LeagueEvaluation[]>([])
   const [leagueEvalLoading, setLeagueEvalLoading] = useState(false)
   const [applyLeagueBusy, setApplyLeagueBusy] = useState(false)
@@ -51,8 +67,11 @@ export function AdminUsersPage() {
   const currentPeriodLabel = `${MONTHS[now.getMonth()]} ${now.getFullYear()}`
   const selectedAdminId = currentUser?.id ?? ''
 
-  const handleRolloverClick = () => {
-    if (!window.confirm('Вы уверены? Это обнулит wallet_main всех сотрудников и спишет 50% кармы. Действие необратимо.')) return
+  const handleRolloverClick = (mode: 'manual' | 'auto') => {
+    if (mode === 'auto') {
+      setPeriodToClose(previousMonthValue())
+    }
+    setRolloverMode(mode)
     setRolloverConfirm(true)
     setRolloverInput('')
   }
@@ -90,8 +109,12 @@ export function AdminUsersPage() {
   }
 
   const handleRolloverSubmit = () => {
-    if (rolloverInput.trim() !== 'ROLLOVER') {
-      toast.error('Введите ROLLOVER для подтверждения')
+    if (rolloverInput.trim() !== ROLLOVER_CONFIRM_TEXT) {
+      toast.error(`Введите ${ROLLOVER_CONFIRM_TEXT} для подтверждения`)
+      return
+    }
+    if (rolloverMode === 'manual' && !periodToClose) {
+      toast.error('Выберите период')
       return
     }
     if (!selectedAdminId) {
@@ -99,14 +122,18 @@ export function AdminUsersPage() {
       return
     }
     setRolloverBusy(true)
-    api
-      .post<{ period: string; users_processed: number; total_main_reset: number; total_karma_burned: number }>(
-        '/api/admin/rollover-period',
-        { admin_id: selectedAdminId }
-      )
+    const request = rolloverMode === 'auto'
+      ? api.post<RolloverResponse>('/api/admin/period-close/auto', { admin_id: selectedAdminId })
+      : api.post<RolloverResponse>('/api/admin/rollover-period', {
+        admin_id: selectedAdminId,
+        period: periodToClose,
+        mode: 'manual',
+      })
+
+    request
       .then((res) => {
         toast.success(
-          `Период ${res.period} закрыт. Обработано: ${res.users_processed}, Main обнулено: ${res.total_main_reset}, Karma перенесена полностью`
+          `Период ${res.period} закрыт. Обработано: ${res.users_processed}, закрыто Main: ${res.total_main_reset}, сверхплан сохранён`
         )
         setRolloverConfirm(false)
         setRolloverInput('')
@@ -115,6 +142,30 @@ export function AdminUsersPage() {
       })
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка rollover'))
       .finally(() => setRolloverBusy(false))
+  }
+
+  const handleCancelSubmit = () => {
+    if (!cancelPeriod) return
+    if (cancelInput.trim() !== CANCEL_CONFIRM_TEXT) {
+      toast.error(`Введите ${CANCEL_CONFIRM_TEXT} для подтверждения`)
+      return
+    }
+    if (!selectedAdminId) {
+      toast.error('Требуется авторизация')
+      return
+    }
+    setCancelBusy(true)
+    api
+      .post<RolloverResponse>(`/api/admin/period-history/${cancelPeriod.period}/cancel`, { admin_id: selectedAdminId })
+      .then((res) => {
+        toast.success(`Закрытие периода ${res.period} отменено. Восстановлено Main: ${res.total_main_reset}`)
+        setCancelPeriod(null)
+        setCancelInput('')
+        loadHistory()
+        loadUsers()
+      })
+      .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка отмены закрытия'))
+      .finally(() => setCancelBusy(false))
   }
 
   const handleUserSubmit = async (payload: UserFormPayload) => {
@@ -167,6 +218,7 @@ export function AdminUsersPage() {
   }
 
   const formatDate = (value: string | null) => (value ? new Date(value).toLocaleDateString('ru') : '')
+  const periodActionLabel = rolloverMode === 'auto' ? 'автоматически закрыть прошлый месяц' : `закрыть период ${periodToClose}`
   const isOnboardingActive = (u: User) =>
     u.is_new_employee && (!u.onboarding_until || new Date(u.onboarding_until).getTime() > Date.now())
 
@@ -399,41 +451,103 @@ export function AdminUsersPage() {
       </section>
 
       <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
-        <h2 className="font-medium text-amber-800">Управление периодом</h2>
-        <p className="mt-1 text-sm text-slate-600">Текущий период: {currentPeriodLabel}</p>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="font-medium text-amber-800">Управление периодом</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Текущий период: {currentPeriodLabel}. При закрытии списывается только базовый план, сверхплан сохраняется.
+            </p>
+          </div>
+          <span className="w-fit rounded-full border border-amber-200 bg-white/80 px-3 py-1 text-xs font-medium text-amber-700">
+            ID 47
+          </span>
+        </div>
         {currentUser?.role === 'admin' && (
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={handleRolloverClick}
-              className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100"
-            >
-              ⚠️ Закрыть период
-            </button>
+          <div className="mt-4 grid gap-3 rounded-lg border border-amber-200 bg-white/80 p-3 md:grid-cols-[minmax(180px,240px)_1fr]">
+            <label className="text-sm font-medium text-slate-700">
+              Выбранный период
+              <input
+                type="month"
+                value={periodToClose}
+                onChange={(e) => setPeriodToClose(e.target.value)}
+                className="mt-1 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200"
+              />
+            </label>
+            <div className="flex flex-wrap items-end gap-2">
+              <button
+                type="button"
+                onClick={() => handleRolloverClick('manual')}
+                className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100"
+              >
+                Закрыть выбранный период
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRolloverClick('auto')}
+                className="rounded-lg border border-amber-300 bg-amber-100 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-200"
+              >
+                Автозакрыть прошлый месяц
+              </button>
+            </div>
           </div>
         )}
         <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white">
           <h3 className="border-b border-slate-200 px-4 py-2 text-sm font-medium text-slate-700">История периодов</h3>
-          <table className="min-w-[760px] text-sm">
+          <table className="min-w-[960px] text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
                 <th className="px-4 py-2 text-left font-medium text-slate-600">Период</th>
+                <th className="px-4 py-2 text-left font-medium text-slate-600">Статус</th>
+                <th className="px-4 py-2 text-left font-medium text-slate-600">Режим</th>
                 <th className="px-4 py-2 text-left font-medium text-slate-600">Дата закрытия</th>
+                <th className="px-4 py-2 text-left font-medium text-slate-600">Дата отмены</th>
                 <th className="px-4 py-2 text-left font-medium text-slate-600">Сотрудников</th>
-                <th className="px-4 py-2 text-left font-medium text-slate-600">Main обнулено</th>
+                <th className="px-4 py-2 text-left font-medium text-slate-600">Main закрыто</th>
                 <th className="px-4 py-2 text-left font-medium text-slate-600">Karma списано</th>
+                <th className="px-4 py-2 text-right font-medium text-slate-600">Действие</th>
               </tr>
             </thead>
             <tbody>
               {periodHistory.map((h) => (
                 <tr key={h.period} className="border-b border-slate-100">
-                  <td className="px-4 py-2">{h.period}</td>
+                  <td className="px-4 py-2 font-medium text-slate-900">{h.period}</td>
+                  <td className="px-4 py-2">
+                    <span
+                      className={cn(
+                        'rounded-full px-2 py-1 text-xs font-medium',
+                        h.status === 'cancelled'
+                          ? 'bg-slate-100 text-slate-600'
+                          : 'bg-emerald-50 text-emerald-700'
+                      )}
+                    >
+                      {h.status === 'cancelled' ? 'Отменён' : 'Закрыт'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-slate-600">
+                    {h.mode === 'auto' ? 'Авто' : h.mode === 'legacy' ? 'Legacy' : 'Вручную'}
+                  </td>
                   <td className="px-4 py-2 text-slate-600">
                     {h.closed_at ? new Date(h.closed_at).toLocaleString('ru') : '—'}
+                  </td>
+                  <td className="px-4 py-2 text-slate-600">
+                    {h.cancelled_at ? new Date(h.cancelled_at).toLocaleString('ru') : '—'}
                   </td>
                   <td className="px-4 py-2">{h.users_count}</td>
                   <td className="px-4 py-2">{Number(h.total_main_reset).toFixed(1)}</td>
                   <td className="px-4 py-2">{Number(h.total_karma_burned).toFixed(1)}</td>
+                  <td className="px-4 py-2 text-right">
+                    {h.status === 'closed' ? (
+                      <button
+                        type="button"
+                        onClick={() => { setCancelPeriod(h); setCancelInput('') }}
+                        className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        Отменить
+                      </button>
+                    ) : (
+                      <span className="text-xs text-slate-400">—</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -516,13 +630,18 @@ export function AdminUsersPage() {
         >
           <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
             <h3 className="text-lg font-semibold text-slate-900">Подтверждение закрытия периода</h3>
-            <p className="mt-2 text-sm text-slate-600">Введите "ROLLOVER" для подтверждения</p>
+            <p className="mt-2 text-sm text-slate-600">
+              Будет выполнено действие: {periodActionLabel}. Списывается только базовый план; баллы сверх плана сохраняются.
+            </p>
+            <p className="mt-2 text-sm text-slate-600">
+              Введите "{ROLLOVER_CONFIRM_TEXT}" для подтверждения.
+            </p>
             <input
               type="text"
               value={rolloverInput}
               onChange={(e) => setRolloverInput(e.target.value)}
               className="mt-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              placeholder="ROLLOVER"
+              placeholder={ROLLOVER_CONFIRM_TEXT}
             />
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -535,10 +654,53 @@ export function AdminUsersPage() {
               <button
                 type="button"
                 onClick={handleRolloverSubmit}
-                disabled={rolloverBusy || rolloverInput.trim() !== 'ROLLOVER'}
+                disabled={rolloverBusy || rolloverInput.trim() !== ROLLOVER_CONFIRM_TEXT}
                 className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
               >
                 {rolloverBusy ? '...' : 'Закрыть период'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelPeriod && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          onKeyDown={(e) => e.key === 'Escape' && setCancelPeriod(null)}
+        >
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-semibold text-slate-900">Отмена закрытия периода</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Период {cancelPeriod.period} будет открыт обратно: снимки удалятся, а списанные по базовому плану Main будут восстановлены обратными транзакциями.
+            </p>
+            <p className="mt-2 text-sm text-slate-600">
+              Введите "{CANCEL_CONFIRM_TEXT}" для подтверждения.
+            </p>
+            <input
+              type="text"
+              value={cancelInput}
+              onChange={(e) => setCancelInput(e.target.value)}
+              className="mt-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              placeholder={CANCEL_CONFIRM_TEXT}
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCancelPeriod(null)}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={handleCancelSubmit}
+                disabled={cancelBusy || cancelInput.trim() !== CANCEL_CONFIRM_TEXT}
+                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                {cancelBusy ? '...' : 'Отменить закрытие'}
               </button>
             </div>
           </div>

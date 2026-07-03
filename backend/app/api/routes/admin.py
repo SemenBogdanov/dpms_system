@@ -8,9 +8,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_role
 from app.models.user import User
-from app.schemas.admin import RolloverRequest, RolloverResponse, PeriodSnapshotResponse
+from app.schemas.admin import (
+    PeriodAutoCloseRequest,
+    PeriodCancelRequest,
+    PeriodSnapshotResponse,
+    RolloverRequest,
+    RolloverResponse,
+)
 from app.schemas.leagues import LeagueEvaluation, LeagueChange, ApplyLeagueChangesRequest
-from app.services.admin import rollover_period, get_period_history, get_period_details
+from app.services.admin import (
+    auto_close_previous_period,
+    cancel_period_closure,
+    get_period_details,
+    get_period_history,
+    rollover_period,
+)
 from app.services.leagues import evaluate_league_change, apply_league_changes
 
 router = APIRouter()
@@ -22,9 +34,34 @@ async def rollover_period_route(
     user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Закрыть предыдущий месяц: снимки, обнуление main, перенос karma. Только admin."""
+    """Закрыть выбранный период: снимки, списание базового плана, перенос сверхплана и karma."""
     admin_id = body.admin_id or user.id
-    result = await rollover_period(db, admin_id)
+    result = await rollover_period(db, admin_id, period=body.period, mode=body.mode)
+    return RolloverResponse(**result)
+
+
+@router.post("/period-close/auto", response_model=RolloverResponse)
+async def auto_close_previous_period_route(
+    body: PeriodAutoCloseRequest,
+    user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Автоматически закрыть предыдущий месяц, если он еще открыт."""
+    admin_id = body.admin_id or user.id
+    result = await auto_close_previous_period(db, admin_id)
+    return RolloverResponse(**result)
+
+
+@router.post("/period-history/{period}/cancel", response_model=RolloverResponse)
+async def cancel_period_closure_route(
+    period: str,
+    body: PeriodCancelRequest,
+    user: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Отменить закрытие периода и восстановить списанные по базовому плану баллы."""
+    admin_id = body.admin_id or user.id
+    result = await cancel_period_closure(db, admin_id, period)
     return RolloverResponse(**result)
 
 
