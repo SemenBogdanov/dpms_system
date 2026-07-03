@@ -2,9 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   ChevronDown,
+  Clock3,
   LogOut,
   Menu,
   Paperclip,
+  Settings,
+  StickyNote,
+  UserSquare2,
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -51,6 +55,49 @@ export function Sidebar() {
   const orderedBottomGroups = useMemo(() => {
     const visibleByGroup = new Set(visibleNav.map((item) => item.group))
     return sidebarGroups.filter((group) => group.placement === 'bottom' && visibleByGroup.has(group.key))
+  }, [visibleNav])
+
+  const mobileCoreItems = useMemo(() => {
+    const visibleById = new Map(visibleNav.map((item) => [item.id, item]))
+    const fallbackItems: SidebarNavItem[] = [
+      {
+        id: 'quick-notes',
+        to: '/quick-notes',
+        label: 'Заметки',
+        icon: StickyNote,
+        section: 'personal',
+        group: 'tasks',
+      },
+      {
+        id: 'personal-tasks',
+        to: '/personal-tasks',
+        label: 'Личные',
+        icon: UserSquare2,
+        section: 'personal',
+        group: 'tasks',
+      },
+      {
+        id: 'deadline-trackers',
+        to: '/deadline-trackers',
+        label: 'Сроки',
+        icon: Clock3,
+        section: 'personal',
+        group: 'tasks',
+      },
+      {
+        id: 'settings',
+        to: '/settings',
+        label: 'Настройки',
+        icon: Settings,
+        section: 'settings',
+        group: 'settings',
+      },
+    ]
+
+    return fallbackItems
+      .map((fallback) => visibleById.get(fallback.id) ?? (fallback.id === 'settings' ? fallback : null))
+      .filter((item): item is SidebarNavItem => Boolean(item))
+      .slice(0, 4)
   }, [visibleNav])
 
   const isItemActive = (item: SidebarNavItem) => {
@@ -130,6 +177,36 @@ export function Sidebar() {
 
   return (
     <>
+      {mobileCoreItems.length > 0 && (
+        <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 px-2 pb-[calc(env(safe-area-inset-bottom)+6px)] pt-1.5 shadow-[0_-10px_30px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden">
+          <div
+            className="mx-auto grid max-w-md gap-1"
+            style={{ gridTemplateColumns: `repeat(${mobileCoreItems.length}, minmax(0, 1fr))` }}
+          >
+            {mobileCoreItems.map((item) => {
+              const Icon = item.icon
+              const active = isItemActive(item)
+              return (
+                <NavLink
+                  key={item.id}
+                  to={item.to}
+                  onClick={closeMobile}
+                  className={cn(
+                    'flex min-h-[54px] flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] font-semibold transition-colors',
+                    active
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                  )}
+                >
+                  <Icon className="h-5 w-5 shrink-0" />
+                  <span className="max-w-full truncate">{item.label}</span>
+                </NavLink>
+              )
+            })}
+          </div>
+        </nav>
+      )}
+
       <button
         type="button"
         onClick={() => setMobileOpen((o) => !o)}
