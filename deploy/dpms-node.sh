@@ -545,6 +545,10 @@ copy_runtime_files_from_release() {
   cp -a "$release_dir/frontend/dist" "$DPMS_LIVE_ROOT/frontend/releases/$(basename "$release_dir")/dist"
   local live_dist="$DPMS_LIVE_ROOT/frontend/dist"
   local release_dist="$DPMS_LIVE_ROOT/frontend/releases/$(basename "$release_dir")/dist"
+  if [[ -e "$live_dist/assets" && -d "$release_dist/assets" ]]; then
+    # Keep old hashed chunks reachable for mobile browsers that still hold a cached index.html.
+    rsync -a --ignore-existing "$live_dist/assets/" "$release_dist/assets/"
+  fi
   if [[ -e "$live_dist" && ! -L "$live_dist" ]]; then
     mv "$live_dist" "$DPMS_LIVE_ROOT/frontend/dist.previous.$(date -u +%Y%m%dT%H%M%SZ)"
   fi
