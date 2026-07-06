@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 QuickNoteStatus = Literal["draft", "processed", "archived"]
+QuickNoteShareStatus = Literal["active", "revoked"]
 
 
 def _clean_optional(value: str | None) -> str | None:
@@ -97,3 +98,74 @@ class QuickNoteRead(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class QuickNoteShareCreate(BaseModel):
+    """Share a note with accepted contacts."""
+
+    recipient_ids: list[UUID] = Field(..., min_length=1, max_length=20)
+
+
+class QuickNoteShareRead(BaseModel):
+    """Read a quick-note share."""
+
+    id: UUID
+    note_id: UUID
+    owner_id: UUID
+    owner_name: str
+    owner_email: str
+    recipient_id: UUID
+    recipient_name: str
+    recipient_email: str
+    status: QuickNoteShareStatus
+    created_at: datetime
+    updated_at: datetime
+
+
+class SharedQuickNoteRead(BaseModel):
+    """Read a note shared with current user."""
+
+    share: QuickNoteShareRead
+    note: QuickNoteRead
+
+
+class QuickNoteAttachmentRead(BaseModel):
+    """Metadata for a quick-note attachment."""
+
+    id: UUID
+    note_id: UUID
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    uploaded_by_id: UUID
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class QuickNoteCommentCreate(BaseModel):
+    """Discussion comment body for a note."""
+
+    body: str = Field(..., min_length=1, max_length=5000)
+    parent_id: UUID | None = None
+
+    @field_validator("body", mode="before")
+    @classmethod
+    def clean_body(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise ValueError("Текст комментария не может быть пустым")
+        return cleaned
+
+
+class QuickNoteCommentRead(BaseModel):
+    """Read a note discussion comment."""
+
+    id: UUID
+    note_id: UUID
+    author_id: UUID
+    author_name: str
+    author_email: str
+    parent_id: UUID | None = None
+    body: str
+    created_at: datetime

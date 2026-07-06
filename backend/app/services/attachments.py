@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.attachment import TaskAttachment
+from app.models.quick_note_attachment import QuickNoteAttachment
+from app.models.quick_note import QuickNote
 from app.models.task import Task, TaskStatus
 from app.models.user import User
 
@@ -53,8 +55,30 @@ def _uploads_root() -> Path:
     return Path(settings.UPLOAD_DIR).expanduser().resolve()
 
 
-def attachment_path(attachment: TaskAttachment) -> Path:
+def attachment_path(attachment: TaskAttachment | QuickNoteAttachment) -> Path:
     return _uploads_root() / attachment.stored_filename
+
+async def _read_attachment_upload(upload: UploadFile) -> tuple[str, str, str, bytes]:
+    data = await upload.read(settings.MAX_TASK_ATTACHMENT_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="Файл пустой")
+    if len(data) > settings.MAX_TASK_ATTACHMENT_BYTES:
+        mb = settings.MAX_TASK_ATTACHMENT_BYTES // (1024 * 1024)
+        raise HTTPException(status_code=400, detail=f"Файл больше {mb} МБ")
+
+    original_filename = Path(upload.filename or "attachment").name[:255] or "attachment"
+    content_type = _detect_image_type(data)
+    extension = _IMAGE_EXTENSIONS.get(content_type or "")
+    if content_type is None:
+        document_type = _detect_document_type(original_filename, data)
+        if document_type is not None:
+            content_type, extension = document_type
+    if content_type is None or extension is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Поддерживаются PNG, JPG, WEBP, GIF, DOCX, XLS и XLSX",
+        )
+    return original_filename, content_type, extension, data
 
 
 def ensure_task_can_accept_attachment(task: Task) -> None:
@@ -83,25 +107,7 @@ async def save_task_attachment(
             detail=f"К задаче можно прикрепить не более {settings.MAX_TASK_ATTACHMENTS} файлов",
         )
 
-    data = await upload.read(settings.MAX_TASK_ATTACHMENT_BYTES + 1)
-    if not data:
-        raise HTTPException(status_code=400, detail="Файл пустой")
-    if len(data) > settings.MAX_TASK_ATTACHMENT_BYTES:
-        mb = settings.MAX_TASK_ATTACHMENT_BYTES // (1024 * 1024)
-        raise HTTPException(status_code=400, detail=f"Файл больше {mb} МБ")
-
-    original_filename = Path(upload.filename or "attachment").name[:255] or "attachment"
-    content_type = _detect_image_type(data)
-    extension = _IMAGE_EXTENSIONS.get(content_type or "")
-    if content_type is None:
-        document_type = _detect_document_type(original_filename, data)
-        if document_type is not None:
-            content_type, extension = document_type
-    if content_type is None or extension is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Поддерживаются PNG, JPG, WEBP, GIF, DOCX, XLS и XLSX",
-        )
+    original_filename, content_type, extension, data = await _read_attachment_upload(upload)
 
     stored_filename = f"{task.id}/{uuid.uuid4()}{extension}"
     file_path = _uploads_root() / stored_filename
@@ -110,6 +116,46 @@ async def save_task_attachment(
 
     attachment = TaskAttachment(
         task_id=task.id,
+        uploaded_by_id=uploader.id,
+        original_filename=original_filename,
+        stored_filename=stored_filename,
+        content_type=content_type,
+        size_bytes=len(data),
+    )
+    db.add(attachment)
+    try:
+        await db.flush()
+        await db.refresh(attachment)
+    except Exception:
+        file_path.unlink(missing_ok=True)
+        raise
+    return attachment
+
+async def save_quick_note_attachment(
+    db: AsyncSession,
+    *,
+    note: QuickNote,
+    uploader: User,
+    upload: UploadFile,
+) -> QuickNoteAttachment:
+    """Validate and persist a file attached to a quick note."""
+    attachments_count = await db.scalar(
+        select(func.count(QuickNoteAttachment.id)).where(QuickNoteAttachment.note_id == note.id)
+    )
+    if attachments_count >= settings.MAX_TASK_ATTACHMENTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"К заметке можно прикрепить не более {settings.MAX_TASK_ATTACHMENTS} файлов",
+        )
+
+    original_filename, content_type, extension, data = await _read_attachment_upload(upload)
+    stored_filename = f"quick-notes/{note.id}/{uuid.uuid4()}{extension}"
+    file_path = _uploads_root() / stored_filename
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_bytes(data)
+
+    attachment = QuickNoteAttachment(
+        note_id=note.id,
         uploaded_by_id=uploader.id,
         original_filename=original_filename,
         stored_filename=stored_filename,

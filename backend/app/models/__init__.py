@@ -23,7 +23,10 @@ from app.models.shop import ShopItem, Purchase, PeriodSnapshot, PeriodClosure
 from app.models.notification import Notification
 from app.models.activity import ActivityEvent
 from app.models.feedback import FeedbackRequest
+from app.models.contact import Contact
 from app.models.quick_note import QuickNote
+from app.models.quick_note_attachment import QuickNoteAttachment
+from app.models.quick_note_share import QuickNoteComment, QuickNoteShare
 from app.models.personal_task import PersonalTask, PersonalTaskCheckpoint, PersonalTaskEvent
 from app.models.deadline_tracker import DeadlineTracker
 from app.models.competency import (
@@ -55,7 +58,11 @@ __all__ = [
     "Notification",
     "ActivityEvent",
     "FeedbackRequest",
+    "Contact",
     "QuickNote",
+    "QuickNoteAttachment",
+    "QuickNoteComment",
+    "QuickNoteShare",
     "PersonalTask",
     "PersonalTaskEvent",
     "PersonalTaskCheckpoint",

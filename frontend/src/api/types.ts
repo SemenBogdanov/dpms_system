@@ -23,6 +23,8 @@ export type FeedbackStatus = 'new' | 'in_review' | 'triage' | 'needs_info' | 'ac
 export type FeedbackPriority = 'low' | 'medium' | 'high'
 export type FeedbackObjectType = 'task' | 'shop' | 'report' | 'rule' | 'kb' | 'other'
 export type QuickNoteStatus = 'draft' | 'processed' | 'archived'
+export type ContactStatus = 'pending' | 'accepted' | 'rejected'
+export type QuickNoteShareStatus = 'active' | 'revoked'
 export type PersonalTaskStatus = 'inbox' | 'planned' | 'next' | 'in_progress' | 'waiting' | 'blocked' | 'done' | 'archived'
 export type PersonalTaskPriority = 'low' | 'medium' | 'high' | 'critical'
 export type PersonalTaskCategory = 'work' | 'meeting' | 'follow_up' | 'research' | 'decision' | 'admin' | 'other'
@@ -99,6 +101,60 @@ export interface QuickNoteUpdate {
   context?: string | null
   status?: QuickNoteStatus
   tags?: string[]
+}
+
+export interface Contact {
+  id: string
+  requester_id: string
+  recipient_id: string
+  requester_name: string
+  requester_email: string
+  recipient_name: string
+  recipient_email: string
+  status: ContactStatus
+  direction: 'incoming' | 'outgoing'
+  created_at: string
+  updated_at: string
+}
+
+export interface QuickNoteShare {
+  id: string
+  note_id: string
+  owner_id: string
+  owner_name: string
+  owner_email: string
+  recipient_id: string
+  recipient_name: string
+  recipient_email: string
+  status: QuickNoteShareStatus
+  created_at: string
+  updated_at: string
+}
+
+export interface SharedQuickNote {
+  share: QuickNoteShare
+  note: QuickNote
+}
+
+export interface QuickNoteAttachment {
+  id: string
+  note_id: string
+  original_filename: string
+  content_type: string
+  size_bytes: number
+  uploaded_by_id: string
+  created_at: string
+}
+
+export interface QuickNoteComment {
+  id: string
+  note_id: string
+  author_id: string
+  author_name: string
+  author_email: string
+  parent_id: string | null
+  body: string
+  created_at: string
 }
 
 export interface PersonalTask {

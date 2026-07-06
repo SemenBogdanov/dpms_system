@@ -12,6 +12,7 @@ import {
   hasTaskWorkspaceAccess,
 } from '@/lib/access'
 import { DeadlineTrackersPage } from '@/pages/DeadlineTrackersPage'
+import { ContactsPage } from '@/pages/ContactsPage'
 import { LoginPage } from '@/pages/LoginPage'
 import { PersonalTasksPage } from '@/pages/PersonalTasksPage'
 import { QuickNotesPage } from '@/pages/QuickNotesPage'
@@ -173,7 +174,9 @@ function App() {
         />
         <Route path="profile" element={<TaskWorkspaceRoute><ProfilePage /></TaskWorkspaceRoute>} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="contacts" element={<ContactsPage />} />
         <Route path="quick-notes" element={<QuickNotesPage />} />
+        <Route path="quick-notes/:noteId" element={<QuickNotesPage />} />
         <Route path="personal-tasks" element={<PersonalTasksPage />} />
         <Route path="deadline-trackers" element={<DeadlineTrackersPage />} />
         <Route path="shop" element={<TaskWorkspaceRoute><ShopPage /></TaskWorkspaceRoute>} />
