@@ -204,17 +204,17 @@ function isDueSoon(task: PersonalTask): boolean {
   return new Date(task.due_at).getTime() - Date.now() < 3 * 24 * 60 * 60 * 1000
 }
 
-function deadlineProgress(item: PersonalTaskDeadline): number {
-  const start = new Date(item.start_at).getTime()
-  const end = new Date(item.due_at).getTime()
+function deadlineProgress(startAt: string, dueAt: string): number {
+  const start = new Date(startAt).getTime()
+  const end = new Date(dueAt).getTime()
   const now = Date.now()
   if (end <= start) return 100
   return Math.max(0, Math.min(100, Math.round(((end - now) / (end - start)) * 100)))
 }
 
-function deadlineTone(item: PersonalTaskDeadline): 'danger' | 'warn' | 'ok' {
-  const remaining = deadlineProgress(item)
-  const due = new Date(item.due_at).getTime()
+function deadlineTone(startAt: string, dueAt: string): 'danger' | 'warn' | 'ok' {
+  const remaining = deadlineProgress(startAt, dueAt)
+  const due = new Date(dueAt).getTime()
   if (due - Date.now() < 0 || remaining <= 20) return 'danger'
   if (remaining <= 50) return 'warn'
   return 'ok'
@@ -764,12 +764,13 @@ export function PersonalTasksPage() {
             deadlineCompact ? 'sm:grid-cols-2 xl:grid-cols-3' : 'lg:grid-cols-2 lg:gap-3',
           )}>
             {deadlines.slice(0, 8).map((item) => {
-              const progress = deadlineProgress(item)
-              const tone = deadlineTone(item)
               const linkedTracker = item.item_type === 'task'
                 ? deadlineTrackers.find((tracker) => tracker.personal_task_id === item.task_id && tracker.status !== 'archived')
                 : null
-              const adjustedDueAt = linkedTracker?.shifted_due_at || item.due_at
+              const timelineStartAt = linkedTracker?.starts_at || item.start_at
+              const adjustedDueAt = linkedTracker?.shifted_due_at || linkedTracker?.due_at || item.due_at
+              const progress = deadlineProgress(timelineStartAt, adjustedDueAt)
+              const tone = deadlineTone(timelineStartAt, adjustedDueAt)
               return (
                 <button
                   key={`${item.item_type}-${item.item_id}`}
