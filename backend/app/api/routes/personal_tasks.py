@@ -255,7 +255,8 @@ async def list_personal_task_deadlines(
             PersonalTask.owner_id == user.id,
             PersonalTaskCheckpoint.due_at.is_not(None),
             PersonalTaskCheckpoint.status != "done",
-            PersonalTask.status != "archived",
+            PersonalTaskCheckpoint.completed_at.is_(None),
+            PersonalTask.status.notin_(["done", "archived"]),
         )
         .order_by(PersonalTaskCheckpoint.due_at.asc())
         .limit(limit)
@@ -492,6 +493,7 @@ async def update_personal_task_checkpoint(
         metadata_json={"checkpoint_id": str(checkpoint.id), "old_status": old_status, "status": checkpoint.status},
     )
     await db.flush()
+    await db.commit()
     await db.refresh(checkpoint)
     return checkpoint
 
@@ -516,6 +518,7 @@ async def delete_personal_task_checkpoint(
         raise HTTPException(status_code=404, detail="Этап не найден")
     await db.delete(checkpoint)
     await db.flush()
+    await db.commit()
     return {"deleted": True, "checkpoint_id": str(checkpoint_id)}
 
 

@@ -422,6 +422,10 @@ export function PersonalTasksPage() {
     setCheckpoints((prev) => ({ ...prev, [taskId]: checkpointData }))
   }, [])
 
+  const removeCheckpointFromDeadlines = useCallback((checkpointId: string) => {
+    setDeadlines((current) => current.filter((item) => item.item_type !== 'checkpoint' || item.item_id !== checkpointId))
+  }, [])
+
   useEffect(() => {
     void loadTasks().catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка загрузки личных задач'))
   }, [loadTasks])
@@ -662,7 +666,9 @@ export function PersonalTasksPage() {
   const updateCheckpointStatus = async (task: PersonalTask, checkpoint: PersonalTaskCheckpoint, status: PersonalTaskCheckpointStatus) => {
     try {
       await api.patch<PersonalTaskCheckpoint>(`/api/personal-tasks/${task.id}/checkpoints/${checkpoint.id}`, { status })
+      if (status === 'done') removeCheckpointFromDeadlines(checkpoint.id)
       await Promise.all([loadTasks(), loadDeadlines(), loadTaskDetails(task.id)])
+      if (status === 'done') removeCheckpointFromDeadlines(checkpoint.id)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка этапа')
     }
@@ -672,7 +678,9 @@ export function PersonalTasksPage() {
     if (!window.confirm('Удалить этап контроля?')) return
     try {
       await api.delete(`/api/personal-tasks/${task.id}/checkpoints/${checkpoint.id}`)
+      removeCheckpointFromDeadlines(checkpoint.id)
       await Promise.all([loadDeadlines(), loadTaskDetails(task.id)])
+      removeCheckpointFromDeadlines(checkpoint.id)
       toast.success('Этап удален')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка удаления этапа')
