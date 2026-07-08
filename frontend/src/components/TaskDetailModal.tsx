@@ -225,24 +225,32 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
               </div>
             )}
             {task.rejection_count > 0 && (
-              <div className="mt-2 flex items-center gap-2 text-sm">
-                <span className="text-slate-500">Возвраты:</span>
-                <span
-                  className={`font-semibold ${
-                    task.rejection_count >= 3
-                      ? 'text-red-600'
-                      : task.rejection_count >= 2
-                        ? 'text-orange-600'
-                        : 'text-amber-600'
-                  }`}
-                >
-                  {task.rejection_count}{' '}
-                  {task.rejection_count === 1
-                    ? 'раз'
-                    : task.rejection_count < 5
-                      ? 'раза'
-                      : 'раз'}
-                </span>
+              <div className="mt-3 space-y-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-amber-700">Возвраты:</span>
+                  <span
+                    className={`font-semibold ${
+                      task.rejection_count >= 3
+                        ? 'text-red-600'
+                        : task.rejection_count >= 2
+                          ? 'text-orange-600'
+                          : 'text-amber-700'
+                    }`}
+                  >
+                    {task.rejection_count}{' '}
+                    {task.rejection_count === 1
+                      ? 'раз'
+                      : task.rejection_count < 5
+                        ? 'раза'
+                        : 'раз'}
+                  </span>
+                </div>
+                {task.rejection_comment && (
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Последний возврат</p>
+                    <p className="mt-1 whitespace-pre-wrap text-amber-950">{task.rejection_comment}</p>
+                  </div>
+                )}
               </div>
             )}
           </div>

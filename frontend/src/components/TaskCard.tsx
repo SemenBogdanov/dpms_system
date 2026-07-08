@@ -145,8 +145,11 @@ export function TaskCard({
               </span>
             )}
           </div>
-          {inReview && task.rejection_comment && (
-            <p className="mt-2 text-sm text-red-600">{task.rejection_comment}</p>
+          {task.rejection_comment && task.rejection_count > 0 && (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Последний возврат</p>
+              <p className="mt-1 whitespace-pre-wrap">{task.rejection_comment}</p>
+            </div>
           )}
           {inReview && !task.rejection_comment && (
             <p className="mt-2 text-sm text-slate-500">⏳ Ожидает проверки</p>
