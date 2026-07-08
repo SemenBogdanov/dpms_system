@@ -308,7 +308,7 @@ async def create_tracker_from_personal_task(
         raise HTTPException(status_code=400, detail="У личной задачи не задан дедлайн")
 
     tracker = await _get_tracker_by_link(db, owner_id=user.id, personal_task_id=task.id)
-    starts_at = _safe_starts_at(task.created_at, task.due_at)
+    starts_at = _safe_starts_at(task.start_at or task.created_at, task.due_at)
     if tracker is None:
         tracker = DeadlineTracker(
             owner_id=user.id,

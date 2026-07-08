@@ -63,6 +63,7 @@ class PersonalTaskCreate(BaseModel):
     acceptance_criteria: str | None = None
     next_step: str | None = Field(None, max_length=500)
     next_step_at: datetime | None = None
+    start_at: datetime | None = None
     due_at: datetime | None = None
     waiting_for: str | None = Field(None, max_length=200)
     blocked_reason: str | None = None
@@ -117,6 +118,7 @@ class PersonalTaskUpdate(BaseModel):
     acceptance_criteria: str | None = None
     next_step: str | None = Field(None, max_length=500)
     next_step_at: datetime | None = None
+    start_at: datetime | None = None
     due_at: datetime | None = None
     waiting_for: str | None = Field(None, max_length=200)
     blocked_reason: str | None = None
@@ -323,6 +325,7 @@ class PersonalTaskRead(BaseModel):
     acceptance_criteria: str | None = None
     next_step: str | None = None
     next_step_at: datetime | None = None
+    start_at: datetime
     due_at: datetime | None = None
     waiting_for: str | None = None
     blocked_reason: str | None = None
@@ -359,6 +362,7 @@ class PersonalTaskRead(BaseModel):
                     "acceptance_criteria",
                     "next_step",
                     "next_step_at",
+                    "start_at",
                     "due_at",
                     "waiting_for",
                     "blocked_reason",

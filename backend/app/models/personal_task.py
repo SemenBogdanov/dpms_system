@@ -44,6 +44,7 @@ class PersonalTask(Base):
     acceptance_criteria: Mapped[str | None] = mapped_column(Text, nullable=True)
     next_step: Mapped[str | None] = mapped_column(String(500), nullable=True)
     next_step_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     waiting_for: Mapped[str | None] = mapped_column(String(200), nullable=True)
     blocked_reason: Mapped[str | None] = mapped_column(Text, nullable=True)

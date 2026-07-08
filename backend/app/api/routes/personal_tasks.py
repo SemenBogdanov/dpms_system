@@ -1,5 +1,5 @@
 """API for personal tasks."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -8,6 +8,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, require_task_workspace_access
+from app.models.deadline_tracker import DeadlineTracker
 from app.models.personal_task import PersonalTask, PersonalTaskCheckpoint, PersonalTaskEvent
 from app.models.quick_note import QuickNote
 from app.models.task import Task, TaskStatus
@@ -66,6 +67,45 @@ async def _get_owned_note_or_404(db: AsyncSession, note_id: UUID | None, owner_i
 
 def _serialize(task: PersonalTask) -> PersonalTaskRead:
     return PersonalTaskRead.model_validate(task)
+
+
+def _task_start_at(task: PersonalTask) -> datetime:
+    return task.start_at or task.created_at or datetime.now(timezone.utc)
+
+
+def _ensure_valid_task_dates(start_at: datetime | None, due_at: datetime | None) -> None:
+    if start_at is not None and due_at is not None and due_at <= start_at:
+        raise HTTPException(status_code=400, detail="Дедлайн должен быть позже даты старта")
+
+
+def _safe_tracker_start_at(start_at: datetime, due_at: datetime) -> datetime:
+    if start_at >= due_at:
+        return due_at - timedelta(minutes=1)
+    return start_at
+
+
+async def _sync_linked_deadline_tracker(db: AsyncSession, task: PersonalTask) -> None:
+    """Keep personal-task tracker dates aligned with the parent task."""
+    result = await db.execute(
+        select(DeadlineTracker).where(
+            DeadlineTracker.personal_task_id == task.id,
+            DeadlineTracker.owner_id == task.owner_id,
+        )
+    )
+    tracker = result.scalar_one_or_none()
+    if tracker is None:
+        return
+    tracker.title = f"PT-{task.task_number} {task.title}"
+    tracker.description = task.description or task.notes
+    if task.due_at is None:
+        tracker.status = "archived"
+        tracker.updated_at = datetime.now(timezone.utc)
+        return
+    tracker.starts_at = _safe_tracker_start_at(_task_start_at(task), task.due_at)
+    tracker.due_at = task.due_at
+    tracker.next_action = task.next_step
+    tracker.responsible = task.responsible
+    tracker.updated_at = datetime.now(timezone.utc)
 
 
 def _add_event(
@@ -166,6 +206,7 @@ async def create_personal_task(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a private task owned by current user."""
+    _ensure_valid_task_dates(body.start_at, body.due_at)
     await _ensure_linked_task_exists(db, body.linked_task_id)
     note = await _get_owned_note_or_404(db, body.source_quick_note_id, user.id)
     task = PersonalTask(
@@ -183,6 +224,7 @@ async def create_personal_task(
         acceptance_criteria=body.acceptance_criteria,
         next_step=body.next_step,
         next_step_at=body.next_step_at,
+        start_at=body.start_at or datetime.now(timezone.utc),
         due_at=body.due_at,
         waiting_for=body.waiting_for,
         blocked_reason=body.blocked_reason,
@@ -203,7 +245,7 @@ async def create_personal_task(
         user,
         "task_created",
         title="Задача создана",
-        metadata_json={"status": task.status, "priority": task.priority},
+        metadata_json={"status": task.status, "priority": task.priority, "start_at": task.start_at.isoformat()},
     )
     await db.flush()
     return _serialize(task)
@@ -241,7 +283,7 @@ async def list_personal_task_deadlines(
                 title=task.next_step or task.title,
                 status=task.status,
                 due_at=task.due_at,
-                start_at=task.created_at or now,
+                start_at=_task_start_at(task),
                 responsible=task.responsible,
                 waiting_for=task.waiting_for,
                 project=task.project,
@@ -303,6 +345,10 @@ async def update_personal_task(
         setattr(task, field, value)
     task.updated_at = datetime.now(timezone.utc)
     changed_fields = sorted(update_data.keys())
+    if "start_at" in update_data or "due_at" in update_data:
+        _ensure_valid_task_dates(task.start_at, task.due_at)
+    if {"title", "description", "notes", "next_step", "responsible", "start_at", "due_at"} & set(changed_fields):
+        await _sync_linked_deadline_tracker(db, task)
     if "status" in update_data and update_data["status"] != old_status:
         _add_event(
             db,

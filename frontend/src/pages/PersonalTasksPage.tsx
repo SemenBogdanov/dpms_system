@@ -65,6 +65,7 @@ const emptyForm = {
   acceptanceCriteria: '',
   nextStep: '',
   nextStepAt: '',
+  startAt: '',
   dueAt: '',
   waitingFor: '',
   blockedReason: '',
@@ -162,6 +163,10 @@ function toInputDate(value: string | null): string {
   return local.toISOString().slice(0, 16)
 }
 
+function newTaskForm() {
+  return { ...emptyForm, startAt: toInputDate(new Date().toISOString()) }
+}
+
 function formatDate(value: string | null): string {
   if (!value) return 'не задано'
   return new Date(value).toLocaleString('ru-RU', {
@@ -253,7 +258,7 @@ function buildTaskTimeline(task: PersonalTask, taskEvents: PersonalTaskEvent[] =
       })),
   ].filter((point) => point.date)
 
-  const start = new Date(task.created_at).getTime()
+  const start = new Date(task.start_at || task.created_at).getTime()
   const maxPointDate = points.reduce((max, point) => Math.max(max, new Date(point.date).getTime()), start)
   const end = Math.max(maxPointDate, task.due_at ? new Date(task.due_at).getTime() : start)
   const span = Math.max(1, end - start)
@@ -498,6 +503,7 @@ export function PersonalTasksPage() {
       acceptanceCriteria: task.acceptance_criteria || '',
       nextStep: task.next_step || '',
       nextStepAt: toInputDate(task.next_step_at),
+      startAt: toInputDate(task.start_at || task.created_at),
       dueAt: toInputDate(task.due_at),
       waitingFor: task.waiting_for || '',
       blockedReason: task.blocked_reason || '',
@@ -523,6 +529,7 @@ export function PersonalTasksPage() {
     acceptance_criteria: form.acceptanceCriteria || null,
     next_step: form.nextStep || null,
     next_step_at: toPayloadDate(form.nextStepAt),
+    start_at: toPayloadDate(form.startAt),
     due_at: toPayloadDate(form.dueAt),
     waiting_for: form.waitingFor || null,
     blocked_reason: form.blockedReason || null,
@@ -537,6 +544,12 @@ export function PersonalTasksPage() {
       toast.error('Укажите название')
       return
     }
+    const startAt = toPayloadDate(form.startAt)
+    const dueAt = toPayloadDate(form.dueAt)
+    if (startAt && dueAt && new Date(dueAt).getTime() <= new Date(startAt).getTime()) {
+      toast.error('Дедлайн должен быть позже даты старта')
+      return
+    }
     setLoading(true)
     try {
       if (editing) {
@@ -547,7 +560,7 @@ export function PersonalTasksPage() {
         toast.success('Личная задача создана')
       }
       resetForm()
-      await Promise.all([loadTasks(), loadQuickNotes(), loadDeadlines()])
+      await Promise.all([loadTasks(), loadQuickNotes(), loadDeadlines(), loadDeadlineTrackers()])
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка сохранения')
     } finally {
@@ -729,7 +742,7 @@ export function PersonalTasksPage() {
           <button
             type="button"
             onClick={() => {
-              setForm(emptyForm)
+              setForm(newTaskForm())
               setEditing(null)
               setTaskFormOpen(true)
             }}
@@ -928,23 +941,38 @@ export function PersonalTasksPage() {
           />
         </div>
 
-        <div className="mt-3 grid gap-3 lg:grid-cols-4">
-          <input
-            type="datetime-local"
-            value={form.nextStepAt}
-            onChange={(e) => setForm((prev) => ({ ...prev, nextStepAt: e.target.value }))}
-            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
-          />
-          <input
-            type="datetime-local"
-            value={form.dueAt}
-            onChange={(e) => setForm((prev) => ({ ...prev, dueAt: e.target.value }))}
-            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
-          />
+        <div className="mt-3 grid gap-3 lg:grid-cols-5">
+          <label className="grid gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            С
+            <input
+              type="datetime-local"
+              value={form.startAt}
+              onChange={(e) => setForm((prev) => ({ ...prev, startAt: e.target.value }))}
+              className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+            />
+          </label>
+          <label className="grid gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Следующий шаг
+            <input
+              type="datetime-local"
+              value={form.nextStepAt}
+              onChange={(e) => setForm((prev) => ({ ...prev, nextStepAt: e.target.value }))}
+              className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+            />
+          </label>
+          <label className="grid gap-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            Дедлайн
+            <input
+              type="datetime-local"
+              value={form.dueAt}
+              onChange={(e) => setForm((prev) => ({ ...prev, dueAt: e.target.value }))}
+              className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-normal normal-case tracking-normal text-slate-700 outline-none focus:border-slate-400"
+            />
+          </label>
           <select
             value={form.impact}
             onChange={(e) => setForm((prev) => ({ ...prev, impact: e.target.value }))}
-            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+            className="self-end rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
           >
             <option value="">Влияние</option>
             {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}
@@ -952,7 +980,7 @@ export function PersonalTasksPage() {
           <select
             value={form.effort}
             onChange={(e) => setForm((prev) => ({ ...prev, effort: e.target.value }))}
-            className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+            className="self-end rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
           >
             <option value="">Усилие</option>
             {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value}</option>)}
@@ -1110,8 +1138,9 @@ export function PersonalTasksPage() {
                       )}
                     </div>
                     <h3 className="mt-2 break-words text-base font-semibold text-slate-950">{task.title}</h3>
-                    <div className="mt-2 grid gap-2 text-sm text-slate-500 lg:grid-cols-4">
+                    <div className="mt-2 grid gap-2 text-sm text-slate-500 lg:grid-cols-5">
                       <Info icon={<PlayCircle className="h-4 w-4" />} text={task.next_step || 'следующий шаг не задан'} />
+                      <Info icon={<History className="h-4 w-4" />} text={`с: ${formatDate(task.start_at)}`} />
                       <Info icon={<CalendarClock className="h-4 w-4" />} text={`срок: ${formatDate(task.due_at)}`} danger={isOverdue(task)} warn={isDueSoon(task)} />
                       <Info icon={<Flag className="h-4 w-4" />} text={task.project || task.context || 'без проекта'} />
                       <Info icon={<UserRound className="h-4 w-4" />} text={task.responsible || 'без ответственного'} />

@@ -175,6 +175,7 @@ export interface PersonalTask {
   acceptance_criteria: string | null
   next_step: string | null
   next_step_at: string | null
+  start_at: string
   due_at: string | null
   waiting_for: string | null
   blocked_reason: string | null
@@ -202,6 +203,7 @@ export interface PersonalTaskCreate {
   acceptance_criteria?: string | null
   next_step?: string | null
   next_step_at?: string | null
+  start_at?: string | null
   due_at?: string | null
   waiting_for?: string | null
   blocked_reason?: string | null
@@ -225,6 +227,7 @@ export interface PersonalTaskUpdate {
   acceptance_criteria?: string | null
   next_step?: string | null
   next_step_at?: string | null
+  start_at?: string | null
   due_at?: string | null
   waiting_for?: string | null
   blocked_reason?: string | null
