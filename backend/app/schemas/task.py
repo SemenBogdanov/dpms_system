@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.core.limits import TASK_TITLE_MAX_LENGTH
-from app.models.task import TaskPriority, TaskStatus, TaskType
+from app.models.task import TaskPriority, TaskReviewEventType, TaskStatus, TaskType
 from app.models.catalog import Complexity
 from app.models.user import League
 
@@ -68,6 +68,23 @@ class TaskRead(TaskBase):
     is_focused: bool = False
     created_at: datetime
     updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+class TaskReviewEventRead(BaseModel):
+    """Событие истории приемки задачи."""
+    id: UUID
+    task_id: UUID
+    actor_id: UUID | None = None
+    actor_name: str | None = None
+    actor_email: str | None = None
+    event_type: TaskReviewEventType
+    comment: str | None = None
+    result_url: str | None = None
+    result_comment: str | None = None
+    brief_rating: int | None = None
+    brief_feedback: str | None = None
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 

@@ -14,7 +14,7 @@ class Base(DeclarativeBase):
 
 from app.models.user import User
 from app.models.catalog import CatalogItem
-from app.models.task import Task
+from app.models.task import Task, TaskReviewEvent
 from app.models.attachment import TaskAttachment
 from app.models.knowledge import KnowledgeArticle
 from app.models.absence import GlobalHoliday, UserAbsence
@@ -46,6 +46,7 @@ __all__ = [
     "User",
     "CatalogItem",
     "Task",
+    "TaskReviewEvent",
     "TaskAttachment",
     "KnowledgeArticle",
     "UserAbsence",

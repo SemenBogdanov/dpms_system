@@ -10,12 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, require_task_workspace_access, require_task_workspace_role
 from app.models.attachment import TaskAttachment
 from app.models.user import User, UserRole
-from app.models.task import Task, TaskStatus, TaskType, TaskPriority
+from app.models.task import Task, TaskPriority, TaskReviewEvent, TaskStatus, TaskType
 from app.schemas.task import (
     TaskCreate,
     TaskRead,
     TaskUpdate,
     TaskAttachmentRead,
+    TaskReviewEventRead,
     TaskTagSuggestion,
     TaskExportRow,
     TasksExport,
@@ -222,6 +223,41 @@ async def get_task(
     if task.due_date:
         data.deadline_zone = compute_deadline_zone(task)
     return data
+
+
+@router.get("/{task_id}/review-events", response_model=list[TaskReviewEventRead])
+async def list_task_review_events(
+    task_id: UUID,
+    user: User = Depends(require_task_workspace_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """История сдач, возвратов и приемок задачи."""
+    await _get_task_or_404(db, task_id)
+    result = await db.execute(
+        select(TaskReviewEvent, User)
+        .outerjoin(User, TaskReviewEvent.actor_id == User.id)
+        .where(TaskReviewEvent.task_id == task_id)
+        .order_by(TaskReviewEvent.created_at.asc())
+    )
+    events: list[TaskReviewEventRead] = []
+    for event, actor in result.all():
+        events.append(
+            TaskReviewEventRead(
+                id=event.id,
+                task_id=event.task_id,
+                actor_id=event.actor_id,
+                actor_name=actor.full_name if actor else None,
+                actor_email=actor.email if actor else None,
+                event_type=event.event_type,
+                comment=event.comment,
+                result_url=event.result_url,
+                result_comment=event.result_comment,
+                brief_rating=event.brief_rating,
+                brief_feedback=event.brief_feedback,
+                created_at=event.created_at,
+            )
+        )
+    return events
 
 
 @router.get("/{task_id}/attachments", response_model=list[TaskAttachmentRead])

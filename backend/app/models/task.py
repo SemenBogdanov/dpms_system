@@ -42,6 +42,13 @@ class TaskPriority(str, enum.Enum):
     critical = "critical"
 
 
+class TaskReviewEventType(str, enum.Enum):
+    """Тип события приемочного цикла задачи."""
+    submitted = "submitted"
+    returned = "returned"
+    accepted = "accepted"
+
+
 class Task(Base):
     """Задача в глобальной очереди."""
 
@@ -163,3 +170,33 @@ class Task(Base):
             if total > 0 and remaining / total <= 0.5:
                 return "yellow"
         return "green"
+
+
+class TaskReviewEvent(Base):
+    """Событие приемочного цикла задачи."""
+    __tablename__ = "task_review_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    event_type: Mapped[TaskReviewEventType] = mapped_column(Enum(TaskReviewEventType), nullable=False, index=True)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    result_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    brief_rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    brief_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)

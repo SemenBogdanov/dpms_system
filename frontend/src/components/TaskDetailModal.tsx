@@ -1,6 +1,6 @@
 import { useEffect, useState, type FC } from 'react'
 import { api } from '@/api/client'
-import type { Task, User, CatalogItem, TaskAttachment } from '@/api/types'
+import type { Task, User, CatalogItem, TaskAttachment, TaskReviewEvent } from '@/api/types'
 import { DeadlineBadge } from './DeadlineBadge'
 import { PriorityBadge } from './PriorityBadge'
 import { CalendarClock, Copy, FileText, X } from 'lucide-react'
@@ -74,11 +74,14 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
   const [attachments, setAttachments] = useState<TaskAttachment[]>([])
   const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({})
   const [attachmentsLoading, setAttachmentsLoading] = useState(false)
+  const [reviewEvents, setReviewEvents] = useState<TaskReviewEvent[]>([])
+  const [reviewEventsLoading, setReviewEventsLoading] = useState(false)
 
   useEffect(() => {
     if (!taskId) {
       setAttachments([])
       setAttachmentUrls({})
+      setReviewEvents([])
       return
     }
 
@@ -115,7 +118,21 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
       }
     }
 
+    async function loadReviewEvents() {
+      setReviewEventsLoading(true)
+      setReviewEvents([])
+      try {
+        const list = await api.get<TaskReviewEvent[]>(`/api/tasks/${taskId}/review-events`)
+        if (active) setReviewEvents(list)
+      } catch {
+        if (active) setReviewEvents([])
+      } finally {
+        if (active) setReviewEventsLoading(false)
+      }
+    }
+
     void loadAttachments()
+    void loadReviewEvents()
 
     return () => {
       active = false
@@ -142,6 +159,16 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
   const briefStars = task.brief_rating
     ? '★'.repeat(task.brief_rating) + '☆'.repeat(5 - task.brief_rating)
     : null
+  const reviewEventLabels: Record<string, string> = {
+    submitted: 'Сдача',
+    returned: 'Возврат',
+    accepted: 'Приемка',
+  }
+  const reviewEventTone: Record<string, string> = {
+    submitted: 'border-sky-200 bg-sky-50 text-sky-800',
+    returned: 'border-amber-200 bg-amber-50 text-amber-800',
+    accepted: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  }
 
   const handleOverlayClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose()
@@ -396,6 +423,59 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
                 <p className="mt-1 whitespace-pre-wrap text-sm text-slate-600">
                   {task.brief_feedback}
                 </p>
+              )}
+            </div>
+          )}
+
+          {(reviewEventsLoading || reviewEvents.length > 0) && (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">История приемки</p>
+              {reviewEventsLoading && (
+                <p className="mt-1 text-sm text-slate-500">Загрузка...</p>
+              )}
+              {!reviewEventsLoading && reviewEvents.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  {reviewEvents.map((event) => {
+                    const stars = event.brief_rating
+                      ? '★'.repeat(event.brief_rating) + '☆'.repeat(5 - event.brief_rating)
+                      : null
+                    return (
+                      <div key={event.id} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${reviewEventTone[event.event_type] ?? 'border-slate-200 bg-white text-slate-600'}`}>
+                            {reviewEventLabels[event.event_type] ?? event.event_type}
+                          </span>
+                          <span className="text-xs text-slate-500">{formatDate(event.created_at)}</span>
+                          <span className="text-xs text-slate-400">{event.actor_name || event.actor_email || '—'}</span>
+                        </div>
+                        {event.result_comment && (
+                          <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{event.result_comment}</p>
+                        )}
+                        {event.result_url && (
+                          <a
+                            href={event.result_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-1 block truncate text-sm text-primary hover:underline"
+                          >
+                            🔗 {event.result_url}
+                          </a>
+                        )}
+                        {event.comment && (
+                          <p className="mt-2 whitespace-pre-wrap text-sm text-amber-900">{event.comment}</p>
+                        )}
+                        {stars && (
+                          <p className="mt-2 text-xs font-medium text-slate-600">
+                            Постановка: {stars} <span className="text-slate-400">({event.brief_rating}/5)</span>
+                          </p>
+                        )}
+                        {event.brief_feedback && (
+                          <p className="mt-1 whitespace-pre-wrap text-xs text-slate-500">{event.brief_feedback}</p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
               )}
             </div>
           )}

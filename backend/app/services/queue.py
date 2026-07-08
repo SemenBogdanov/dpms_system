@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.task import Task, TaskStatus, TaskType, TaskPriority
+from app.models.task import Task, TaskPriority, TaskReviewEvent, TaskReviewEventType, TaskStatus, TaskType
 from app.models.user import User, League, UserRole
 from app.models.transaction import QTransaction, WalletType
 from app.schemas.queue import QueueTaskResponse
@@ -21,6 +21,34 @@ from app.services.wallet import credit_q
 _LEAGUE_ORDER = {League.C: 0, League.B: 1, League.A: 2}
 _PRIORITY_ORDER = {TaskPriority.low: 1, TaskPriority.medium: 2, TaskPriority.high: 3, TaskPriority.critical: 4}
 CRITICAL_BLOCK_REASON = "Сначала нужно взять или назначить критическую задачу"
+
+def _add_review_event(
+    db: AsyncSession,
+    task: Task,
+    actor_id: UUID | None,
+    event_type: TaskReviewEventType,
+    *,
+    comment: str | None = None,
+    result_url: str | None = None,
+    result_comment: str | None = None,
+    brief_rating: int | None = None,
+    brief_feedback: str | None = None,
+    created_at: datetime | None = None,
+) -> None:
+    """Append task acceptance-cycle history without changing current task summary fields."""
+    db.add(
+        TaskReviewEvent(
+            task_id=task.id,
+            actor_id=actor_id,
+            event_type=event_type,
+            comment=comment.strip() if comment else None,
+            result_url=result_url,
+            result_comment=result_comment.strip() if result_comment else None,
+            brief_rating=brief_rating,
+            brief_feedback=brief_feedback.strip() if brief_feedback else None,
+            created_at=created_at or datetime.now(timezone.utc),
+        )
+    )
 _MAINTENANCE_INTERVAL = timedelta(seconds=60)
 _maintenance_lock = asyncio.Lock()
 _maintenance_last_run: datetime | None = None
@@ -334,6 +362,17 @@ async def submit_for_review(
         task.brief_rating = brief_rating
     if brief_feedback is not None:
         task.brief_feedback = brief_feedback.strip() or None
+    _add_review_event(
+        db,
+        task,
+        user_id,
+        TaskReviewEventType.submitted,
+        result_url=task.result_url,
+        result_comment=task.result_comment,
+        brief_rating=task.brief_rating,
+        brief_feedback=task.brief_feedback,
+        created_at=now,
+    )
     await record_activity_event(
         db,
         user_id,
@@ -428,6 +467,14 @@ async def validate_task(
                 message=f"«{task.title}» отклонена: {comment.strip()}",
                 link="/my-tasks",
             )
+        _add_review_event(
+            db,
+            task,
+            validator_id,
+            TaskReviewEventType.returned,
+            comment=comment.strip(),
+            created_at=rejected_at,
+        )
         await record_activity_event(
             db,
             validator_id,
@@ -440,6 +487,7 @@ async def validate_task(
             },
             occurred_at=rejected_at,
         )
+        await db.flush()
         return task
 
     # Принятие задачи
@@ -500,6 +548,14 @@ async def validate_task(
             link="/my-tasks",
         )
 
+    _add_review_event(
+        db,
+        task,
+        validator_id,
+        TaskReviewEventType.accepted,
+        comment=comment,
+        created_at=validated_at,
+    )
     await record_activity_event(
         db,
         validator_id,

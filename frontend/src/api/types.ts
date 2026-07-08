@@ -428,6 +428,23 @@ export interface Task {
   is_focused: boolean
 }
 
+export type TaskReviewEventType = 'submitted' | 'returned' | 'accepted'
+
+export interface TaskReviewEvent {
+  id: string
+  task_id: string
+  actor_id: string | null
+  actor_name: string | null
+  actor_email: string | null
+  event_type: TaskReviewEventType
+  comment: string | null
+  result_url: string | null
+  result_comment: string | null
+  brief_rating: number | null
+  brief_feedback: string | null
+  created_at: string
+}
+
 export interface TaskAttachment {
   id: string
   task_id: string
