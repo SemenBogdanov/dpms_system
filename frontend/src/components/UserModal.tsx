@@ -43,7 +43,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
   const [isNewEmployee, setIsNewEmployee] = useState(false)
   const [taskWorkspaceEnabled, setTaskWorkspaceEnabled] = useState(false)
   const [feedbackEnabled, setFeedbackEnabled] = useState(false)
-  const [competencyDevelopmentEnabled, setCompetencyDevelopmentEnabled] = useState(false)
+  const [competencyDevelopmentEnabled, setCompetencyDevelopmentEnabled] = useState(true)
   const [competencyConstructorEnabled, setCompetencyConstructorEnabled] = useState(false)
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -73,7 +73,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setIsNewEmployee(false)
       setTaskWorkspaceEnabled(false)
       setFeedbackEnabled(false)
-      setCompetencyDevelopmentEnabled(false)
+      setCompetencyDevelopmentEnabled(true)
       setCompetencyConstructorEnabled(false)
       setPassword('')
     }

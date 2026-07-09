@@ -316,7 +316,7 @@ export function AdminUsersPage() {
           is_new_employee: false,
           task_workspace_enabled: false,
           feedback_enabled: false,
-          competency_development_enabled: false,
+          competency_development_enabled: true,
           competency_constructor_enabled: false,
           password,
         })
