@@ -6,7 +6,7 @@ import { LeagueBadge } from '@/components/LeagueBadge'
 import { UserModal, type UserFormPayload } from '@/components/UserModal'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
-import { Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import { Copy, Pencil, Plus, RotateCcw, Trash2, UserPlus } from 'lucide-react'
 
 const MONTHS = [
   'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
@@ -15,6 +15,70 @@ const MONTHS = [
 
 const ROLLOVER_CONFIRM_TEXT = 'ROLLOVER'
 const CANCEL_CONFIRM_TEXT = 'CANCEL'
+const SYSTEM_INVITE_URL = 'https://простосделал.рф'
+const QUICK_INVITE_PASSWORD_LENGTH = 14
+const QUICK_INVITE_PASSWORD_GROUPS = [
+  'ABCDEFGHJKLMNPQRSTUVWXYZ',
+  'abcdefghijkmnopqrstuvwxyz',
+  '23456789',
+]
+
+function cryptoRandomIndex(max: number) {
+  const limit = Math.floor(0x100000000 / max) * max
+  const values = new Uint32Array(1)
+  do {
+    window.crypto.getRandomValues(values)
+  } while (values[0] >= limit)
+  return values[0] % max
+}
+
+function generateQuickInvitePassword() {
+  if (typeof window === 'undefined' || !window.crypto?.getRandomValues) {
+    throw new Error('В браузере недоступен криптографический генератор паролей')
+  }
+  const alphabet = QUICK_INVITE_PASSWORD_GROUPS.join('')
+  const chars = QUICK_INVITE_PASSWORD_GROUPS.map((group) => group[cryptoRandomIndex(group.length)])
+  while (chars.length < QUICK_INVITE_PASSWORD_LENGTH) {
+    chars.push(alphabet[cryptoRandomIndex(alphabet.length)])
+  }
+  for (let i = chars.length - 1; i > 0; i -= 1) {
+    const j = cryptoRandomIndex(i + 1)
+    const tmp = chars[i]
+    chars[i] = chars[j]
+    chars[j] = tmp
+  }
+  return chars.join('')
+}
+
+function buildQuickInviteMessage(fullName: string, email: string, password: string) {
+  return [
+    `Ссылка: ${SYSTEM_INVITE_URL}`,
+    `ФИО: ${fullName}`,
+    `Логин: ${email}`,
+    `Пароль: ${password}`,
+  ].join('\n')
+}
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  textarea.style.top = '0'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+  const copied = document.execCommand('copy')
+  document.body.removeChild(textarea)
+  if (!copied) {
+    throw new Error('Не удалось скопировать текст')
+  }
+}
 
 function monthInputValue(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
@@ -43,6 +107,12 @@ export function AdminUsersPage() {
   const [applyLeagueBusy, setApplyLeagueBusy] = useState(false)
   const [userModalOpen, setUserModalOpen] = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [quickInviteOpen, setQuickInviteOpen] = useState(false)
+  const [quickInviteFullName, setQuickInviteFullName] = useState('')
+  const [quickInviteEmail, setQuickInviteEmail] = useState('')
+  const [quickInviteBusy, setQuickInviteBusy] = useState(false)
+  const [quickInviteError, setQuickInviteError] = useState<string | null>(null)
+  const [quickInviteText, setQuickInviteText] = useState('')
 
   const loadUsers = useCallback(() => {
     api.get<User[]>('/api/users')
@@ -202,6 +272,74 @@ export function AdminUsersPage() {
     loadUsers()
   }
 
+  const resetQuickInvite = () => {
+    setQuickInviteFullName('')
+    setQuickInviteEmail('')
+    setQuickInviteError(null)
+    setQuickInviteText('')
+    setQuickInviteBusy(false)
+  }
+
+  const closeQuickInvite = () => {
+    if (quickInviteBusy) return
+    setQuickInviteOpen(false)
+    resetQuickInvite()
+  }
+
+  const handleQuickInviteSubmit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    const fullName = quickInviteFullName.trim()
+    const email = quickInviteEmail.trim().toLowerCase()
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!fullName) {
+      setQuickInviteError('Укажите ФИО')
+      return
+    }
+    if (!emailRegex.test(email)) {
+      setQuickInviteError('Укажите корректную почту')
+      return
+    }
+    setQuickInviteError(null)
+    setQuickInviteBusy(true)
+    let inviteText = quickInviteText
+    let userCreated = Boolean(quickInviteText)
+    try {
+      if (!inviteText) {
+        const password = generateQuickInvitePassword()
+        inviteText = buildQuickInviteMessage(fullName, email, password)
+        await api.post<User>('/api/users', {
+          full_name: fullName,
+          email,
+          role: 'executor',
+          league: 'C',
+          mpw: 0,
+          is_new_employee: false,
+          task_workspace_enabled: false,
+          feedback_enabled: false,
+          competency_development_enabled: false,
+          competency_constructor_enabled: false,
+          password,
+        })
+        userCreated = true
+        loadUsers()
+        setQuickInviteText(inviteText)
+      }
+      await copyTextToClipboard(inviteText)
+      toast.success(quickInviteText ? 'Текст скопирован' : 'Сотрудник добавлен, сообщение скопировано')
+      setQuickInviteOpen(false)
+      resetQuickInvite()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Не удалось создать сотрудника'
+      if (inviteText && userCreated) {
+        setQuickInviteText(inviteText)
+        toast.error('Текст создан, но буфер обмена недоступен')
+      }
+      setQuickInviteError(message)
+    } finally {
+      setQuickInviteBusy(false)
+    }
+  }
+
   const handleDeactivate = (u: User) => {
     if (!window.confirm(`Деактивировать ${u.full_name}?`)) return
     api.patch(`/api/users/${u.id}`, { is_active: false }).then(() => {
@@ -298,14 +436,24 @@ export function AdminUsersPage() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <h2 className="font-medium text-slate-800">Управление сотрудниками</h2>
           {currentUser?.role === 'admin' && (
-            <button
-              type="button"
-              onClick={() => { setEditingUser(null); setUserModalOpen(true) }}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
-            >
-              <Plus className="h-4 w-4" />
-              Добавить сотрудника
-            </button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => { resetQuickInvite(); setQuickInviteOpen(true) }}
+                className="inline-flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-medium text-primary transition hover:bg-primary/15"
+              >
+                <UserPlus className="h-4 w-4" />
+                Быстро добавить
+              </button>
+              <button
+                type="button"
+                onClick={() => { setEditingUser(null); setUserModalOpen(true) }}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+              >
+                <Plus className="h-4 w-4" />
+                Добавить сотрудника
+              </button>
+            </div>
           )}
         </div>
         <div className="mt-4 grid gap-3 lg:hidden">
@@ -620,6 +768,109 @@ export function AdminUsersPage() {
         onClose={() => { setUserModalOpen(false); setEditingUser(null) }}
         onSubmit={handleUserSubmit}
       />
+
+      {quickInviteOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="quick-invite-title"
+        >
+          <form
+            onSubmit={handleQuickInviteSubmit}
+            className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 id="quick-invite-title" className="text-lg font-semibold text-slate-900">
+                  Быстро добавить
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Пользователь будет создан без доступов к разделам.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeQuickInvite}
+                disabled={quickInviteBusy}
+                className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 disabled:opacity-50"
+              >
+                Закрыть
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <label className="block text-sm font-medium text-slate-700">
+                ФИО
+                <input
+                  type="text"
+                  value={quickInviteFullName}
+                  onChange={(e) => {
+                    setQuickInviteFullName(e.target.value)
+                    setQuickInviteText('')
+                    setQuickInviteError(null)
+                  }}
+                  autoComplete="name"
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  placeholder="Иванов И.И."
+                />
+              </label>
+              <label className="block text-sm font-medium text-slate-700">
+                Почта
+                <input
+                  type="email"
+                  value={quickInviteEmail}
+                  onChange={(e) => {
+                    setQuickInviteEmail(e.target.value)
+                    setQuickInviteText('')
+                    setQuickInviteError(null)
+                  }}
+                  autoComplete="email"
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  placeholder="name@example.com"
+                />
+              </label>
+            </div>
+
+            {quickInviteError && (
+              <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {quickInviteError}
+              </p>
+            )}
+
+            {quickInviteText && (
+              <label className="mt-4 block text-sm font-medium text-slate-700">
+                Текст для ручного копирования
+                <textarea
+                  readOnly
+                  value={quickInviteText}
+                  rows={5}
+                  className="mt-1 w-full resize-y rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-800"
+                />
+              </label>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeQuickInvite}
+                disabled={quickInviteBusy}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="submit"
+                disabled={quickInviteBusy}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                <Copy className="h-4 w-4" />
+                {quickInviteBusy ? '...' : 'Скопировать'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {rolloverConfirm && (
         <div
