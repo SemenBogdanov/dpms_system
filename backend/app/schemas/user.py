@@ -36,7 +36,7 @@ class UserCreate(BaseModel):
     is_new_employee: bool = False
     task_workspace_enabled: bool = False
     feedback_enabled: bool = False
-    competency_development_enabled: bool = False
+    competency_development_enabled: bool = True
     competency_constructor_enabled: bool = False
 
 
