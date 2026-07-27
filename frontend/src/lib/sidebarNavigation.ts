@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import {
   BarChart3,
+  BookOpen,
   BookOpenCheck,
   Calculator,
   CalendarClock,
@@ -88,6 +89,7 @@ export const sidebarNav: SidebarNavItem[] = [
   { id: 'queue', to: '/queue', label: 'Очередь', icon: ListTodo, section: 'task', group: 'tasks' },
   { id: 'calculator', to: '/calculator', label: 'Калькулятор', icon: Calculator, section: 'task', group: 'tasks', roles: ['teamlead', 'admin'] },
   { id: 'catalog', to: '/catalog', label: 'Каталог операций', icon: Library, section: 'task', group: 'tasks' },
+  { id: 'knowledge', to: '/knowledge', label: 'База знаний', icon: BookOpen, section: 'task', group: 'tasks' },
   { id: 'shop', to: '/shop', label: 'Магазин', icon: ShoppingBag, section: 'task', group: 'tasks' },
   { id: 'deadline-trackers', to: '/deadline-trackers', label: 'Трекер сроков', icon: CalendarClock, section: 'personal', group: 'tasks' },
   { id: 'quick-notes', to: '/quick-notes', label: 'Заметки', icon: StickyNote, section: 'personal', group: 'tasks' },
@@ -195,12 +197,15 @@ export function normalizeSidebarOrder(order?: SidebarOrderInput): SidebarOrder {
     return { ...group, id }
   })
   const version = typeof order?.version === 'number' ? order.version : 1
-  const shouldBackfillMissingDefaults = rawGroups.length > 0 && version < 2
+  const shouldBackfillMissingDefaults = rawGroups.length > 0 && version < 3
   const assignedItemIds = new Set(uniqueGroups.flatMap((group) => group.itemIds))
   const mergedGroups = shouldBackfillMissingDefaults
     ? uniqueGroups.map((group) => {
         const defaults = defaultSidebarOrder.items[group.id] ?? []
-        const missingDefaults = defaults.filter((itemId) => !assignedItemIds.has(itemId))
+        const versionDefaults = version < 2
+          ? defaults
+          : defaults.filter((itemId) => itemId === 'knowledge')
+        const missingDefaults = versionDefaults.filter((itemId) => !assignedItemIds.has(itemId))
         if (missingDefaults.length === 0) return group
         missingDefaults.forEach((itemId) => assignedItemIds.add(itemId))
         return { ...group, itemIds: [...group.itemIds, ...missingDefaults] }
@@ -222,7 +227,7 @@ export function sidebarOrderPayload(order: SidebarOrder) {
       .filter(([itemId, label]) => navById.has(itemId) && Boolean(label))
   )
   return {
-    version: 2,
+    version: 3,
     groups: normalized.groups.map((group) => ({
       id: group.id,
       label: group.label.trim() || 'Кнопка',
