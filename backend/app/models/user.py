@@ -54,6 +54,12 @@ class User(Base):
     quality_score: Mapped[float] = mapped_column(Float, nullable=False, default=100.0)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    auth_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    password_change_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    temporary_password_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     sidebar_menu_order: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -67,3 +73,8 @@ class User(Base):
     estimated_tasks = relationship("Task", back_populates="estimator", foreign_keys="Task.estimator_id")
     validated_tasks = relationship("Task", back_populates="validator", foreign_keys="Task.validator_id")
     transactions = relationship("QTransaction", back_populates="user")
+
+    @property
+    def needs_password_change(self) -> bool:
+        """Public compatibility field used by the frontend auth flow."""
+        return self.password_change_required

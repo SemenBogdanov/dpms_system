@@ -1,5 +1,5 @@
 """API пользователей."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -7,16 +7,19 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user, require_role, ensure_task_workspace_access
+from app.core.security import get_password_hash, validate_password_strength, verify_password
 from app.models.user import User, League, UserRole
-from app.schemas.user import UserCreate, UserRead, UserUpdate
+from app.schemas.user import AdminUserRead, TemporaryPasswordRequest, UserCreate, UserRead, UserUpdate
 from app.schemas.dashboard import UserProgress, RunRate
 from app.schemas.transaction import QTransactionRead
 from app.schemas.leagues import LeagueProgress
+from app.services.activity import record_activity_event
 from app.services.analytics import get_user_progress, get_run_rate
 from app.services.planning import add_months
 from app.services.leagues import get_league_progress as get_league_progress_svc
 
 router = APIRouter()
+TEMPORARY_PASSWORD_TTL = timedelta(days=7)
 
 
 @router.get("", response_model=list[UserRead])
@@ -28,6 +31,26 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
 ):
     """Список сотрудников с фильтрами по лиге, is_active и роли."""
+    stmt = select(User).order_by(User.full_name)
+    if league is not None:
+        stmt = stmt.where(User.league == league)
+    if is_active is not None:
+        stmt = stmt.where(User.is_active == is_active)
+    if role is not None:
+        stmt = stmt.where(User.role == role)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+@router.get("/admin", response_model=list[AdminUserRead])
+async def list_users_for_admin(
+    league: League | None = Query(None),
+    is_active: bool | None = Query(None),
+    role: UserRole | None = Query(None),
+    _: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Список сотрудников с состоянием учетных записей (только admin)."""
     stmt = select(User).order_by(User.full_name)
     if league is not None:
         stmt = stmt.where(User.league == league)
@@ -56,23 +79,24 @@ async def get_user(
     return user
 
 
-@router.post("", response_model=UserRead)
+@router.post("", response_model=AdminUserRead)
 async def create_user(
     body: UserCreate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role("admin")),
+    admin: User = Depends(require_role("admin")),
 ):
-    """Создать сотрудника (только admin). Проверка уникальности email."""
-    from app.core.security import get_password_hash
-
+    """Создать сотрудника с временным паролем (только admin)."""
     email = str(body.email).strip().lower()
     existing = await db.execute(select(User).where(func.lower(User.email) == email))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Пользователь с таким email уже существует")
+    password_errors = validate_password_strength(body.password)
+    if password_errors:
+        raise HTTPException(status_code=400, detail=password_errors)
     now = datetime.now(timezone.utc)
     onboarding_until = add_months(now, 3) if body.is_new_employee else None
     user = User(
-        full_name=body.full_name,
+        full_name=body.full_name.strip(),
         email=email,
         league=body.league,
         role=body.role,
@@ -88,14 +112,63 @@ async def create_user(
         onboarding_started_at=now if body.is_new_employee else None,
         onboarding_until=onboarding_until,
         password_hash=get_password_hash(body.password),
+        password_change_required=True,
+        temporary_password_expires_at=now + TEMPORARY_PASSWORD_TTL,
     )
     db.add(user)
     await db.flush()
+    await record_activity_event(
+        db,
+        admin.id,
+        "authn_user_created",
+        metadata={"target_user_id": user.id, "temporary_password": True},
+    )
+    await db.commit()
     await db.refresh(user)
     return user
 
 
-@router.patch("/{user_id}", response_model=UserRead)
+@router.post("/{user_id}/temporary-password", response_model=AdminUserRead)
+async def issue_temporary_password(
+    user_id: UUID,
+    body: TemporaryPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    """Выдать новый временный пароль и завершить текущие сессии пользователя."""
+    if user_id == admin.id:
+        raise HTTPException(
+            status_code=400,
+            detail="Для собственной учетной записи используйте смену пароля в настройках",
+        )
+    result = await db.execute(select(User).where(User.id == user_id).with_for_update())
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    password_errors = validate_password_strength(body.temporary_password)
+    if password_errors:
+        raise HTTPException(status_code=400, detail=password_errors)
+    if user.password_hash and verify_password(body.temporary_password, user.password_hash):
+        raise HTTPException(
+            status_code=400,
+            detail="Временный пароль должен отличаться от текущего",
+        )
+    user.password_hash = get_password_hash(body.temporary_password)
+    user.password_change_required = True
+    user.temporary_password_expires_at = datetime.now(timezone.utc) + TEMPORARY_PASSWORD_TTL
+    user.auth_version += 1
+    await record_activity_event(
+        db,
+        admin.id,
+        "authn_temporary_password_issued",
+        metadata={"target_user_id": user.id},
+    )
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+
+@router.patch("/{user_id}", response_model=AdminUserRead)
 async def update_user(
     user_id: UUID,
     body: UserUpdate,
@@ -103,10 +176,11 @@ async def update_user(
     _: User = Depends(require_role("admin")),
 ):
     """Обновить сотрудника (только admin)."""
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(select(User).where(User.id == user_id).with_for_update())
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
+    revoke_sessions = False
     if body.full_name is not None:
         user.full_name = body.full_name
     if body.email is not None:
@@ -114,20 +188,32 @@ async def update_user(
         other = await db.execute(select(User).where(func.lower(User.email) == email, User.id != user_id))
         if other.scalar_one_or_none():
             raise HTTPException(status_code=400, detail="Пользователь с таким email уже существует")
+        revoke_sessions = revoke_sessions or email != user.email
         user.email = email
     if body.role is not None:
+        revoke_sessions = revoke_sessions or body.role != user.role
         user.role = body.role
     if body.league is not None:
         user.league = body.league
     if body.mpw is not None:
         user.mpw = body.mpw
-    if body.is_active is not None:
+    if body.is_active is not None and body.is_active != user.is_active:
         user.is_active = body.is_active
+        revoke_sessions = True
     if body.feedback_enabled is not None:
+        revoke_sessions = revoke_sessions or body.feedback_enabled != user.feedback_enabled
         user.feedback_enabled = body.feedback_enabled
     if body.competency_development_enabled is not None:
+        revoke_sessions = (
+            revoke_sessions
+            or body.competency_development_enabled != user.competency_development_enabled
+        )
         user.competency_development_enabled = body.competency_development_enabled
     if body.competency_constructor_enabled is not None:
+        revoke_sessions = (
+            revoke_sessions
+            or body.competency_constructor_enabled != user.competency_constructor_enabled
+        )
         user.competency_constructor_enabled = body.competency_constructor_enabled
     if body.is_new_employee is not None:
         now = datetime.now(timezone.utc)
@@ -144,8 +230,14 @@ async def update_user(
             user.onboarding_started_at = None
             user.onboarding_until = None
     if body.task_workspace_enabled is not None:
+        revoke_sessions = (
+            revoke_sessions
+            or body.task_workspace_enabled != user.task_workspace_enabled
+        )
         user.task_workspace_enabled = body.task_workspace_enabled
-    await db.flush()
+    if revoke_sessions:
+        user.auth_version += 1
+    await db.commit()
     await db.refresh(user)
     return user
 

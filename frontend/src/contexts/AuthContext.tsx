@@ -4,22 +4,22 @@
  */
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { api } from '@/api/client'
-import type { User } from '@/api/types'
+import type { AuthenticatedUser } from '@/api/types'
 import { getToken, setToken, clearToken } from '@/lib/auth'
 
 type AuthContextValue = {
-  user: User | null
+  user: AuthenticatedUser | null
   token: string | null
   login: (email: string, password: string) => Promise<void>
   logout: () => void
-  updateUser: (user: User) => void
+  updateUser: (user: AuthenticatedUser) => void
   loading: boolean
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
+  const [user, setUser] = useState<AuthenticatedUser | null>(null)
   const [token, setTokenState] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -33,7 +33,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     setTokenState(t)
     try {
-      const u = await api.get<User>('/api/auth/me')
+      const u = await api.get<AuthenticatedUser>('/api/auth/me')
       setUser(u)
     } catch {
       clearToken()
@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(
     async (email: string, password: string) => {
-      const res = await api.post<{ access_token: string; user: User }>('/api/auth/login', {
+      const res = await api.post<{ access_token: string; user: AuthenticatedUser }>('/api/auth/login', {
         email: email.trim().toLowerCase(),
         password,
       })
@@ -61,7 +61,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     []
   )
 
-  const updateUser = useCallback((updatedUser: User) => {
+  const updateUser = useCallback((updatedUser: AuthenticatedUser) => {
     setUser(updatedUser)
   }, [])
 

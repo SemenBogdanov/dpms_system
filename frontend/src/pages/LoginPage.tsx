@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Eye, EyeOff } from 'lucide-react'
+import { Navigate, useNavigate } from 'react-router-dom'
+import { PasswordRevealButton } from '@/components/PasswordRevealButton'
 import { useAuth } from '@/contexts/AuthContext'
 
 export function LoginPage() {
@@ -24,8 +24,7 @@ export function LoginPage() {
   }
 
   if (user) {
-    navigate('/', { replace: true })
-    return null
+    return <Navigate to="/" replace />
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -90,14 +89,11 @@ export function LoginPage() {
                 autoComplete="current-password"
                 minLength={6}
               />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-300 hover:text-gray-500 transition-colors"
-                tabIndex={-1}
-              >
-                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
+              <PasswordRevealButton
+                revealed={showPassword}
+                onRevealChange={setShowPassword}
+                className="right-2 text-gray-300 hover:text-gray-500"
+              />
             </div>
           </div>
 

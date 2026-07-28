@@ -62,7 +62,6 @@ export interface User {
   wallet_karma: number
   quality_score: number
   is_active: boolean
-  needs_password_change: boolean
   is_new_employee: boolean
   task_workspace_enabled: boolean
   feedback_enabled: boolean
@@ -74,6 +73,14 @@ export interface User {
   sidebar_menu_order: SidebarMenuOrder | null
   created_at: string
   updated_at: string
+}
+
+export interface AuthenticatedUser extends User {
+  needs_password_change: boolean
+}
+
+export interface AdminUser extends AuthenticatedUser {
+  temporary_password_expires_at: string | null
 }
 
 export interface QuickNote {

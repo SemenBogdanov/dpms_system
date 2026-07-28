@@ -3,14 +3,14 @@ from collections.abc import AsyncGenerator
 from typing import Callable
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.models.user import User, UserRole
-from app.core.security import decode_access_token
+from app.core.security import decode_access_token, is_temporary_password_valid
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
@@ -29,12 +29,50 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def get_current_user(
+    request: Request,
     token: str | None = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    """Вернуть пользователя с полноценной активной сессией."""
+    user = await _get_authenticated_user(request, token, db)
+    if user.password_change_required:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Сначала смените временный пароль",
+        )
+    return user
+
+
+async def get_current_user_for_password_setup(
+    request: Request,
+    token: str | None = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Вернуть пользователя, разрешая ограниченную сессию первого входа."""
+    user = await _get_authenticated_user(request, token, db)
+    if not is_temporary_password_valid(
+        user.password_change_required,
+        user.temporary_password_expires_at,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Срок действия временного пароля истек. Обратитесь к администратору",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return user
+
+
+async def _get_authenticated_user(
+    request: Request,
+    token: str | None,
+    db: AsyncSession,
+) -> User:
     """
-    Декодировать JWT, извлечь user_id, вернуть User.
-    Если токен невалиден или пользователь не найден → 401.
+    Декодировать JWT и проверить пользователя вместе с auth_version.
+
+    Токены, выданные до появления claim ver, считаются версией 0. Это
+    сохраняет текущие сессии до первой смены или административного сброса
+    пароля, после чего auth_version инвалидирует все старые токены.
     """
     if not token:
         raise HTTPException(
@@ -47,6 +85,13 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Невалидный или истёкший токен",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token_auth_version = payload.get("ver", 0)
+    if type(token_auth_version) is not int or token_auth_version < 0:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Невалидный токен",
             headers={"WWW-Authenticate": "Bearer"},
         )
     sub = payload.get("sub")
@@ -78,6 +123,13 @@ async def get_current_user(
             detail="Пользователь деактивирован",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    if user.auth_version != token_auth_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Сессия завершена. Войдите снова",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    request.state.token_auth_version = token_auth_version
     return user
 
 

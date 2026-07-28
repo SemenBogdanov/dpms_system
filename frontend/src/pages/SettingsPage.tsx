@@ -19,7 +19,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
-import type { User } from '@/api/types'
+import type { AuthenticatedUser } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 import { LeagueBadge } from '@/components/LeagueBadge'
@@ -106,7 +106,7 @@ export function SettingsPage() {
     }
     setSavingMenu(true)
     try {
-      const updatedUser = await api.patch<User>('/api/auth/me/sidebar-menu', {
+      const updatedUser = await api.patch<AuthenticatedUser>('/api/auth/me/sidebar-menu', {
         sidebar_menu_order: sidebarOrderPayload(normalized),
       })
       updateUser(updatedUser)

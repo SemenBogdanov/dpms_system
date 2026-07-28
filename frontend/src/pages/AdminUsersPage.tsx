@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/client'
-import type { User, PeriodHistoryItem, LeagueEvaluation, LeagueChange, RolloverResponse } from '@/api/types'
+import type { AdminUser, User, PeriodHistoryItem, LeagueEvaluation, LeagueChange, RolloverResponse } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { UserModal, type UserFormPayload } from '@/components/UserModal'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
-import { Copy, Pencil, Plus, RotateCcw, Trash2, UserPlus } from 'lucide-react'
+import { Copy, KeyRound, Pencil, Plus, RotateCcw, Trash2, UserPlus } from 'lucide-react'
 
 const MONTHS = [
   'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
@@ -55,7 +55,8 @@ function buildQuickInviteMessage(fullName: string, email: string, password: stri
     `Ссылка: ${SYSTEM_INVITE_URL}`,
     `ФИО: ${fullName}`,
     `Логин: ${email}`,
-    `Пароль: ${password}`,
+    `Временный пароль: ${password}`,
+    'При первом входе система потребует заменить пароль. Временный пароль действует 7 дней.',
   ].join('\n')
 }
 
@@ -90,7 +91,7 @@ function previousMonthValue(date = new Date()) {
 
 export function AdminUsersPage() {
   const { user: currentUser } = useAuth()
-  const [users, setUsers] = useState<User[]>([])
+  const [users, setUsers] = useState<AdminUser[]>([])
   const [periodHistory, setPeriodHistory] = useState<PeriodHistoryItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -106,16 +107,18 @@ export function AdminUsersPage() {
   const [leagueEvalLoading, setLeagueEvalLoading] = useState(false)
   const [applyLeagueBusy, setApplyLeagueBusy] = useState(false)
   const [userModalOpen, setUserModalOpen] = useState(false)
-  const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [editingUser, setEditingUser] = useState<AdminUser | null>(null)
   const [quickInviteOpen, setQuickInviteOpen] = useState(false)
   const [quickInviteFullName, setQuickInviteFullName] = useState('')
   const [quickInviteEmail, setQuickInviteEmail] = useState('')
   const [quickInviteBusy, setQuickInviteBusy] = useState(false)
   const [quickInviteError, setQuickInviteError] = useState<string | null>(null)
   const [quickInviteText, setQuickInviteText] = useState('')
+  const [temporaryPasswordUserId, setTemporaryPasswordUserId] = useState<string | null>(null)
+  const [temporaryInviteText, setTemporaryInviteText] = useState('')
 
   const loadUsers = useCallback(() => {
-    api.get<User[]>('/api/users')
+    api.get<AdminUser[]>('/api/users/admin')
       .then(setUsers)
       .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка'))
       .finally(() => setLoading(false))
@@ -254,7 +257,7 @@ export function AdminUsersPage() {
       })
       toast.success('Изменения сохранены')
     } else {
-      await api.post<User>('/api/users', {
+      await api.post<AdminUser>('/api/users', {
         full_name: payload.full_name,
         email: payload.email,
         role: payload.role,
@@ -307,7 +310,7 @@ export function AdminUsersPage() {
       if (!inviteText) {
         const password = generateQuickInvitePassword()
         inviteText = buildQuickInviteMessage(fullName, email, password)
-        await api.post<User>('/api/users', {
+        await api.post<AdminUser>('/api/users', {
           full_name: fullName,
           email,
           role: 'executor',
@@ -340,7 +343,28 @@ export function AdminUsersPage() {
     }
   }
 
-  const handleDeactivate = (u: User) => {
+  const handleIssueTemporaryPassword = async (u: AdminUser) => {
+    if (temporaryPasswordUserId || u.id === currentUser?.id) return
+    if (!window.confirm(
+      `Выдать временный пароль для ${u.full_name}? Все текущие сессии сотрудника будут завершены.`
+    )) return
+    setTemporaryPasswordUserId(u.id)
+    try {
+      const password = generateQuickInvitePassword()
+      await api.post<AdminUser>(`/api/users/${u.id}/temporary-password`, {
+        temporary_password: password,
+      })
+      setTemporaryInviteText(buildQuickInviteMessage(u.full_name, u.email, password))
+      loadUsers()
+      toast.success('Временный пароль выдан, старые сессии завершены')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Не удалось выдать временный пароль')
+    } finally {
+      setTemporaryPasswordUserId(null)
+    }
+  }
+
+  const handleDeactivate = (u: AdminUser) => {
     if (!window.confirm(`Деактивировать ${u.full_name}?`)) return
     api.patch(`/api/users/${u.id}`, { is_active: false }).then(() => {
       toast.success('Сотрудник деактивирован')
@@ -348,7 +372,7 @@ export function AdminUsersPage() {
     }).catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
   }
 
-  const handleRestore = (u: User) => {
+  const handleRestore = (u: AdminUser) => {
     api.patch(`/api/users/${u.id}`, { is_active: true }).then(() => {
       toast.success('Сотрудник восстановлен')
       loadUsers()
@@ -389,7 +413,7 @@ export function AdminUsersPage() {
     </div>
   )
 
-  const renderUserActions = (u: User, mobile = false) => (
+  const renderUserActions = (u: AdminUser, mobile = false) => (
     <div className={cn('flex items-center gap-2', mobile && 'justify-end')}>
       <button
         type="button"
@@ -400,6 +424,18 @@ export function AdminUsersPage() {
       >
         <Pencil className="h-4 w-4" />
       </button>
+      {u.is_active && u.id !== currentUser?.id && (
+        <button
+          type="button"
+          onClick={() => handleIssueTemporaryPassword(u)}
+          disabled={temporaryPasswordUserId !== null}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:border-amber-200 hover:bg-amber-50 hover:text-amber-700 disabled:opacity-50"
+          title="Выдать временный пароль"
+          aria-label={`Выдать временный пароль для ${u.full_name}`}
+        >
+          <KeyRound className="h-4 w-4" />
+        </button>
+      )}
       {u.is_active ? (
         <button
           type="button"
@@ -488,6 +524,16 @@ export function AdminUsersPage() {
                 {isOnboardingActive(u) && (
                   <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">Новый</span>
                 )}
+                {u.needs_password_change && (
+                  <span
+                    className="rounded bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"
+                    title={u.temporary_password_expires_at
+                      ? `Временный пароль до ${new Date(u.temporary_password_expires_at).toLocaleString('ru')}`
+                      : 'Требуется новый временный пароль'}
+                  >
+                    Смена пароля
+                  </span>
+                )}
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600">
                 <div className="rounded-md bg-slate-50 px-2 py-1.5">MPW: {u.mpw} Q</div>
@@ -563,6 +609,16 @@ export function AdminUsersPage() {
                       <span>{u.is_active ? 'Активен' : 'Неактивен'}</span>
                       {isOnboardingActive(u) && (
                         <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">Новый</span>
+                      )}
+                      {u.needs_password_change && (
+                        <span
+                          className="rounded bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700"
+                          title={u.temporary_password_expires_at
+                            ? `Временный пароль до ${new Date(u.temporary_password_expires_at).toLocaleString('ru')}`
+                            : 'Требуется новый временный пароль'}
+                        >
+                          Смена пароля
+                        </span>
                       )}
                     </div>
                   </td>
@@ -786,7 +842,7 @@ export function AdminUsersPage() {
                   Быстро добавить
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Пользователь будет создан без доступов к разделам.
+                  Будет открыт раздел «Развитие», а временный пароль потребуется заменить при первом входе.
                 </p>
               </div>
               <button
@@ -869,6 +925,51 @@ export function AdminUsersPage() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {temporaryInviteText && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="temporary-password-title"
+        >
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+            <h2 id="temporary-password-title" className="text-lg font-semibold text-slate-900">
+              Временный пароль выдан
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Передайте сообщение сотруднику. После закрытия окна пароль больше не будет показан.
+            </p>
+            <textarea
+              readOnly
+              value={temporaryInviteText}
+              rows={6}
+              className="mt-4 w-full resize-y rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-800"
+            />
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setTemporaryInviteText('')}
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Закрыть
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  copyTextToClipboard(temporaryInviteText)
+                    .then(() => toast.success('Сообщение скопировано'))
+                    .catch(() => toast.error('Не удалось скопировать сообщение'))
+                }}
+                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+              >
+                <Copy className="h-4 w-4" />
+                Скопировать
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

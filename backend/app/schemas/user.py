@@ -32,7 +32,7 @@ class UserCreate(BaseModel):
     role: UserRole = UserRole.executor
     league: League = League.C
     mpw: int = Field(60, ge=0)
-    password: str = Field(..., min_length=6)
+    password: str = Field(..., min_length=8, max_length=128)
     is_new_employee: bool = False
     task_workspace_enabled: bool = False
     feedback_enabled: bool = False
@@ -61,7 +61,6 @@ class UserRead(UserBase):
     wallet_main: float = 0
     wallet_karma: float = 0
     quality_score: float = 100.0
-    needs_password_change: bool = False
     plan_started_at: datetime | None = None
     onboarding_started_at: datetime | None = None
     onboarding_until: datetime | None = None
@@ -72,7 +71,25 @@ class UserRead(UserBase):
     model_config = {"from_attributes": True}
 
 
+class AuthenticatedUserRead(UserRead):
+    """Данные текущего пользователя, включая состояние первого входа."""
+
+    needs_password_change: bool = False
+
+
+class AdminUserRead(AuthenticatedUserRead):
+    """Административное представление состояния учетной записи."""
+
+    temporary_password_expires_at: datetime | None = None
+
+
 class SidebarMenuOrderUpdate(BaseModel):
     """Пользовательский порядок левого меню."""
 
     sidebar_menu_order: dict[str, Any] | None = None
+
+
+class TemporaryPasswordRequest(BaseModel):
+    """Выдать пользователю новый временный пароль."""
+
+    temporary_password: str = Field(..., min_length=8, max_length=128)

@@ -3,6 +3,9 @@ export function validatePassword(password: string): string[] {
   if (password.length < 8) {
     errors.push('Пароль должен содержать минимум 8 символов')
   }
+  if (new TextEncoder().encode(password).length > 72) {
+    errors.push('Пароль должен занимать не более 72 байт')
+  }
   if (!/[A-Z]/.test(password)) {
     errors.push('Пароль должен содержать хотя бы одну заглавную букву (A-Z)')
   }

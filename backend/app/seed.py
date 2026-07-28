@@ -212,7 +212,8 @@ async def ensure_users(session: AsyncSession) -> dict[str, User]:
         users_list = list(result.scalars().all())
         for u in users_list:
             if u.password_hash is None:
-                u.password_hash = get_password_hash("demo123")
+                u.password_change_required = True
+                u.temporary_password_expires_at = None
             # Обновить WIP-лимит в соответствии с лигой, если он ещё не задан явно
             league_value = getattr(u.league, "value", str(u.league))
             if not getattr(u, "wip_limit", None):

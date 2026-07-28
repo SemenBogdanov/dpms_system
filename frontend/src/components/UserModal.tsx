@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { User } from '@/api/types'
+import { validatePassword } from '@/lib/passwordValidation'
 import { cn } from '@/lib/utils'
+import { PasswordRevealButton } from '@/components/PasswordRevealButton'
 
 export type UserFormPayload = {
   full_name: string
@@ -46,6 +48,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
   const [competencyDevelopmentEnabled, setCompetencyDevelopmentEnabled] = useState(true)
   const [competencyConstructorEnabled, setCompetencyConstructorEnabled] = useState(false)
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
 
@@ -64,6 +67,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setCompetencyDevelopmentEnabled(Boolean(initial.competency_development_enabled))
       setCompetencyConstructorEnabled(Boolean(initial.competency_constructor_enabled))
       setPassword('')
+      setShowPassword(false)
     } else {
       setFullName('')
       setEmail('')
@@ -76,6 +80,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setCompetencyDevelopmentEnabled(true)
       setCompetencyConstructorEnabled(false)
       setPassword('')
+      setShowPassword(false)
     }
   }, [open, mode, initial])
 
@@ -104,9 +109,12 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setValidationError('Некорректный формат email')
       return
     }
-    if (mode === 'create' && password.length < 6) {
-      setValidationError('Пароль не менее 6 символов')
-      return
+    if (mode === 'create') {
+      const passwordErrors = validatePassword(password)
+      if (passwordErrors.length > 0) {
+        setValidationError(passwordErrors.join('. '))
+        return
+      }
     }
     if (mpw < 0) {
       setValidationError('План (MPW) не может быть меньше 0')
@@ -264,14 +272,28 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
           </div>
           {mode === 'create' && (
             <>
-              <label className="block text-sm font-medium text-slate-700">Пароль * (мин. 6 символов)</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                minLength={6}
-              />
+              <label htmlFor="temporary_password" className="block text-sm font-medium text-slate-700">
+                Временный пароль *
+              </label>
+              <div className="relative">
+                <input
+                  id="temporary_password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full rounded-md border border-slate-300 px-3 py-2 pr-11 text-sm"
+                  minLength={8}
+                  maxLength={128}
+                  autoComplete="new-password"
+                />
+                <PasswordRevealButton
+                  revealed={showPassword}
+                  onRevealChange={setShowPassword}
+                />
+              </div>
+              <p className="text-xs text-slate-500">
+                Действует 7 дней. При первом входе сотрудник обязан заменить его собственным паролем.
+              </p>
             </>
           )}
           {validationError && (

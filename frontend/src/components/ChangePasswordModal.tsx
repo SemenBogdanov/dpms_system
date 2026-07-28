@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Eye, EyeOff } from 'lucide-react'
 import { api } from '@/api/client'
+import { PasswordRevealButton } from '@/components/PasswordRevealButton'
+import { useAuth } from '@/contexts/AuthContext'
 import { validatePassword } from '@/lib/passwordValidation'
 
 interface ChangePasswordModalProps {
@@ -9,6 +10,7 @@ interface ChangePasswordModalProps {
 }
 
 export function ChangePasswordModal({ open, onClose }: ChangePasswordModalProps) {
+  const { logout } = useAuth()
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -55,9 +57,7 @@ export function ChangePasswordModal({ open, onClose }: ChangePasswordModalProps)
         new_password: newPassword,
       })
       setSuccess(true)
-      setTimeout(() => {
-        handleClose()
-      }, 1500)
+      window.setTimeout(logout, 1200)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Ошибка при смене пароля'
       setServerError(msg)
@@ -79,7 +79,9 @@ export function ChangePasswordModal({ open, onClose }: ChangePasswordModalProps)
       <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
         <h3 className="text-lg font-semibold text-slate-900">Сменить пароль</h3>
         {success ? (
-          <p className="mt-4 text-sm text-emerald-600">Пароль успешно изменён!</p>
+          <p className="mt-4 text-sm text-emerald-700">
+            Пароль изменён. Все старые сессии завершены, сейчас откроется повторный вход.
+          </p>
         ) : (
           <form onSubmit={handleSubmit} className="mt-4 space-y-3">
              <div>
@@ -96,14 +98,10 @@ export function ChangePasswordModal({ open, onClose }: ChangePasswordModalProps)
                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 pr-10 text-sm"
                    autoComplete="current-password"
                  />
-                 <button
-                   type="button"
-                   onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                   className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                   tabIndex={-1}
-                 >
-                   {showCurrentPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                 </button>
+                 <PasswordRevealButton
+                   revealed={showCurrentPassword}
+                   onRevealChange={setShowCurrentPassword}
+                 />
                </div>
              </div>
              <div>
@@ -119,15 +117,12 @@ export function ChangePasswordModal({ open, onClose }: ChangePasswordModalProps)
                    }}
                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 pr-10 text-sm"
                    autoComplete="new-password"
+                   maxLength={128}
                  />
-                 <button
-                   type="button"
-                   onClick={() => setShowNewPassword(!showNewPassword)}
-                   className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                   tabIndex={-1}
-                 >
-                   {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                 </button>
+                 <PasswordRevealButton
+                   revealed={showNewPassword}
+                   onRevealChange={setShowNewPassword}
+                 />
                </div>
              </div>
              <div>
@@ -143,15 +138,12 @@ export function ChangePasswordModal({ open, onClose }: ChangePasswordModalProps)
                    }}
                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 pr-10 text-sm"
                    autoComplete="new-password"
+                   maxLength={128}
                  />
-                 <button
-                   type="button"
-                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                   className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                   tabIndex={-1}
-                 >
-                   {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                 </button>
+                 <PasswordRevealButton
+                   revealed={showConfirmPassword}
+                   onRevealChange={setShowConfirmPassword}
+                 />
                </div>
              </div>
             {errors.length > 0 && (
