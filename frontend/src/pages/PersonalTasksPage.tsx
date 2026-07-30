@@ -22,6 +22,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
 import type {
@@ -48,6 +49,7 @@ import type {
   TaskType,
 } from '@/api/types'
 import { cn } from '@/lib/utils'
+import { WorkEntityBacklinks } from '@/components/WorkEntityBacklinks'
 
 type TaskFilter = PersonalTaskStatus | 'active' | 'all'
 
@@ -373,13 +375,15 @@ function timelineTicks(start: number, end: number, due: number | null) {
 }
 
 export function PersonalTasksPage() {
+  const [searchParams] = useSearchParams()
+  const requestedTaskId = searchParams.get('task')
   const [tasks, setTasks] = useState<PersonalTask[]>([])
   const [quickNotes, setQuickNotes] = useState<QuickNote[]>([])
   const [deadlines, setDeadlines] = useState<PersonalTaskDeadline[]>([])
   const [deadlineTrackers, setDeadlineTrackers] = useState<DeadlineTracker[]>([])
   const [events, setEvents] = useState<Record<string, PersonalTaskEvent[]>>({})
   const [checkpoints, setCheckpoints] = useState<Record<string, PersonalTaskCheckpoint[]>>({})
-  const [filter, setFilter] = useState<TaskFilter>('active')
+  const [filter, setFilter] = useState<TaskFilter>(requestedTaskId ? 'all' : 'active')
   const [search, setSearch] = useState('')
   const [form, setForm] = useState(emptyForm)
   const [editing, setEditing] = useState<PersonalTask | null>(null)
@@ -446,6 +450,24 @@ export function PersonalTasksPage() {
   useEffect(() => {
     void loadDeadlineTrackers().catch(() => undefined)
   }, [loadDeadlineTrackers])
+
+  useEffect(() => {
+    if (!requestedTaskId) return
+    if (filter !== 'all') {
+      setFilter('all')
+      return
+    }
+    if (!tasks.some((task) => task.id === requestedTaskId) || expandedId === requestedTaskId) {
+      return
+    }
+    setExpandedId(requestedTaskId)
+    void loadTaskDetails(requestedTaskId)
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(`personal-task-${requestedTaskId}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }, [expandedId, filter, loadTaskDetails, requestedTaskId, tasks])
 
   const stats = useMemo(() => {
     const active = tasks.filter((task) => !['done', 'archived'].includes(task.status)).length
@@ -1111,7 +1133,7 @@ export function PersonalTasksPage() {
             </div>
           ) : (
             sortedTasks.map((task) => (
-              <article key={task.id} className="p-4">
+              <article id={`personal-task-${task.id}`} key={task.id} className="p-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <button
                     type="button"
@@ -1232,6 +1254,8 @@ export function PersonalTasksPage() {
                         )}
                       </div>
                     </div>
+
+                    <WorkEntityBacklinks targetType="personal_task" targetId={task.id} />
 
                     {(() => {
                       const timeline = buildTaskTimeline(task, events[task.id] || [], checkpoints[task.id] || [])

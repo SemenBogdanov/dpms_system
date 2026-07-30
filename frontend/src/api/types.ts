@@ -42,6 +42,45 @@ export type PersonalTaskEventType =
 export type PersonalTaskCheckpointStatus = 'planned' | 'in_progress' | 'waiting' | 'blocked' | 'done'
 export type DeadlineTrackerType = 'subscription' | 'system' | 'password' | 'task' | 'document' | 'payment' | 'other'
 export type DeadlineTrackerStatus = 'active' | 'paused' | 'done' | 'archived'
+export type WorkEntityType = 'project' | 'initiative' | 'goal' | 'system' | 'kpi' | 'other'
+export type WorkEntityStatus = 'draft' | 'active' | 'paused' | 'done' | 'archived'
+export type WorkEntityVisibility = 'private' | 'shared'
+export type WorkEntityMemberRole = 'viewer' | 'participant' | 'editor'
+export type WorkEntityAccessRole = 'owner' | 'editor' | 'participant' | 'viewer'
+export type WorkEntityTargetType = 'entity' | 'task' | 'personal_task' | 'quick_note' | 'deadline_tracker'
+export type WorkEntityRelationType = 'contains' | 'contributes_to' | 'depends_on' | 'measures' | 'related'
+export type WorkEntityPlanningMode = 'free' | 'methodology'
+export type WorkEntityStageStatus = 'planned' | 'active' | 'done' | 'cancelled'
+export type WorkEntityStageSource = 'manual' | 'methodology'
+export type WorkEntityTaskStatus =
+  | 'planned'
+  | 'in_progress'
+  | 'waiting'
+  | 'blocked'
+  | 'review'
+  | 'done'
+  | 'cancelled'
+export type WorkEntityTaskPriority = 'low' | 'medium' | 'high' | 'critical'
+export type WorkEntityMilestoneLifecycleStatus = 'planned' | 'achieved' | 'cancelled'
+export type WorkEntityMilestoneDisplayStatus =
+  | 'planned'
+  | 'rescheduled'
+  | 'overdue'
+  | 'achieved'
+  | 'cancelled'
+export type WorkEntityMilestoneCriticality = 'control' | 'key' | 'critical'
+export type WorkEntityScheduleNodeType = 'task' | 'milestone'
+export type WorkEntityScheduleDependencyType = 'finish_to_start'
+export type WorkEntityScheduleDependencyStatus = 'active' | 'waived'
+export type WorkEntityArtifactType =
+  | 'note'
+  | 'decision'
+  | 'evidence'
+  | 'document'
+  | 'reference'
+  | 'other'
+export type WorkEntityArtifactStatus = 'active' | 'archived'
+export type WorkEntityJournalEntryType = 'progress' | 'meeting' | 'decision' | 'blocker' | 'comment'
 
 export interface SidebarMenuOrder {
   groups?: Array<string | { id?: string; key?: string; label?: string; item_ids?: string[]; itemIds?: string[] }>
@@ -129,7 +168,7 @@ export interface QuickNoteShare {
   note_id: string
   owner_id: string
   owner_name: string
-  owner_email: string
+  owner_email: string | null
   recipient_id: string
   recipient_name: string
   recipient_email: string
@@ -381,6 +420,575 @@ export interface DeadlineTrackerUpdate {
   tags?: string[]
   personal_task_id?: string | null
   linked_task_id?: string | null
+}
+
+export interface WorkEntity {
+  id: string
+  owner_id: string
+  owner_name: string
+  owner_email: string | null
+  entity_type: WorkEntityType
+  title: string
+  description: string | null
+  outcome_statement: string | null
+  success_criteria: string | null
+  constraints: string | null
+  baseline_outcome_statement: string | null
+  baseline_success_criteria: string | null
+  baseline_constraints: string | null
+  status: WorkEntityStatus
+  visibility: WorkEntityVisibility
+  starts_at: string | null
+  due_at: string | null
+  target_due_at: string | null
+  forecast_starts_at: string | null
+  forecast_due_at: string | null
+  actual_starts_at: string | null
+  actual_due_at: string | null
+  planning_mode: WorkEntityPlanningMode
+  methodology_title: string | null
+  methodology_version: string | null
+  methodology_snapshot: Record<string, unknown> | null
+  baseline_locked_at: string | null
+  baseline_locked_by_id: string | null
+  schedule_revision: number
+  tags: string[]
+  details_json: Record<string, unknown> | null
+  archived_at: string | null
+  access_role: WorkEntityAccessRole
+  members_count: number
+  links_count: number
+  stages_count: number
+  tasks_count: number
+  milestones_count: number
+  artifacts_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkEntityCreate {
+  entity_type: WorkEntityType
+  title: string
+  description?: string | null
+  outcome_statement?: string | null
+  success_criteria?: string | null
+  constraints?: string | null
+  status?: WorkEntityStatus
+  visibility?: WorkEntityVisibility
+  starts_at?: string | null
+  due_at?: string | null
+  planning_mode?: WorkEntityPlanningMode
+  methodology_title?: string | null
+  methodology_version?: string | null
+  methodology_snapshot?: Record<string, unknown> | null
+  tags?: string[]
+  details_json?: Record<string, unknown> | null
+}
+
+export type WorkEntityUpdate = Partial<WorkEntityCreate>
+
+export interface WorkEntityMember {
+  id: string
+  entity_id: string
+  user_id: string
+  user_name: string
+  user_email: string | null
+  role: WorkEntityMemberRole
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkEntityLink {
+  id: string
+  entity_id: string
+  relation_type: WorkEntityRelationType
+  notes: string | null
+  position: number
+  target_type: WorkEntityTargetType
+  target_accessible: boolean
+  target_id: string | null
+  target_title: string | null
+  target_subtitle: string | null
+  target_status: string | null
+  target_starts_at: string | null
+  target_due_at: string | null
+  created_by_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkEntityLinkOption {
+  target_type: WorkEntityTargetType
+  target_id: string
+  title: string
+  subtitle: string | null
+  status: string | null
+  starts_at: string | null
+  due_at: string | null
+}
+
+export interface WorkEntitySummary {
+  entity_id: string
+  accessible_links: number
+  restricted_links: number
+  native_tasks: number
+  artifacts: number
+  work_items_total: number
+  work_items_done: number
+  overdue_items: number
+  next_due_at: string | null
+  counts_by_type: Record<string, number>
+  counts_by_status: Record<string, number>
+}
+
+export interface WorkEntityReadinessIssue {
+  severity: 'blocking' | 'warning'
+  code: string
+  scope_type: 'entity' | 'stage' | 'task' | 'milestone'
+  scope_id: string
+  scope_ref: string | null
+  scope_title: string
+  field: string | null
+  message: string
+  guidance: string
+}
+
+export interface WorkEntityReadiness {
+  entity_id: string
+  can_activate: boolean
+  blocking_count: number
+  warning_count: number
+  issues: WorkEntityReadinessIssue[]
+}
+
+export interface WorkEntityEvent {
+  id: string
+  entity_id: string
+  actor_id: string | null
+  actor_name: string | null
+  event_type: string
+  object_type: string | null
+  object_id: string | null
+  object_ref: string | null
+  object_title: string | null
+  action: string | null
+  reason: string | null
+  correlation_id: string | null
+  payload: Record<string, unknown> | null
+  created_at: string
+}
+
+export interface WorkEntityReverseLink {
+  link_id: string
+  entity_id: string
+  entity_type: WorkEntityType
+  entity_title: string
+  entity_status: WorkEntityStatus
+  relation_type: WorkEntityRelationType
+  access_role: WorkEntityAccessRole
+}
+
+export interface WorkEntityParticipant {
+  user_id: string
+  user_name: string
+  user_email: string | null
+  role: WorkEntityAccessRole
+  can_be_assigned: boolean
+  open_tasks: number
+}
+
+export interface WorkEntityStage {
+  id: string
+  entity_id: string
+  title: string
+  description: string | null
+  completion_criteria: string | null
+  guidance: string | null
+  status: WorkEntityStageStatus
+  source_type: WorkEntityStageSource
+  source_key: string | null
+  source_snapshot: Record<string, unknown> | null
+  position: number
+  tasks_count: number
+  milestones_count: number
+  can_manage: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkEntityStageCreate {
+  title: string
+  description?: string | null
+  completion_criteria?: string | null
+  guidance?: string | null
+  status?: WorkEntityStageStatus
+  source_type?: WorkEntityStageSource
+  source_key?: string | null
+  source_snapshot?: Record<string, unknown> | null
+  position?: number
+}
+
+export type WorkEntityStageUpdate = Partial<
+  Omit<WorkEntityStageCreate, 'source_type' | 'source_key' | 'source_snapshot'>
+>
+
+export interface WorkEntityTask {
+  id: string
+  task_number: number
+  entity_id: string
+  stage_id: string | null
+  stage_title: string | null
+  target_milestone_id: string | null
+  title: string
+  description: string | null
+  status: WorkEntityTaskStatus
+  priority: WorkEntityTaskPriority
+  assignee_id: string | null
+  assignee_name: string | null
+  assignee_email: string | null
+  created_by_id: string | null
+  created_by_name: string | null
+  acceptance_criteria: string | null
+  next_step: string | null
+  waiting_for: string | null
+  baseline_starts_at: string | null
+  baseline_due_at: string | null
+  forecast_starts_at: string | null
+  forecast_due_at: string | null
+  actual_starts_at: string | null
+  actual_due_at: string | null
+  introduced_after_baseline: boolean
+  introduced_at_revision: number | null
+  variance_days: number | null
+  position: number
+  predecessor_ids: string[]
+  can_manage: boolean
+  can_execute: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkEntityTaskCreate {
+  title: string
+  description?: string | null
+  status?: WorkEntityTaskStatus
+  priority?: WorkEntityTaskPriority
+  assignee_id?: string | null
+  stage_id?: string | null
+  target_milestone_id?: string | null
+  acceptance_criteria?: string | null
+  next_step?: string | null
+  waiting_for?: string | null
+  baseline_starts_at?: string | null
+  baseline_due_at?: string | null
+  position?: number
+}
+
+export interface WorkEntityTaskUpdate {
+  title?: string
+  description?: string | null
+  status?: WorkEntityTaskStatus
+  priority?: WorkEntityTaskPriority
+  assignee_id?: string | null
+  stage_id?: string | null
+  target_milestone_id?: string | null
+  acceptance_criteria?: string | null
+  next_step?: string | null
+  waiting_for?: string | null
+  forecast_starts_at?: string | null
+  forecast_due_at?: string | null
+  position?: number
+  change_reason?: string | null
+}
+
+export interface WorkEntityMilestone {
+  id: string
+  milestone_number: number
+  entity_id: string
+  stage_id: string | null
+  stage_title: string | null
+  title: string
+  description: string | null
+  status: WorkEntityMilestoneLifecycleStatus
+  display_status: WorkEntityMilestoneDisplayStatus
+  criticality: WorkEntityMilestoneCriticality
+  criticality_reason: string | null
+  acceptance_criteria: string
+  decision_owner_id: string | null
+  decision_owner_name: string | null
+  created_by_id: string | null
+  created_by_name: string | null
+  baseline_at: string
+  forecast_at: string
+  actual_at: string | null
+  cancelled_at: string | null
+  variance_days: number
+  reschedule_reason: string | null
+  reschedule_count: number
+  introduced_after_baseline: boolean
+  introduced_at_revision: number | null
+  position: number
+  predecessor_ids: string[]
+  can_manage: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkEntityMilestoneCreate {
+  title: string
+  description?: string | null
+  status?: WorkEntityMilestoneLifecycleStatus
+  criticality?: WorkEntityMilestoneCriticality
+  criticality_reason?: string | null
+  acceptance_criteria: string
+  decision_owner_id?: string | null
+  stage_id?: string | null
+  baseline_at: string
+  actual_at?: string | null
+  position?: number
+}
+
+export interface WorkEntityMilestoneUpdate {
+  title?: string
+  description?: string | null
+  status?: WorkEntityMilestoneLifecycleStatus
+  criticality?: WorkEntityMilestoneCriticality
+  criticality_reason?: string | null
+  acceptance_criteria?: string
+  decision_owner_id?: string | null
+  stage_id?: string | null
+  position?: number
+  change_reason?: string | null
+}
+
+export interface WorkEntityScheduleDependencyCreate {
+  predecessor_type: WorkEntityScheduleNodeType
+  predecessor_id: string
+  successor_type: WorkEntityScheduleNodeType
+  successor_id: string
+  dependency_type?: WorkEntityScheduleDependencyType
+  lag_days?: number
+  cascade_on_shift?: boolean
+}
+
+export interface WorkEntityScheduleDependency {
+  id: string
+  entity_id: string
+  predecessor_type: WorkEntityScheduleNodeType
+  predecessor_id: string
+  predecessor_ref: string
+  predecessor_title: string
+  successor_type: WorkEntityScheduleNodeType
+  successor_id: string
+  successor_ref: string
+  successor_title: string
+  dependency_type: WorkEntityScheduleDependencyType
+  lag_days: number
+  cascade_on_shift: boolean
+  status: WorkEntityScheduleDependencyStatus
+  waiver_reason: string | null
+  waived_by_id: string | null
+  waived_by_name: string | null
+  waived_at: string | null
+  created_by_id: string | null
+  created_at: string
+}
+
+export interface WorkEntityMilestoneRescheduleRequest {
+  forecast_at: string
+  reason: string
+  cascade?: boolean
+  expected_revision?: number | null
+}
+
+export interface WorkEntityScheduleChange {
+  node_type: WorkEntityScheduleNodeType
+  node_id: string
+  node_ref: string
+  node_title: string
+  status: string
+  criticality: string | null
+  baseline_start_at: string | null
+  baseline_due_at: string | null
+  forecast_start_before: string | null
+  forecast_start_after: string | null
+  forecast_due_before: string
+  forecast_due_after: string
+  shift_days: number
+}
+
+export interface WorkEntityScheduleConflict {
+  node_type: WorkEntityScheduleNodeType
+  node_id: string
+  node_ref: string
+  node_title: string
+  code: string
+  message: string
+}
+
+export interface WorkEntityMilestoneReschedulePreview {
+  entity_id: string
+  milestone_id: string
+  schedule_revision: number
+  shift_days: number
+  reason: string
+  changes: WorkEntityScheduleChange[]
+  conflicts: WorkEntityScheduleConflict[]
+  project_forecast_due_before: string | null
+  project_forecast_due_after: string | null
+  requires_confirmation: boolean
+}
+
+/** Compatibility alias for older imports while feature branches converge. */
+export type WorkEntityTaskDependency = WorkEntityScheduleDependency
+
+export interface WorkEntityArtifact {
+  id: string
+  entity_id: string
+  task_id: string | null
+  task_title: string | null
+  milestone_id: string | null
+  milestone_title: string | null
+  artifact_type: WorkEntityArtifactType
+  title: string
+  body: string | null
+  url: string | null
+  status: WorkEntityArtifactStatus
+  created_by_id: string | null
+  created_by_name: string | null
+  updated_by_id: string | null
+  updated_by_name: string | null
+  archived_at: string | null
+  can_edit: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface WorkEntityWorkspace {
+  entity_id: string
+  current_access_role: WorkEntityAccessRole
+  participants: WorkEntityParticipant[]
+  stages: WorkEntityStage[]
+  tasks: WorkEntityTask[]
+  milestones: WorkEntityMilestone[]
+  dependencies: WorkEntityScheduleDependency[]
+  artifacts: WorkEntityArtifact[]
+}
+
+export interface WorkEntityMapNode {
+  id: string
+  node_type: 'entity' | 'task' | 'milestone' | 'artifact' | 'linked_object'
+  ref: string | null
+  title: string
+  status: string | null
+  criticality: string | null
+  baseline_starts_at: string | null
+  baseline_due_at: string | null
+  forecast_starts_at: string | null
+  forecast_due_at: string | null
+  actual_at: string | null
+  stage_title: string | null
+  stage_position: number | null
+  starts_at: string | null
+  due_at: string | null
+  occurred_at: string | null
+  assignee_name: string | null
+  parent_id: string | null
+  accessible: boolean
+}
+
+export interface WorkEntityMapEdge {
+  id: string
+  edge_type: 'dependency' | 'artifact' | 'link'
+  from_node_id: string
+  to_node_id: string
+}
+
+export interface WorkEntityMap {
+  entity_id: string
+  range_start: string
+  range_end: string
+  nodes: WorkEntityMapNode[]
+  edges: WorkEntityMapEdge[]
+  generated_at: string
+}
+
+export interface GuidedProjectMember {
+  user_id: string
+  role: 'participant' | 'editor' | 'viewer'
+}
+
+export interface GuidedProjectMilestone {
+  title: string
+  acceptance_criteria: string
+  baseline_at: string
+  decision_owner_id?: string | null
+  criticality?: WorkEntityMilestoneCriticality
+  criticality_reason?: string | null
+}
+
+export interface GuidedProjectTask {
+  title: string
+  acceptance_criteria: string
+  baseline_starts_at: string
+  baseline_due_at: string
+  assignee_id?: string | null
+  priority?: WorkEntityTaskPriority
+  target_milestone_index: number
+}
+
+export interface GuidedProjectCreate {
+  title: string
+  outcome_statement: string
+  success_criteria: string
+  constraints?: string | null
+  starts_at: string
+  due_at: string
+  members: GuidedProjectMember[]
+  milestones: GuidedProjectMilestone[]
+  tasks: GuidedProjectTask[]
+}
+
+export interface GuidedProjectCreated {
+  entity_id: string
+  schedule_revision: number
+}
+
+export interface ProjectDeadlineConflict {
+  node_type: WorkEntityScheduleNodeType
+  node_id: string
+  node_ref: string
+  title: string
+  forecast_due_at: string
+  message: string
+}
+
+export interface ProjectDeadlineChangePreview {
+  entity_id: string
+  schedule_revision: number
+  baseline_due_at: string | null
+  target_due_before: string | null
+  target_due_after: string
+  forecast_due_at: string | null
+  shift_days: number
+  conflicts: ProjectDeadlineConflict[]
+  can_apply: boolean
+}
+
+export interface ProjectCharterFieldChange {
+  field: 'outcome_statement' | 'success_criteria' | 'constraints'
+  before: string | null
+  after: string | null
+}
+
+export interface ProjectCharterChangePreview {
+  entity_id: string
+  schedule_revision: number
+  baseline_outcome_statement: string | null
+  baseline_success_criteria: string | null
+  baseline_constraints: string | null
+  changes: ProjectCharterFieldChange[]
+  can_apply: boolean
 }
 
 export interface CatalogItem {

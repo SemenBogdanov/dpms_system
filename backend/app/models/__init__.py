@@ -29,6 +29,17 @@ from app.models.quick_note_attachment import QuickNoteAttachment
 from app.models.quick_note_share import QuickNoteComment, QuickNoteShare
 from app.models.personal_task import PersonalTask, PersonalTaskCheckpoint, PersonalTaskEvent
 from app.models.deadline_tracker import DeadlineTracker
+from app.models.work_entity import (
+    WorkEntity,
+    WorkEntityArtifact,
+    WorkEntityEvent,
+    WorkEntityLink,
+    WorkEntityMember,
+    WorkEntityMilestone,
+    WorkEntityScheduleDependency,
+    WorkEntityStage,
+    WorkEntityTask,
+)
 from app.models.competency import (
     Competency,
     CompetencyQuestion,
@@ -68,6 +79,15 @@ __all__ = [
     "PersonalTaskEvent",
     "PersonalTaskCheckpoint",
     "DeadlineTracker",
+    "WorkEntity",
+    "WorkEntityMember",
+    "WorkEntityLink",
+    "WorkEntityEvent",
+    "WorkEntityStage",
+    "WorkEntityTask",
+    "WorkEntityMilestone",
+    "WorkEntityScheduleDependency",
+    "WorkEntityArtifact",
     "Competency",
     "CompetencyQuestion",
     "CompetencyChoice",

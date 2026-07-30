@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { FileSpreadsheet, Lock, Pencil, Search } from 'lucide-react'
 import { api } from '@/api/client'
@@ -67,6 +67,8 @@ type RowItem = (QueueTaskResponse & { status?: TaskStatus }) | Task
 
 export function QueuePage() {
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const requestedTaskId = searchParams.get('task')
   const { user: currentUser } = useAuth()
   const [tasks, setTasks] = useState<QueueTaskResponse[]>([])
   const [loading, setLoading] = useState(true)
@@ -121,6 +123,13 @@ export function QueuePage() {
     }
   }, [])
 
+  const openDetail = useCallback((id: string) => {
+    api
+      .get<Task>(`/api/tasks/${id}`)
+      .then(setDetailTask)
+      .catch(() => toast.error('Не удалось загрузить задачу'))
+  }, [])
+
   const loadArchivedTasks = useCallback(() => {
     if (!currentUser) return
     const endpoint =
@@ -147,6 +156,10 @@ export function QueuePage() {
   useEffect(() => {
     api.get<User[]>('/api/users').then(setUsers).catch(() => setUsers([]))
   }, [])
+
+  useEffect(() => {
+    if (requestedTaskId) openDetail(requestedTaskId)
+  }, [openDetail, requestedTaskId])
 
   const isTaskInTracker = useCallback((taskId: string) => {
     return deadlineTrackers.some((tracker) => tracker.linked_task_id === taskId && tracker.status !== 'archived')
@@ -305,10 +318,6 @@ export function QueuePage() {
 
   if (loading) return <SkeletonTable rows={8} />
   if (error) return <div className="text-red-600">{error}</div>
-
-  const openDetail = (id: string) => {
-    api.get<Task>(`/api/tasks/${id}`).then(setDetailTask).catch(() => toast.error('Не удалось загрузить задачу'))
-  }
 
   const handleOpenBugfix = (task: Task) => {
     setDetailTask(null)

@@ -21,6 +21,7 @@ const expectedItems = [
   ['reports', '/reports', 'Отчёты', 'management'],
   ['calibration', '/calibration', 'Калибровка', 'management'],
   ['absences', '/absences', 'Отсутствия', 'management'],
+  ['work-entities', '/work-entities', 'Проекты и цели', 'management'],
   ['competencies', '/competencies', 'Развитие', 'development'],
   ['feedback', '/feedback', 'Обратная связь', 'feedback'],
   ['settings', '/settings', 'Настройки', 'settings'],
@@ -51,8 +52,8 @@ for (const [id, to, label, group] of expectedItems) {
 
 const payloadVersionMatch = sidebarSource.match(/sidebarOrderPayload[\s\S]*?return\s*\{\s*version:\s*(\d+)/)
 const payloadVersion = payloadVersionMatch ? Number(payloadVersionMatch[1]) : 0
-if (payloadVersion < 3) {
-  errors.push(`sidebar menu payload version must be >= 3, got ${payloadVersion || 'unknown'}`)
+if (payloadVersion < 4) {
+  errors.push(`sidebar menu payload version must be >= 4, got ${payloadVersion || 'unknown'}`)
 }
 
 if (errors.length > 0) {

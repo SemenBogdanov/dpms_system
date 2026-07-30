@@ -5,6 +5,7 @@ import { DeadlineBadge } from './DeadlineBadge'
 import { PriorityBadge } from './PriorityBadge'
 import { CalendarClock, Copy, FileText, X } from 'lucide-react'
 import toast from 'react-hot-toast'
+import { WorkEntityBacklinks } from './WorkEntityBacklinks'
 
 interface TaskDetailModalProps {
   task: Task | null
@@ -322,6 +323,8 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
               {task.description || '—'}
             </p>
           </div>
+
+          <WorkEntityBacklinks targetType="task" targetId={task.id} />
 
           {(attachmentsLoading || attachments.length > 0) && (
             <div>

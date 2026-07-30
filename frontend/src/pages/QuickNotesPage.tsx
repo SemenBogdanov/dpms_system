@@ -37,6 +37,7 @@ import type {
   SharedQuickNote,
 } from '@/api/types'
 import { cn } from '@/lib/utils'
+import { WorkEntityBacklinks } from '@/components/WorkEntityBacklinks'
 
 type NoteFilter = QuickNoteStatus | 'all'
 type NoteTab = 'mine' | 'shared'
@@ -1011,6 +1012,7 @@ export function QuickNotesPage() {
                     </div>
                   )}
                 </div>
+                <WorkEntityBacklinks targetType="quick_note" targetId={detailNote.id} />
               </div>
               {renderDiscussion(detailNote.id)}
             </div>

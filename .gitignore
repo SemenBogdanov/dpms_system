@@ -34,3 +34,4 @@ uploads/
 
 # Local agent/runtime state
 status.json
+artifacts/

@@ -8,6 +8,31 @@ const API_BASE =
   import.meta.env.VITE_API_URL ||
   (typeof window !== 'undefined' ? window.location.origin : '')
 
+function errorMessage(payload: unknown, fallback: string): string {
+  if (!payload || typeof payload !== 'object') return fallback
+  const detail = (payload as { detail?: unknown }).detail
+  if (typeof detail === 'string' && detail) return detail
+  if (detail && typeof detail === 'object') {
+    const structured = detail as {
+      message?: unknown
+      readiness?: {
+        issues?: Array<{ message?: unknown; guidance?: unknown }>
+      }
+    }
+    const message = typeof structured.message === 'string' ? structured.message : ''
+    const issueMessages = (structured.readiness?.issues || [])
+      .map((issue) => {
+        const issueMessage = typeof issue.message === 'string' ? issue.message : ''
+        const guidance = typeof issue.guidance === 'string' ? issue.guidance : ''
+        return [issueMessage, guidance].filter(Boolean).join(' ')
+      })
+      .filter(Boolean)
+    const actionable = [message, ...issueMessages].filter(Boolean).join('\n')
+    if (actionable) return actionable
+  }
+  return fallback
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -28,12 +53,12 @@ async function request<T>(
     if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
       window.location.href = '/login'
     }
-    const err = await res.json().catch(() => ({ detail: 'Требуется авторизация' }))
-    throw new Error(err.detail || 'Требуется авторизация')
+    const err: unknown = await res.json().catch(() => null)
+    throw new Error(errorMessage(err, 'Требуется авторизация'))
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(err.detail || String(err))
+    const err: unknown = await res.json().catch(() => null)
+    throw new Error(errorMessage(err, res.statusText || 'Ошибка запроса'))
   }
   const text = await res.text()
   return (text ? JSON.parse(text) : null) as T
@@ -52,12 +77,12 @@ async function requestBlob(path: string): Promise<Blob> {
     if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
       window.location.href = '/login'
     }
-    const err = await res.json().catch(() => ({ detail: 'Требуется авторизация' }))
-    throw new Error(err.detail || 'Требуется авторизация')
+    const err: unknown = await res.json().catch(() => null)
+    throw new Error(errorMessage(err, 'Требуется авторизация'))
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(err.detail || String(err))
+    const err: unknown = await res.json().catch(() => null)
+    throw new Error(errorMessage(err, res.statusText || 'Ошибка запроса'))
   }
   return res.blob()
 }

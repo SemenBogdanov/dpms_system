@@ -489,7 +489,8 @@ body {
 [data-theme='dark'] .text-amber-500,
 [data-theme='dark'] .text-amber-600,
 [data-theme='dark'] .text-amber-700,
-[data-theme='dark'] .text-amber-800 {
+[data-theme='dark'] .text-amber-800,
+[data-theme='dark'] .text-amber-900 {
   color: hsl(43 96% 68%);
 }
 

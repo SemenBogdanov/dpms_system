@@ -6,6 +6,7 @@ import {
   Clock3,
   List,
   Link2,
+  Network,
   PauseCircle,
   Pencil,
   PlayCircle,
@@ -15,6 +16,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
 import type {
@@ -26,6 +28,8 @@ import type {
   PersonalTask,
 } from '@/api/types'
 import { cn } from '@/lib/utils'
+import { WorkEntityBacklinks } from '@/components/WorkEntityBacklinks'
+import { preventBackdropDismiss, useProtectedModal } from '@/hooks/useProtectedModal'
 
 type TrackerFilter = DeadlineTrackerStatus | 'all'
 
@@ -212,16 +216,65 @@ function DeadlineBar({ tracker, compact = false }: { tracker: DeadlineTracker; c
   )
 }
 
+function EntityLinkModal({
+  tracker,
+  onClose,
+}: {
+  tracker: DeadlineTracker
+  onClose: () => void
+}) {
+  const panelRef = useProtectedModal<HTMLDivElement>()
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-0 sm:items-center sm:p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Проекты и цели: ${tracker.title}`}
+      onPointerDown={preventBackdropDismiss}
+    >
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        className="w-full rounded-t-lg bg-white p-4 shadow-2xl sm:max-w-xl sm:rounded-lg"
+      >
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-slate-900">Проекты и цели</h2>
+            <p className="truncate text-xs text-slate-500">{tracker.title}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+            aria-label="Закрыть"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <WorkEntityBacklinks
+          targetType="deadline_tracker"
+          targetId={tracker.id}
+          className="bg-white"
+        />
+      </div>
+    </div>
+  )
+}
+
 export function DeadlineTrackersPage() {
+  const [searchParams] = useSearchParams()
+  const requestedTrackerId = searchParams.get('tracker')
   const [trackers, setTrackers] = useState<DeadlineTracker[]>([])
   const [personalTasks, setPersonalTasks] = useState<PersonalTask[]>([])
-  const [filter, setFilter] = useState<TrackerFilter>('active')
+  const [filter, setFilter] = useState<TrackerFilter>(requestedTrackerId ? 'all' : 'active')
   const [typeFilter, setTypeFilter] = useState<DeadlineTrackerType | 'all'>('all')
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(false)
   const [formOpen, setFormOpen] = useState(false)
-  const [compactView, setCompactView] = useState(true)
+  const [compactView, setCompactView] = useState(!requestedTrackerId)
   const [editing, setEditing] = useState<DeadlineTracker | null>(null)
+  const [entityLinkTracker, setEntityLinkTracker] = useState<DeadlineTracker | null>(null)
   const [form, setForm] = useState({ ...emptyForm, startsAt: nowInputDate() })
 
   const loadTrackers = useCallback(async () => {
@@ -250,6 +303,21 @@ export function DeadlineTrackersPage() {
   useEffect(() => {
     void loadPersonalTasks().catch(() => undefined)
   }, [loadPersonalTasks])
+
+  useEffect(() => {
+    if (!requestedTrackerId) return
+    if (filter !== 'all') {
+      setFilter('all')
+      return
+    }
+    setCompactView(false)
+    if (!trackers.some((tracker) => tracker.id === requestedTrackerId)) return
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(`deadline-tracker-${requestedTrackerId}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+  }, [filter, requestedTrackerId, trackers])
 
   const stats = useMemo(() => {
     const active = trackers.filter((item) => item.status === 'active').length
@@ -577,7 +645,14 @@ export function DeadlineTrackersPage() {
           const state = trackerState(tracker)
           if (compactView) {
             return (
-              <article key={tracker.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm transition hover:border-slate-300">
+              <article
+                id={`deadline-tracker-${tracker.id}`}
+                key={tracker.id}
+                className={cn(
+                  'rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm transition hover:border-slate-300',
+                  tracker.id === requestedTrackerId && 'ring-2 ring-primary/30',
+                )}
+              >
                 <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
                   <div className="flex min-w-0 flex-1 items-center gap-3">
                     <div className="min-w-0 flex-1">
@@ -622,6 +697,15 @@ export function DeadlineTrackersPage() {
                       )}
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        type="button"
+                        aria-label="Проекты и цели"
+                        title="Проекты и цели"
+                        onClick={() => setEntityLinkTracker(tracker)}
+                        className="rounded-md border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+                      >
+                        <Network className="h-4 w-4" aria-hidden="true" />
+                      </button>
                       {tracker.status === 'paused' ? (
                         <button
                           type="button"
@@ -677,7 +761,14 @@ export function DeadlineTrackersPage() {
             )
           }
           return (
-            <article key={tracker.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+            <article
+              id={`deadline-tracker-${tracker.id}`}
+              key={tracker.id}
+              className={cn(
+                'rounded-xl border border-slate-200 bg-white p-4 shadow-sm',
+                tracker.id === requestedTrackerId && 'ring-2 ring-primary/30',
+              )}
+            >
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -708,6 +799,14 @@ export function DeadlineTrackersPage() {
                   )}
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEntityLinkTracker(tracker)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
+                  >
+                    <Network className="h-4 w-4" />
+                    Проекты и цели
+                  </button>
                   {tracker.status === 'active' && (
                     <button
                       type="button"
@@ -806,6 +905,13 @@ export function DeadlineTrackersPage() {
         <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
           Нет трекеров под текущий фильтр.
         </div>
+      )}
+
+      {entityLinkTracker && (
+        <EntityLinkModal
+          tracker={entityLinkTracker}
+          onClose={() => setEntityLinkTracker(null)}
+        />
       )}
     </div>
   )

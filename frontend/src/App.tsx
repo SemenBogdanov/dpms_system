@@ -62,6 +62,7 @@ const ReportsPage = lazyPage(() => import('@/pages/ReportsPage'), 'ReportsPage')
 const FeedbackPage = lazyPage(() => import('@/pages/FeedbackPage'), 'FeedbackPage')
 const CompetenciesPage = lazyPage(() => import('@/pages/CompetenciesPage'), 'CompetenciesPage')
 const SettingsPage = lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage')
+const WorkEntitiesPage = lazyPage(() => import('@/pages/WorkEntitiesPage'), 'WorkEntitiesPage')
 
 function DashboardRoute() {
   const { user } = useAuth()
@@ -179,6 +180,7 @@ function App() {
         <Route path="quick-notes/:noteId" element={<QuickNotesPage />} />
         <Route path="personal-tasks" element={<PersonalTasksPage />} />
         <Route path="deadline-trackers" element={<DeadlineTrackersPage />} />
+        <Route path="work-entities" element={<TaskWorkspaceRoute><WorkEntitiesPage /></TaskWorkspaceRoute>} />
         <Route path="shop" element={<TaskWorkspaceRoute><ShopPage /></TaskWorkspaceRoute>} />
         <Route
           path="feedback"
