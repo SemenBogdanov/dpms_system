@@ -806,11 +806,16 @@ bootstrap() {
   release_id="$(release_id_for_sha "$sha")"
   release_dir="$(release_dir_for_id "$release_id")"
   if [[ ! -d "$release_dir" ]]; then
+    local tool_source tool_tmp
     rm -rf "$release_dir.bootstrap.tmp"
     mkdir -p "$release_dir.bootstrap.tmp"
     git -C "$DPMS_REPO_DIR" archive --format=tar --prefix="$release_id/" "$sha" | tar -xf - -C "$release_dir.bootstrap.tmp"
     mkdir -p "$release_dir"
-    cp -a "$release_dir.bootstrap.tmp/$release_id/deploy/dpms-node.sh" "$DPMS_TOOLS_DIR/dpms-node.sh"
+    tool_source="$release_dir.bootstrap.tmp/$release_id/deploy/dpms-node.sh"
+    tool_tmp="$DPMS_TOOLS_DIR/dpms-node.sh.tmp.$$"
+    install -m 0755 "$tool_source" "$tool_tmp"
+    bash -n "$tool_tmp"
+    mv -f "$tool_tmp" "$DPMS_TOOLS_DIR/dpms-node.sh"
     rm -rf "$release_dir.bootstrap.tmp"
   fi
   prepare_release "$sha"
