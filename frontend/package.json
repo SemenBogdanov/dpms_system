@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "eslint . && npm run smoke:navigation",
+    "lint": "eslint . && npm run smoke:navigation && npm run smoke:mobile-readiness",
     "smoke:navigation": "node scripts/check-navigation.mjs",
+    "smoke:mobile-readiness": "node scripts/check-mobile-readiness.mjs",
+    "test:mobile": "npm run build && playwright test --config playwright.mobile.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -23,6 +25,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
+    "@playwright/test": "^1.62.0",
     "@types/node": "^22.9.0",
     "@types/react": "^18.2.64",
     "@types/react-dom": "^18.2.21",

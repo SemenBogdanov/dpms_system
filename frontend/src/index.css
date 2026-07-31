@@ -65,6 +65,71 @@ body {
   background: hsl(var(--background));
   color: hsl(var(--foreground));
   transition: background-color 160ms ease, color 160ms ease;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+button,
+a {
+  touch-action: manipulation;
+}
+
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 100svh;
+}
+
+.app-main {
+  padding-left: max(0.75rem, env(safe-area-inset-left));
+  padding-right: max(0.75rem, env(safe-area-inset-right));
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-header {
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+  padding-right: max(0.75rem, env(safe-area-inset-right));
+}
+
+.mobile-menu-button {
+  left: max(0.75rem, env(safe-area-inset-left));
+  top: max(0.5rem, env(safe-area-inset-top));
+}
+
+.app-sidebar {
+  width: min(19rem, calc(100vw - 2rem));
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@supports (height: 100dvh) {
+  .min-h-screen {
+    min-height: 100dvh;
+  }
+}
+
+@media (min-width: 1024px) {
+  .app-sidebar {
+    width: 14rem;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+
+@media (max-width: 767px) and (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    min-width: 0;
+    max-width: 100%;
+    font-size: 16px !important;
+  }
 }
 
 ::selection {

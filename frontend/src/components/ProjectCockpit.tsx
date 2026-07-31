@@ -165,7 +165,7 @@ function Modal({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="max-h-[92vh] w-full overflow-y-auto rounded-t-lg bg-white shadow-2xl sm:max-w-2xl sm:rounded-lg"
+        className="max-h-[100dvh] w-full overflow-y-auto rounded-t-lg bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl sm:max-h-[92vh] sm:max-w-2xl sm:rounded-lg sm:pb-0"
       >
         <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
           <h3 className="text-base font-semibold text-slate-900">{title}</h3>

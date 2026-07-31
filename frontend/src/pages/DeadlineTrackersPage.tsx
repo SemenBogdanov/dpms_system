@@ -683,8 +683,8 @@ export function DeadlineTrackersPage() {
                     <DeadlineBar tracker={tracker} compact />
                   </div>
 
-                  <div className="flex shrink-0 items-center justify-between gap-3 lg:justify-end">
-                    <div className="min-w-[92px] text-[11px] lg:text-right">
+                  <div className="flex min-w-0 shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3 lg:justify-end">
+                    <div className="min-w-0 text-[11px] sm:min-w-[92px] lg:text-right">
                       <div className={cn(
                         'whitespace-nowrap font-medium',
                         state.tone === 'danger' ? 'text-rose-600' : state.tone === 'warn' ? 'text-amber-600' : 'text-emerald-600',
@@ -696,13 +696,13 @@ export function DeadlineTrackersPage() {
                         <div className="whitespace-nowrap text-rose-600">{shiftLabel(tracker)} до {formatDateCompact(shiftedDueAt(tracker).toISOString())}</div>
                       )}
                     </div>
-                    <div className="flex shrink-0 items-center gap-1">
+                    <div className="flex shrink-0 items-center justify-end gap-1 overflow-x-auto pb-1 sm:overflow-visible sm:pb-0">
                       <button
                         type="button"
                         aria-label="Проекты и цели"
                         title="Проекты и цели"
                         onClick={() => setEntityLinkTracker(tracker)}
-                        className="rounded-md border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 lg:h-8 lg:w-8"
                       >
                         <Network className="h-4 w-4" aria-hidden="true" />
                       </button>
@@ -712,7 +712,7 @@ export function DeadlineTrackersPage() {
                           aria-label="Снять паузу"
                           title="Снять паузу"
                           onClick={() => void patchTracker(tracker, { status: 'active' }, 'Пауза снята')}
-                          className="rounded-md border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+                          className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 lg:h-8 lg:w-8"
                         >
                           <PlayCircle className="h-4 w-4" aria-hidden="true" />
                         </button>
@@ -722,7 +722,7 @@ export function DeadlineTrackersPage() {
                           aria-label="Поставить на паузу"
                           title="Пауза"
                           onClick={() => void patchTracker(tracker, { status: 'paused' }, 'Трекер на паузе')}
-                          className="rounded-md border border-amber-200 p-1.5 text-amber-700 hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200"
+                          className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-amber-200 text-amber-700 hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 lg:h-8 lg:w-8"
                         >
                           <PauseCircle className="h-4 w-4" aria-hidden="true" />
                         </button>
@@ -732,7 +732,7 @@ export function DeadlineTrackersPage() {
                         aria-label="Закрыть трекер"
                         title="Закрыть"
                         onClick={() => void patchTracker(tracker, { status: 'done' }, 'Трекер закрыт')}
-                        className="rounded-md border border-emerald-200 p-1.5 text-emerald-700 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200"
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-emerald-200 text-emerald-700 hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200 lg:h-8 lg:w-8"
                       >
                         <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                       </button>
@@ -741,7 +741,7 @@ export function DeadlineTrackersPage() {
                         aria-label="Редактировать трекер"
                         title="Редактировать"
                         onClick={() => openEdit(tracker)}
-                        className="rounded-md border border-slate-200 p-1.5 text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300"
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 lg:h-8 lg:w-8"
                       >
                         <Pencil className="h-4 w-4" aria-hidden="true" />
                       </button>
@@ -750,7 +750,7 @@ export function DeadlineTrackersPage() {
                         aria-label="Удалить трекер"
                         title="Удалить"
                         onClick={() => void deleteTracker(tracker)}
-                        className="rounded-md border border-rose-200 p-1.5 text-rose-600 hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200"
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-rose-200 text-rose-600 hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-200 lg:h-8 lg:w-8"
                       >
                         <Trash2 className="h-4 w-4" aria-hidden="true" />
                       </button>

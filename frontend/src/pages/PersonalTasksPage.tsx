@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Archive,
   ArrowUpRight,
@@ -398,6 +398,13 @@ export function PersonalTasksPage() {
   const [checkpointFormTaskId, setCheckpointFormTaskId] = useState<string | null>(null)
   const [deadlineCompact, setDeadlineCompact] = useState(true)
   const [trackerBusyId, setTrackerBusyId] = useState<string | null>(null)
+  const taskFormRef = useRef<HTMLElement>(null)
+
+  const scrollToTaskForm = () => {
+    window.requestAnimationFrame(() => {
+      taskFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
 
   const loadTasks = useCallback(async () => {
     const params = new URLSearchParams()
@@ -534,7 +541,7 @@ export function PersonalTasksPage() {
       linkedTaskId: task.linked_task_id || '',
       sourceQuickNoteId: task.source_quick_note_id || '',
     })
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    scrollToTaskForm()
   }
 
   const payloadFromForm = (): PersonalTaskCreate | PersonalTaskUpdate => ({
@@ -767,6 +774,7 @@ export function PersonalTasksPage() {
               setForm(newTaskForm())
               setEditing(null)
               setTaskFormOpen(true)
+              scrollToTaskForm()
             }}
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
           >
@@ -875,7 +883,7 @@ export function PersonalTasksPage() {
       )}
 
       {taskFormOpen && (
-      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <section ref={taskFormRef} className="scroll-mt-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
@@ -1607,7 +1615,7 @@ function IconButton({
       aria-label={label}
       disabled={disabled}
       className={cn(
-        'inline-flex h-9 w-9 items-center justify-center rounded-lg border text-sm transition disabled:cursor-not-allowed disabled:opacity-40',
+        'inline-flex h-11 w-11 items-center justify-center rounded-lg border text-sm transition sm:h-9 sm:w-9 disabled:cursor-not-allowed disabled:opacity-40',
         danger
           ? 'border-rose-200 text-rose-600 hover:bg-rose-50'
           : 'border-slate-200 text-slate-600 hover:bg-slate-50',

@@ -47,9 +47,25 @@
       <p><a href="/login?mobile_reset=1">Открыть вручную</a></p>
     </main>
     <script>
-      setTimeout(function () {
-        window.location.replace('/login?mobile_reset=1')
-      }, 800)
+      ;(async function () {
+        try {
+          if ('serviceWorker' in navigator) {
+            var registrations = await navigator.serviceWorker.getRegistrations()
+            await Promise.all(registrations.map(function (registration) {
+              return registration.unregister()
+            }))
+          }
+          if ('caches' in window) {
+            var cacheNames = await caches.keys()
+            await Promise.all(cacheNames.map(function (cacheName) {
+              return caches.delete(cacheName)
+            }))
+          }
+        } catch (error) {
+          // The server-side Clear-Site-Data header remains the primary reset.
+        }
+        window.location.replace('/login?mobile_reset=' + Date.now())
+      })()
     </script>
   </body>
 </html>

@@ -7,6 +7,8 @@ Usage: scripts/dpms-release.sh <command> [args]
 
 Thin local wrapper around the VPS-first release manager. It does not build or
 upload application code from this machine. The VPS fetches GitHub itself.
+Prepare/update use bootstrap so the exact release's deployment tool is
+installed before a later promote command.
 
 Examples:
   scripts/dpms-release.sh prepare main
@@ -27,7 +29,13 @@ fi
 vps_host="${DPMS_VPS_HOST:-dpms-vps}"
 control_path="${DPMS_SSH_CONTROL_PATH:-$HOME/.ssh/controlmasters/dpms-vps}"
 
-remote=(/opt/dpms-tools/dpms-node.sh -- "$@")
+command_name="$1"
+shift
+if [[ "$command_name" == prepare || "$command_name" == update ]]; then
+  remote=(/opt/dpms-tools/dpms-node.sh -- bootstrap "${1:-main}")
+else
+  remote=(/opt/dpms-tools/dpms-node.sh -- "$command_name" "$@")
+fi
 printf -v remote_cmd '%q ' "${remote[@]}"
 if [[ -S "$control_path" ]]; then
   exec ssh -o "ControlPath=$control_path" "$vps_host" "$remote_cmd"

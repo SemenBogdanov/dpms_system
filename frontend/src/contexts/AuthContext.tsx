@@ -13,6 +13,8 @@ type AuthContextValue = {
   login: (email: string, password: string) => Promise<void>
   logout: () => void
   updateUser: (user: AuthenticatedUser) => void
+  retryAuth: () => Promise<void>
+  authError: string | null
   loading: boolean
 }
 
@@ -21,9 +23,12 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthenticatedUser | null>(null)
   const [token, setTokenState] = useState<string | null>(null)
+  const [authError, setAuthError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   const loadUser = useCallback(async () => {
+    setLoading(true)
+    setAuthError(null)
     const t = getToken()
     if (!t) {
       setUser(null)
@@ -35,10 +40,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const u = await api.get<AuthenticatedUser>('/api/auth/me')
       setUser(u)
-    } catch {
-      clearToken()
-      setTokenState(null)
+    } catch (error) {
       setUser(null)
+      const remainingToken = getToken()
+      if (remainingToken) {
+        setTokenState(remainingToken)
+        setAuthError(error instanceof Error ? error.message : 'Не удалось проверить сессию')
+      } else {
+        setTokenState(null)
+      }
     } finally {
       setLoading(false)
     }
@@ -57,6 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setToken(res.access_token)
       setTokenState(res.access_token)
       setUser(res.user)
+      setAuthError(null)
     },
     []
   )
@@ -69,11 +80,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     clearToken()
     setTokenState(null)
     setUser(null)
+    setAuthError(null)
     window.location.href = '/login'
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, updateUser, loading }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        login,
+        logout,
+        updateUser,
+        retryAuth: loadUser,
+        authError,
+        loading,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )

@@ -16,11 +16,15 @@ export function useProtectedModal<T extends HTMLElement>(): RefObject<T> {
   useEffect(() => {
     const previousFocus = document.activeElement as HTMLElement | null
     const previousOverflow = document.body.style.overflow
+    const scrollOwner = document.querySelector<HTMLElement>('.app-main')
+    const previousScrollOwnerOverflow = scrollOwner?.style.overflow
     document.body.style.overflow = 'hidden'
+    if (scrollOwner) scrollOwner.style.overflow = 'hidden'
 
     const focusFrame = window.requestAnimationFrame(() => {
       const panel = panelRef.current
-      const preferred = panel?.querySelector<HTMLElement>('[autofocus]')
+      const coarsePointer = window.matchMedia('(pointer: coarse)').matches
+      const preferred = coarsePointer ? null : panel?.querySelector<HTMLElement>('[autofocus]')
       const first = panel?.querySelector<HTMLElement>(focusableSelector)
       ;(preferred || first || panel)?.focus()
     })
@@ -57,6 +61,7 @@ export function useProtectedModal<T extends HTMLElement>(): RefObject<T> {
       window.cancelAnimationFrame(focusFrame)
       document.removeEventListener('keydown', handleKeyDown)
       document.body.style.overflow = previousOverflow
+      if (scrollOwner) scrollOwner.style.overflow = previousScrollOwnerOverflow || ''
       previousFocus?.focus()
     }
   }, [])

@@ -707,7 +707,7 @@ function Modal({
         ref={panelRef}
         tabIndex={-1}
         className={cn(
-          'max-h-[92vh] w-full overflow-y-auto rounded-t-lg bg-white shadow-2xl sm:rounded-lg',
+          'max-h-[100dvh] w-full overflow-y-auto rounded-t-lg bg-white pb-[env(safe-area-inset-bottom)] shadow-2xl sm:max-h-[92vh] sm:rounded-lg sm:pb-0',
           wide ? 'sm:max-w-2xl' : 'sm:max-w-lg',
         )}
       >

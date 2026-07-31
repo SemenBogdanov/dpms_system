@@ -241,7 +241,7 @@ validate_env_file() {
 }
 
 healthcheck() {
-  local backend https_health https_root
+  local backend https_health https_root frontend_assets
   log "== DPMS healthcheck =="
   log "time_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ -f "$DPMS_COMPOSE_FILE" ]]; then
@@ -250,15 +250,46 @@ healthcheck() {
   backend=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/health || true)
   https_health=$(curl -k -s -o /dev/null -w '%{http_code}' -H "Host: ${DPMS_DOMAIN_PUNY}" https://127.0.0.1/health || true)
   https_root=$(curl -k -s -o /dev/null -w '%{http_code}' -H "Host: ${DPMS_DOMAIN_PUNY}" https://127.0.0.1/ || true)
+  if frontend_asset_healthcheck; then
+    frontend_assets=ok
+  else
+    frontend_assets=failed
+  fi
   log "backend_health=$backend"
   log "https_health=$https_health"
   log "https_root=$https_root"
-  if [[ "$backend" == 200 && "$https_health" == 200 && "$https_root" == 200 ]]; then
+  log "frontend_assets=$frontend_assets"
+  if [[ "$backend" == 200 && "$https_health" == 200 && "$https_root" == 200 && "$frontend_assets" == ok ]]; then
     log "healthcheck_ok=1"
     return 0
   fi
   log "healthcheck_failed=1"
   return 1
+}
+
+frontend_asset_healthcheck() {
+  local index asset result code content_type missing_code
+  local -a assets=()
+  index=$(curl -k -fsS -H "Host: ${DPMS_DOMAIN_PUNY}" https://127.0.0.1/ || true)
+  mapfile -t assets < <(printf '%s' "$index" | grep -oE '/assets/[^"]+\.(js|css)' | sort -u)
+  [[ ${#assets[@]} -gt 0 ]] || return 1
+
+  for asset in "${assets[@]}"; do
+    result=$(curl -k -sS -o /dev/null -w '%{http_code} %{content_type}' \
+      -H "Host: ${DPMS_DOMAIN_PUNY}" "https://127.0.0.1${asset}" || true)
+    code="${result%% *}"
+    content_type="${result#* }"
+    [[ "$code" == 200 ]] || return 1
+    case "$asset" in
+      *.js) [[ "$content_type" == *javascript* ]] || return 1 ;;
+      *.css) [[ "$content_type" == text/css* ]] || return 1 ;;
+    esac
+  done
+
+  missing_code=$(curl -k -sS -o /dev/null -w '%{http_code}' \
+    -H "Host: ${DPMS_DOMAIN_PUNY}" \
+    "https://127.0.0.1/assets/dpms-healthcheck-missing.js" || true)
+  [[ "$missing_code" == 404 ]]
 }
 
 wait_for_healthcheck() {
@@ -292,7 +323,10 @@ free_mb_on_opt() {
 
 build_frontend() {
   local release_dir="$1"
+  local release_id
+  release_id="$(basename "$release_dir")"
   docker run --rm \
+    -e "VITE_RELEASE_ID=$release_id" \
     -v "$release_dir/frontend:/work" \
     -w /work \
     "$DPMS_NODE_IMAGE" \
@@ -558,14 +592,22 @@ copy_runtime_files_from_release() {
 install_nginx_config_from_release() {
   local release_dir="$1"
   local current=/etc/nginx/sites-available/dpms
+  local backup="${current}.backup.$(date -u +%Y%m%dT%H%M%SZ)"
   [[ -f "$release_dir/deploy/nginx.conf" ]] || die "release missing deploy/nginx.conf"
-  if [[ -f "$current" ]] && grep -qE 'listen 443 ssl|managed by Certbot|/etc/letsencrypt/' "$current"; then
-    log "nginx_config_preserved=$current"
-    ln -sfn "$current" /etc/nginx/sites-enabled/dpms
-    return
-  fi
+  [[ -f /etc/letsencrypt/live/"$DPMS_DOMAIN_PUNY"/fullchain.pem ]] || die "TLS certificate is missing"
+  [[ -f /etc/letsencrypt/live/"$DPMS_DOMAIN_PUNY"/privkey.pem ]] || die "TLS private key is missing"
+  [[ -f "$current" ]] && cp "$current" "$backup"
   install -m 0644 "$release_dir/deploy/nginx.conf" "$current"
   ln -sfn "$current" /etc/nginx/sites-enabled/dpms
+  if ! nginx -t; then
+    if [[ -f "$backup" ]]; then
+      cp "$backup" "$current"
+      nginx -t || true
+    fi
+    die "release nginx configuration is invalid; previous config restored"
+  fi
+  log "nginx_config_installed=$current"
+  [[ -f "$backup" ]] && log "nginx_config_backup=$backup"
 }
 
 install_tool_from_release() {
@@ -748,7 +790,15 @@ bootstrap() {
   if [[ $# -gt 0 ]]; then
     die "bootstrap only prepares a release; use promote separately after approval"
   fi
-  install_host_dependencies
+  if command -v docker >/dev/null 2>&1 \
+    && docker compose version >/dev/null 2>&1 \
+    && command -v nginx >/dev/null 2>&1 \
+    && command -v git >/dev/null 2>&1 \
+    && command -v rsync >/dev/null 2>&1; then
+    log "host_dependencies=present"
+  else
+    install_host_dependencies
+  fi
   ensure_repo
   fetch_repo
   local sha release_id release_dir

@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: dpms_user
       POSTGRES_PASSWORD: dpms_pass
     ports:
-      - "5432:5432"
+      - "${DPMS_DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +18,7 @@ services:
   backend:
     build: ./backend
     ports:
-      - "8000:8000"
+      - "${DPMS_BACKEND_PORT:-8000}:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://dpms_user:dpms_pass@db:5432/dpms
       UPLOAD_DIR: /app/uploads
@@ -31,9 +31,9 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "5173:5173"
+      - "${DPMS_FRONTEND_PORT:-5173}:5173"
     environment:
-      VITE_API_URL: http://localhost:8000
+      VITE_API_PROXY_TARGET: http://backend:8000
     depends_on:
       - backend
 

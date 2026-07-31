@@ -26,3 +26,13 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </ErrorBoundary>
   </React.StrictMode>
 )
+
+window.requestAnimationFrame(() => {
+  window.dispatchEvent(new Event('dpms:ready'))
+  const url = new URL(window.location.href)
+  if (url.searchParams.has('dpms_reload') || url.searchParams.has('chunk_reload')) {
+    url.searchParams.delete('dpms_reload')
+    url.searchParams.delete('chunk_reload')
+    window.history.replaceState(window.history.state, '', url.toString())
+  }
+})

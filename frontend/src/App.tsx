@@ -1,9 +1,8 @@
-import { Suspense, lazy } from 'react'
+import { lazy } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import type { ComponentType, ReactElement } from 'react'
 import { Layout } from '@/components/Layout'
 import { ProtectedRoute } from '@/components/ProtectedRoute'
-import { SkeletonCard } from '@/components/Skeleton'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   firstAvailablePath,
@@ -11,34 +10,51 @@ import {
   hasFeedbackAccess,
   hasTaskWorkspaceAccess,
 } from '@/lib/access'
-import { DeadlineTrackersPage } from '@/pages/DeadlineTrackersPage'
-import { ContactsPage } from '@/pages/ContactsPage'
+import { reportClientEvent } from '@/lib/clientDiagnostics'
 import { LoginPage } from '@/pages/LoginPage'
-import { PersonalTasksPage } from '@/pages/PersonalTasksPage'
-import { QuickNotesPage } from '@/pages/QuickNotesPage'
 import { SetPasswordPage } from '@/pages/SetPasswordPage'
+
+const CHUNK_RELOAD_WINDOW_MS = 45_000
+
+function isModuleLoadFailure(message: string) {
+  return /failed to fetch dynamically imported module|importing a module script failed|error loading dynamically imported module|unable to preload css|chunkloaderror|load failed/i.test(message)
+}
 
 function lazyPage<T extends ComponentType<object>>(loader: () => Promise<Record<string, T>>, exportName: string) {
   return lazy(async () => {
+    const reloadKey = `dpms:chunk-reload:${exportName}`
     try {
       const mod = await loader()
+      try {
+        sessionStorage.removeItem(reloadKey)
+      } catch {
+        // Storage can be unavailable in restrictive browser modes.
+      }
       return { default: mod[exportName] }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      const isModuleLoadFailure = /import|module|script|fetch|load/i.test(message)
-
-      if (isModuleLoadFailure) {
+      if (isModuleLoadFailure(message)) {
+        reportClientEvent({
+          event_type: 'route_module_load_failed',
+          message,
+          name: exportName,
+          stack: error instanceof Error ? error.stack : undefined,
+        })
         try {
-          const key = `dpms-chunk-reload:${exportName}`
-          if (sessionStorage.getItem(key) !== '1') {
-            sessionStorage.setItem(key, '1')
+          const lastReload = Number(sessionStorage.getItem(reloadKey) || 0)
+          if (!lastReload || Date.now() - lastReload > CHUNK_RELOAD_WINDOW_MS) {
+            sessionStorage.setItem(reloadKey, String(Date.now()))
             const nextUrl = new URL(window.location.href)
-            nextUrl.searchParams.set('chunk_reload', '1')
+            nextUrl.searchParams.set('dpms_reload', String(Date.now()))
             window.location.replace(nextUrl.toString())
+            return await new Promise<never>((_, reject) => {
+              window.setTimeout(() => reject(error), 4_000)
+            })
           }
         } catch {
-          window.location.reload()
+          // Avoid an uncontrolled reload loop when sessionStorage is unavailable.
         }
+        throw new Error(`Не удалось загрузить раздел «${exportName}». Обновите страницу и повторите попытку.`)
       }
 
       throw error
@@ -63,6 +79,10 @@ const FeedbackPage = lazyPage(() => import('@/pages/FeedbackPage'), 'FeedbackPag
 const CompetenciesPage = lazyPage(() => import('@/pages/CompetenciesPage'), 'CompetenciesPage')
 const SettingsPage = lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage')
 const WorkEntitiesPage = lazyPage(() => import('@/pages/WorkEntitiesPage'), 'WorkEntitiesPage')
+const ContactsPage = lazyPage(() => import('@/pages/ContactsPage'), 'ContactsPage')
+const QuickNotesPage = lazyPage(() => import('@/pages/QuickNotesPage'), 'QuickNotesPage')
+const PersonalTasksPage = lazyPage(() => import('@/pages/PersonalTasksPage'), 'PersonalTasksPage')
+const DeadlineTrackersPage = lazyPage(() => import('@/pages/DeadlineTrackersPage'), 'DeadlineTrackersPage')
 
 function DashboardRoute() {
   const { user } = useAuth()
@@ -131,19 +151,9 @@ function NoAccessPage() {
   )
 }
 
-function RouteFallback() {
-  return (
-    <div className="mx-auto w-full max-w-5xl space-y-3 p-4">
-      <SkeletonCard />
-      <SkeletonCard />
-    </div>
-  )
-}
-
 function App() {
   return (
-    <Suspense fallback={<RouteFallback />}>
-      <Routes>
+    <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/set-password" element={<SetPasswordPage />} />
       <Route
@@ -235,8 +245,7 @@ function App() {
         <Route path="no-access" element={<NoAccessPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
-      </Routes>
-    </Suspense>
+    </Routes>
   )
 }
 

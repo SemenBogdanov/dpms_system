@@ -95,7 +95,14 @@ export function Sidebar() {
     ]
 
     return fallbackItems
-      .map((fallback) => visibleById.get(fallback.id) ?? (fallback.id === 'settings' ? fallback : null))
+      .map((fallback) => {
+        const visible = visibleById.get(fallback.id)
+        return visible
+          ? { ...visible, label: fallback.label }
+          : fallback.id === 'settings'
+            ? fallback
+            : null
+      })
       .filter((item): item is SidebarNavItem => Boolean(item))
       .slice(0, 4)
   }, [visibleNav])
@@ -108,6 +115,21 @@ export function Sidebar() {
   const groupHasActiveItem = (items: SidebarNavItem[]) => {
     return items.some(isItemActive)
   }
+
+  useEffect(() => {
+    const activeGroup = orderedMainGroups.find(({ items }) =>
+      items.some((item) => {
+        if (item.to === '/') return location.pathname === '/'
+        return location.pathname === item.to || location.pathname.startsWith(`${item.to}/`)
+      })
+    )
+    if (!activeGroup) return
+    setOpenGroups((current) =>
+      current[activeGroup.button.id]
+        ? current
+        : { ...current, [activeGroup.button.id]: true }
+    )
+  }, [location.pathname, orderedMainGroups])
 
   const toggleGroup = (groupId: string) => {
     setOpenGroups((current) => ({ ...current, [groupId]: !current[groupId] }))
@@ -181,7 +203,7 @@ export function Sidebar() {
         <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 px-2 pb-[calc(env(safe-area-inset-bottom)+6px)] pt-1.5 shadow-[0_-10px_30px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden">
           <div
             className="mx-auto grid max-w-md gap-1"
-            style={{ gridTemplateColumns: `repeat(${mobileCoreItems.length}, minmax(0, 1fr))` }}
+            style={{ gridTemplateColumns: `repeat(${mobileCoreItems.length + 1}, minmax(0, 1fr))` }}
           >
             {mobileCoreItems.map((item) => {
               const Icon = item.icon
@@ -203,6 +225,21 @@ export function Sidebar() {
                 </NavLink>
               )
             })}
+            <button
+              type="button"
+              onClick={() => setMobileOpen(true)}
+              className={cn(
+                'flex min-h-[54px] flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] font-semibold transition-colors',
+                mobileOpen
+                  ? 'bg-primary text-primary-foreground shadow-sm'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              )}
+              aria-label="Открыть все разделы"
+              aria-expanded={mobileOpen}
+            >
+              <Menu className="h-5 w-5 shrink-0" />
+              <span>Ещё</span>
+            </button>
           </div>
         </nav>
       )}
@@ -210,10 +247,11 @@ export function Sidebar() {
       <button
         type="button"
         onClick={() => setMobileOpen((o) => !o)}
-        className="fixed left-4 top-4 z-40 rounded-xl border border-gray-200 bg-white p-2 lg:hidden"
+        className="mobile-menu-button fixed z-50 inline-flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-surface text-foreground shadow-sm lg:hidden"
         aria-label="Меню"
+        aria-expanded={mobileOpen}
       >
-        {mobileOpen ? <X className="h-5 w-5 text-gray-600" /> : <Menu className="h-5 w-5 text-gray-600" />}
+        {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
       </button>
 
       {mobileOpen && (
@@ -240,7 +278,7 @@ export function Sidebar() {
           if (!desktopPinned) setDesktopHoverOpen(false)
         }}
         className={cn(
-          'fixed left-0 top-0 z-40 flex h-full w-56 flex-col border-r border-gray-200/50 bg-white shadow-sm transition-transform duration-200 ease-out',
+          'app-sidebar fixed left-0 top-0 z-40 flex h-full flex-col border-r border-gray-200/50 bg-white shadow-sm transition-transform duration-200 ease-out',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
           desktopPinned && 'lg:static lg:translate-x-0 lg:shadow-none',
           !desktopPinned && (desktopHoverOpen ? 'lg:translate-x-0' : 'lg:-translate-x-full')

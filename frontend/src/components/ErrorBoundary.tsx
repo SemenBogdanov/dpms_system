@@ -14,6 +14,12 @@ interface State {
 export class ErrorBoundary extends Component<Props, State> {
   state: State = { hasError: false, error: null }
 
+  private reloadFresh = () => {
+    const url = new URL(window.location.href)
+    url.searchParams.set('dpms_reload', String(Date.now()))
+    window.location.replace(url.toString())
+  }
+
   static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error }
   }
@@ -30,20 +36,34 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render(): ReactNode {
     if (this.state.hasError && this.state.error) {
+      const moduleLoadFailed =
+        /dynamically imported module|module script|загрузить раздел|chunkloaderror|load failed/i.test(
+          this.state.error.message
+        )
       return (
         <div className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
           <div className="w-full max-w-md rounded-xl border border-red-200 bg-white p-6 shadow-lg">
             <h1 className="text-lg font-semibold text-red-800">Что-то пошло не так</h1>
             <p className="mt-2 text-slate-600">
-              Попробуйте обновить страницу. Если ошибка повторяется — обратитесь в поддержку.
+              {moduleLoadFailed
+                ? 'Раздел не загрузился полностью. Повторите загрузку свежей версии.'
+                : 'Попробуйте обновить страницу. Если ошибка повторяется — обратитесь в поддержку.'}
             </p>
             <button
               type="button"
-              onClick={() => window.location.reload()}
+              onClick={this.reloadFresh}
               className="mt-4 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
             >
-              Обновить страницу
+              Повторить загрузку
             </button>
+            {moduleLoadFailed && (
+              <a
+                href="/mobile-reset.html"
+                className="mt-2 block min-h-11 py-3 text-center text-sm font-medium text-primary hover:underline"
+              >
+                Сбросить кэш приложения
+              </a>
+            )}
             <details className="mt-4 text-left">
               <summary className="cursor-pointer text-sm text-slate-500">Подробности (для отладки)</summary>
               <pre className="mt-2 overflow-auto rounded bg-slate-100 p-2 text-xs text-red-700">
