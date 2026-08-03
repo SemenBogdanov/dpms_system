@@ -114,13 +114,13 @@ export function WorkEntityBacklinks({
   if (unavailable) return null
 
   return (
-    <section className={cn('rounded-lg border border-slate-200 bg-slate-50/60 p-3', className)}>
+    <section className={cn('rounded-lg border border-slate-200 bg-slate-50/60 p-3 dark:border-slate-700 dark:bg-slate-900/60', className)}>
       <div className="flex min-h-10 items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Network className="h-4 w-4 shrink-0 text-primary" />
-          <h3 className="text-sm font-semibold text-slate-800">Проекты и цели</h3>
+          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Проекты и цели</h3>
           {!loading && (
-            <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-600">
+            <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-200">
               {links.length}
             </span>
           )}
@@ -128,7 +128,7 @@ export function WorkEntityBacklinks({
         <button
           type="button"
           onClick={() => setEditing((value) => !value)}
-          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:border-primary/40 hover:text-primary disabled:opacity-50"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:border-primary/40 hover:text-primary disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
           title={editing ? 'Закрыть добавление связи' : 'Добавить в проект или цель'}
           aria-label={editing ? 'Закрыть добавление связи' : 'Добавить в проект или цель'}
           disabled={loading}
@@ -147,11 +147,11 @@ export function WorkEntityBacklinks({
           {links.map((link) => (
             <div
               key={link.link_id}
-              className="flex max-w-full items-center gap-1 rounded-md border border-slate-200 bg-white pl-2"
+              className="flex max-w-full items-center gap-1 rounded-md border border-slate-200 bg-white pl-2 dark:border-slate-700 dark:bg-slate-950"
             >
               <Link
                 to={`/work-entities?entity=${link.entity_id}`}
-                className="flex min-w-0 items-center gap-1.5 py-1.5 text-xs font-medium text-slate-700 hover:text-primary"
+                className="flex min-w-0 items-center gap-1.5 py-1.5 text-xs font-medium text-slate-700 hover:text-primary dark:text-slate-200"
                 title={`${relationLabels[link.relation_type]}: ${link.entity_title}`}
               >
                 <Link2 className="h-3.5 w-3.5 shrink-0 text-slate-400" />
@@ -173,17 +173,17 @@ export function WorkEntityBacklinks({
           ))}
         </div>
       ) : (
-        <p className="py-1 text-xs text-slate-500">Объект пока не связан с проектами или целями.</p>
+        <p className="py-1 text-xs text-slate-500 dark:text-slate-400">Объект пока не связан с проектами или целями.</p>
       )}
 
       {editing && (
-        <div className="mt-3 grid gap-2 border-t border-slate-200 pt-3 sm:grid-cols-[minmax(0,1fr)_150px_auto]">
+        <div className="mt-3 grid gap-2 border-t border-slate-200 pt-3 sm:grid-cols-[minmax(0,1fr)_150px_auto] dark:border-slate-700">
           <label className="min-w-0">
             <span className="sr-only">Проект или цель</span>
             <select
               value={selectedEntityId}
               onChange={(event) => setSelectedEntityId(event.target.value)}
-              className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+              className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
             >
               <option value="">Выберите сущность</option>
               {availableEntities.map((entity) => (
@@ -198,7 +198,7 @@ export function WorkEntityBacklinks({
             <select
               value={relationType}
               onChange={(event) => setRelationType(event.target.value as WorkEntityRelationType)}
-              className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+              className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
             >
               {Object.entries(relationLabels).map(([value, label]) => (
                 <option key={value} value={value}>
@@ -217,7 +217,7 @@ export function WorkEntityBacklinks({
             Добавить
           </button>
           {availableEntities.length === 0 && (
-            <p className="text-xs text-slate-500 sm:col-span-3">
+            <p className="text-xs text-slate-500 sm:col-span-3 dark:text-slate-400">
               Нет доступных для редактирования сущностей. Создайте проект или цель в разделе «Управление».
             </p>
           )}

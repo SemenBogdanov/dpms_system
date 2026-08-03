@@ -6,7 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 from app.models.catalog import Complexity
-from app.models.task import TaskPriority, TaskType
+from app.models.task import TaskPriority, TaskStatus, TaskType
 from app.models.user import League
 
 PersonalTaskStatus = Literal["inbox", "planned", "next", "in_progress", "waiting", "blocked", "done", "archived"]
@@ -126,6 +126,7 @@ class PersonalTaskUpdate(BaseModel):
     effort: int | None = Field(None, ge=1, le=5)
     linked_task_id: UUID | None = None
     source_quick_note_id: UUID | None = None
+    allow_parallel_execution: bool = False
 
     @field_validator("title", mode="before")
     @classmethod
@@ -305,6 +306,18 @@ class PersonalTaskDeadlineRead(BaseModel):
     project: str | None = None
 
 
+class PersonalTaskPromotedTaskRead(BaseModel):
+    """Compact state of the global task created from a personal task."""
+
+    id: UUID
+    task_number: int
+    status: TaskStatus
+    assignee_id: UUID | None = None
+    assignee_name: str | None = None
+    started_at: datetime | None = None
+    due_date: datetime | None = None
+
+
 class PersonalTaskRead(BaseModel):
     """Read personal task."""
 
@@ -335,6 +348,7 @@ class PersonalTaskRead(BaseModel):
     source_quick_note_id: UUID | None = None
     promoted_task_id: UUID | None = None
     promoted_at: datetime | None = None
+    promoted_task: PersonalTaskPromotedTaskRead | None = None
     created_at: datetime
     updated_at: datetime
 

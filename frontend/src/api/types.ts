@@ -231,8 +231,19 @@ export interface PersonalTask {
   source_quick_note_id: string | null
   promoted_task_id: string | null
   promoted_at: string | null
+  promoted_task: PersonalTaskPromotedTask | null
   created_at: string
   updated_at: string
+}
+
+export interface PersonalTaskPromotedTask {
+  id: string
+  task_number: number
+  status: TaskStatus
+  assignee_id: string | null
+  assignee_name: string | null
+  started_at: string | null
+  due_date: string | null
 }
 
 export interface PersonalTaskCreate {
@@ -281,6 +292,7 @@ export interface PersonalTaskUpdate {
   effort?: number | null
   linked_task_id?: string | null
   source_quick_note_id?: string | null
+  allow_parallel_execution?: boolean
 }
 
 export interface PersonalTaskPromoteRequest {

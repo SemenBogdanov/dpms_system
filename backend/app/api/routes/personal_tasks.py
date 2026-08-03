@@ -22,6 +22,7 @@ from app.schemas.personal_task import (
     PersonalTaskEventCreate,
     PersonalTaskEventRead,
     PersonalTaskPromoteRequest,
+    PersonalTaskPromotedTaskRead,
     PersonalTaskRead,
     PersonalTaskUpdate,
 )
@@ -35,10 +36,20 @@ ACTIVE_STATUSES = {"inbox", "planned", "next", "in_progress", "waiting", "blocke
 VALID_STATUSES = ACTIVE_STATUSES | {"done", "archived"}
 
 
-async def _get_owned_task_or_404(db: AsyncSession, task_id: UUID, owner_id: UUID) -> PersonalTask:
-    result = await db.execute(
-        select(PersonalTask).where(PersonalTask.id == task_id, PersonalTask.owner_id == owner_id)
+async def _get_owned_task_or_404(
+    db: AsyncSession,
+    task_id: UUID,
+    owner_id: UUID,
+    *,
+    for_update: bool = False,
+) -> PersonalTask:
+    statement = select(PersonalTask).where(
+        PersonalTask.id == task_id,
+        PersonalTask.owner_id == owner_id,
     )
+    if for_update:
+        statement = statement.with_for_update()
+    result = await db.execute(statement)
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Личная задача не найдена")
@@ -65,8 +76,58 @@ async def _get_owned_note_or_404(db: AsyncSession, note_id: UUID | None, owner_i
     return note
 
 
-def _serialize(task: PersonalTask) -> PersonalTaskRead:
-    return PersonalTaskRead.model_validate(task)
+async def _get_promoted_task_state(
+    db: AsyncSession,
+    task: PersonalTask,
+    *,
+    for_update: bool = False,
+) -> tuple[Task | None, User | None]:
+    if task.promoted_task_id is None:
+        return None, None
+    statement = (
+        select(Task, User)
+        .outerjoin(User, Task.assignee_id == User.id)
+        .where(Task.id == task.promoted_task_id)
+    )
+    if for_update:
+        statement = statement.with_for_update(of=Task)
+    result = await db.execute(statement)
+    row = result.one_or_none()
+    return row if row is not None else (None, None)
+
+
+def _serialize(
+    task: PersonalTask,
+    promoted_task: Task | None = None,
+    assignee: User | None = None,
+) -> PersonalTaskRead:
+    serialized = PersonalTaskRead.model_validate(task)
+    if promoted_task is None:
+        return serialized
+    return serialized.model_copy(
+        update={
+            "promoted_task": PersonalTaskPromotedTaskRead(
+                id=promoted_task.id,
+                task_number=promoted_task.task_number,
+                status=promoted_task.status,
+                assignee_id=promoted_task.assignee_id,
+                assignee_name=assignee.full_name if assignee else None,
+                started_at=promoted_task.started_at,
+                due_date=promoted_task.due_date,
+            )
+        }
+    )
+
+
+def _ensure_status_context(
+    status: str,
+    waiting_for: str | None,
+    blocked_reason: str | None,
+) -> None:
+    if status == "waiting" and not waiting_for:
+        raise HTTPException(status_code=400, detail="Укажите, что или кого ждем")
+    if status == "blocked" and not blocked_reason:
+        raise HTTPException(status_code=400, detail="Укажите причину блокировки")
 
 
 def _task_start_at(task: PersonalTask) -> datetime:
@@ -164,7 +225,13 @@ async def list_personal_tasks(
     db: AsyncSession = Depends(get_db),
 ):
     """List current user's personal issue-lite tasks."""
-    query = select(PersonalTask).where(PersonalTask.owner_id == user.id)
+    query = (
+        select(PersonalTask, Task, User)
+        .select_from(PersonalTask)
+        .outerjoin(Task, PersonalTask.promoted_task_id == Task.id)
+        .outerjoin(User, Task.assignee_id == User.id)
+        .where(PersonalTask.owner_id == user.id)
+    )
     if status and status != "all":
         if status == "active":
             query = query.where(PersonalTask.status.in_(ACTIVE_STATUSES))
@@ -196,7 +263,10 @@ async def list_personal_tasks(
         PersonalTask.created_at.desc(),
     ).limit(limit)
     result = await db.execute(query)
-    return [_serialize(task) for task in result.scalars().all()]
+    return [
+        _serialize(task, promoted_task, assignee)
+        for task, promoted_task, assignee in result.all()
+    ]
 
 
 @router.post("", response_model=PersonalTaskRead)
@@ -207,6 +277,7 @@ async def create_personal_task(
 ):
     """Create a private task owned by current user."""
     _ensure_valid_task_dates(body.start_at, body.due_at)
+    _ensure_status_context(body.status, body.waiting_for, body.blocked_reason)
     await _ensure_linked_task_exists(db, body.linked_task_id)
     note = await _get_owned_note_or_404(db, body.source_quick_note_id, user.id)
     task = PersonalTask(
@@ -326,6 +397,18 @@ async def list_personal_task_deadlines(
     return items[:limit]
 
 
+@router.get("/{task_id}", response_model=PersonalTaskRead)
+async def get_personal_task(
+    task_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read a personal task with the current state of its promoted queue task."""
+    task = await _get_owned_task_or_404(db, task_id, user.id)
+    promoted_task, assignee = await _get_promoted_task_state(db, task)
+    return _serialize(task, promoted_task, assignee)
+
+
 @router.patch("/{task_id}", response_model=PersonalTaskRead)
 async def update_personal_task(
     task_id: UUID,
@@ -334,13 +417,51 @@ async def update_personal_task(
     db: AsyncSession = Depends(get_db),
 ):
     """Patch current user's personal task."""
-    task = await _get_owned_task_or_404(db, task_id, user.id)
+    task = await _get_owned_task_or_404(db, task_id, user.id, for_update=True)
     old_status = task.status
+    old_waiting_for = task.waiting_for
+    old_blocked_reason = task.blocked_reason
     update_data = body.model_dump(exclude_unset=True)
+    allow_parallel_execution = bool(update_data.pop("allow_parallel_execution", False))
+    required_fields = {"title", "status", "priority", "category", "tags", "start_at"}
+    invalid_null_fields = sorted(field for field in required_fields if field in update_data and update_data[field] is None)
+    if invalid_null_fields:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Обязательные поля нельзя очистить: {', '.join(invalid_null_fields)}",
+        )
     if "linked_task_id" in update_data:
         await _ensure_linked_task_exists(db, body.linked_task_id)
     if "source_quick_note_id" in update_data:
         await _get_owned_note_or_404(db, body.source_quick_note_id, user.id)
+    target_status = update_data.get("status", task.status)
+    waiting_for = update_data.get("waiting_for", task.waiting_for)
+    blocked_reason = update_data.get("blocked_reason", task.blocked_reason)
+    _ensure_status_context(target_status, waiting_for, blocked_reason)
+    if target_status == "in_progress" and target_status != old_status and task.promoted_task_id:
+        promoted_task, _ = await _get_promoted_task_state(db, task, for_update=True)
+        worked_by_another_executor = bool(
+            promoted_task
+            and promoted_task.assignee_id
+            and promoted_task.assignee_id != task.owner_id
+            and promoted_task.status in {TaskStatus.in_progress, TaskStatus.review}
+        )
+        if worked_by_another_executor and not allow_parallel_execution:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Связанная задача в глобальной очереди уже выполняется другим сотрудником. "
+                    "Подтвердите параллельную работу, чтобы избежать дублирования."
+                ),
+            )
+    if "status" in update_data and update_data["status"] != old_status:
+        if target_status == "waiting":
+            update_data["blocked_reason"] = None
+        elif target_status == "blocked":
+            update_data["waiting_for"] = None
+        else:
+            update_data.setdefault("waiting_for", None)
+            update_data.setdefault("blocked_reason", None)
     for field, value in update_data.items():
         setattr(task, field, value)
     task.updated_at = datetime.now(timezone.utc)
@@ -361,7 +482,13 @@ async def update_personal_task(
             next_step=task.next_step,
             waiting_for=task.waiting_for,
             due_at=task.due_at,
-            metadata_json={"fields": changed_fields},
+            metadata_json={
+                "fields": changed_fields,
+                "previous_waiting_for": old_waiting_for,
+                "previous_blocked_reason": old_blocked_reason,
+                "blocked_reason": task.blocked_reason,
+                "parallel_execution_confirmed": allow_parallel_execution,
+            },
         )
     elif changed_fields:
         _add_event(
@@ -576,7 +703,7 @@ async def promote_personal_task(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a global DPMS queue task from a personal task."""
-    personal_task = await _get_owned_task_or_404(db, task_id, user.id)
+    personal_task = await _get_owned_task_or_404(db, task_id, user.id, for_update=True)
     if personal_task.promoted_task_id:
         result = await db.execute(select(Task).where(Task.id == personal_task.promoted_task_id))
         existing = result.scalar_one_or_none()
@@ -648,6 +775,11 @@ async def delete_personal_task(
 ):
     """Delete current user's personal task."""
     task = await _get_owned_task_or_404(db, task_id, user.id)
+    if task.status != "archived":
+        raise HTTPException(
+            status_code=409,
+            detail="Сначала перенесите задачу в архив",
+        )
     await db.delete(task)
     await db.flush()
     return {"deleted": True, "task_id": str(task_id)}
