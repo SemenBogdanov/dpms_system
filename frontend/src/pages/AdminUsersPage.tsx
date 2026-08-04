@@ -4,9 +4,10 @@ import type { AdminUser, User, PeriodHistoryItem, LeagueEvaluation, LeagueChange
 import { useAuth } from '@/contexts/AuthContext'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { UserModal, type UserFormPayload } from '@/components/UserModal'
+import { UserAdminHistoryModal } from '@/components/UserAdminHistoryModal'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
-import { Copy, KeyRound, Pencil, Plus, RotateCcw, Trash2, UserPlus } from 'lucide-react'
+import { Copy, History, KeyRound, Pencil, Plus, RotateCcw, Trash2, UserPlus } from 'lucide-react'
 
 const MONTHS = [
   'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
@@ -116,6 +117,7 @@ export function AdminUsersPage() {
   const [quickInviteText, setQuickInviteText] = useState('')
   const [temporaryPasswordUserId, setTemporaryPasswordUserId] = useState<string | null>(null)
   const [temporaryInviteText, setTemporaryInviteText] = useState('')
+  const [historyUser, setHistoryUser] = useState<AdminUser | null>(null)
 
   const loadUsers = useCallback(() => {
     api.get<AdminUser[]>('/api/users/admin')
@@ -138,8 +140,6 @@ export function AdminUsersPage() {
 
   const now = new Date()
   const currentPeriodLabel = `${MONTHS[now.getMonth()]} ${now.getFullYear()}`
-  const selectedAdminId = currentUser?.id ?? ''
-
   const handleRolloverClick = (mode: 'manual' | 'auto') => {
     if (mode === 'auto') {
       setPeriodToClose(previousMonthValue())
@@ -165,13 +165,9 @@ export function AdminUsersPage() {
     const eligibleCount = leagueEvaluations.filter((e) => e.eligible && e.suggested_league !== e.current_league).length
     if (eligibleCount === 0) return
     if (!window.confirm(`Будут изменены лиги ${eligibleCount} сотрудников. Подтвердить?`)) return
-    if (!selectedAdminId) {
-      toast.error('Требуется авторизация')
-      return
-    }
     setApplyLeagueBusy(true)
     api
-      .post<LeagueChange[]>('/api/admin/apply-league-changes', { admin_id: selectedAdminId })
+      .post<LeagueChange[]>('/api/admin/apply-league-changes', {})
       .then((changes) => {
         toast.success(`Изменено лиг: ${changes.length}. ${changes.map((c) => `${c.full_name}: ${c.old_league} → ${c.new_league}`).join('; ')}`)
         loadUsers()
@@ -190,15 +186,10 @@ export function AdminUsersPage() {
       toast.error('Выберите период')
       return
     }
-    if (!selectedAdminId) {
-      toast.error('Требуется авторизация')
-      return
-    }
     setRolloverBusy(true)
     const request = rolloverMode === 'auto'
-      ? api.post<RolloverResponse>('/api/admin/period-close/auto', { admin_id: selectedAdminId })
+      ? api.post<RolloverResponse>('/api/admin/period-close/auto', {})
       : api.post<RolloverResponse>('/api/admin/rollover-period', {
-        admin_id: selectedAdminId,
         period: periodToClose,
         mode: 'manual',
       })
@@ -223,13 +214,9 @@ export function AdminUsersPage() {
       toast.error(`Введите ${CANCEL_CONFIRM_TEXT} для подтверждения`)
       return
     }
-    if (!selectedAdminId) {
-      toast.error('Требуется авторизация')
-      return
-    }
     setCancelBusy(true)
     api
-      .post<RolloverResponse>(`/api/admin/period-history/${cancelPeriod.period}/cancel`, { admin_id: selectedAdminId })
+      .post<RolloverResponse>(`/api/admin/period-history/${cancelPeriod.period}/cancel`, {})
       .then((res) => {
         toast.success(`Закрытие периода ${res.period} отменено. Восстановлено Main: ${res.total_main_reset}`)
         setCancelPeriod(null)
@@ -414,7 +401,16 @@ export function AdminUsersPage() {
   )
 
   const renderUserActions = (u: AdminUser, mobile = false) => (
-    <div className={cn('flex items-center gap-2', mobile && 'justify-end')}>
+    <div className={cn('flex flex-wrap items-center gap-1.5', mobile && 'justify-end')}>
+      <button
+        type="button"
+        onClick={() => setHistoryUser(u)}
+        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:border-primary/30 hover:bg-primary/10 hover:text-primary"
+        title="История изменений"
+        aria-label={`История изменений ${u.full_name}`}
+      >
+        <History className="h-4 w-4" aria-hidden="true" />
+      </button>
       <button
         type="button"
         onClick={() => { setEditingUser(u); setUserModalOpen(true) }}
@@ -823,6 +819,12 @@ export function AdminUsersPage() {
         open={userModalOpen}
         onClose={() => { setUserModalOpen(false); setEditingUser(null) }}
         onSubmit={handleUserSubmit}
+      />
+
+      <UserAdminHistoryModal
+        user={historyUser}
+        open={historyUser !== null}
+        onClose={() => setHistoryUser(null)}
       />
 
       {quickInviteOpen && (

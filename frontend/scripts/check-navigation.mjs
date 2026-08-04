@@ -36,6 +36,15 @@ for (const match of appSource.matchAll(/<Route\s+path="([^"]+)"/g)) {
 
 const errors = []
 
+const accessGuardChecks = [
+  ["task sections use task workspace access", "item.section === 'task' && !hasTaskWorkspaceAccess(user)"],
+  ["feedback section uses feedback access", "item.section === 'feedback' && !hasFeedbackAccess(user)"],
+  ["development section uses development access", "item.section === 'development' && !hasDevelopmentAccess(user)"],
+  ["personal tools remain available", "item.section === 'personal'"],
+  ["settings remain available", "item.section === 'settings'"],
+  ["admin section requires admin role", "item.section === 'admin' && user?.role !== 'admin'"],
+]
+
 for (const [id, to, label, group] of expectedItems) {
   const itemPattern = new RegExp(
     String.raw`\{\s*id:\s*'${escapeRegex(id)}'[\s\S]*?to:\s*'${escapeRegex(to)}'[\s\S]*?label:\s*'${escapeRegex(label)}'[\s\S]*?group:\s*'${escapeRegex(group)}'[\s\S]*?\}`,
@@ -47,6 +56,12 @@ for (const [id, to, label, group] of expectedItems) {
 
   if (!routePaths.has(to)) {
     errors.push(`App route missing for sidebar item: ${id} -> ${to}`)
+  }
+}
+
+for (const [label, sourceFragment] of accessGuardChecks) {
+  if (!sidebarSource.includes(sourceFragment)) {
+    errors.push(`sidebar access guard missing: ${label}`)
   }
 }
 
@@ -62,7 +77,9 @@ if (errors.length > 0) {
   process.exit(1)
 }
 
-console.log(`Navigation smoke OK: ${expectedItems.length} required sections are present and routable.`)
+console.log(
+  `Navigation smoke OK: ${expectedItems.length} required sections and ${accessGuardChecks.length} access guards are present.`
+)
 
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

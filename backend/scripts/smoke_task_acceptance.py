@@ -26,6 +26,7 @@ from app.schemas.task_acceptance import (
     AcceptanceCriterionCreate,
     AcceptanceCriterionDecision,
     AcceptanceCriterionEvidence,
+    AcceptanceCriterionRevisionRequest,
     AcceptancePlanUpdate,
 )
 from app.schemas.task import TaskCreate
@@ -34,6 +35,7 @@ from app.services.task_acceptance import (
     initialize_acceptance_plan,
     replace_acceptance_plan,
     review_acceptance_criteria,
+    revise_acceptance_decision,
     submit_acceptance_criteria,
 )
 from app.services.wallet import credit_q
@@ -51,7 +53,7 @@ async def expect_http_error(awaitable, status_code: int) -> None:
 def smoke_user(role: UserRole, label: str) -> User:
     return User(
         full_name=f"Acceptance smoke {label}",
-        email=f"acceptance-smoke-{label}-{uuid.uuid4()}@example.invalid",
+        email=f"acceptance-smoke-{label}-{uuid.uuid4()}@dpms-demo.ru",
         league=League.A,
         role=role,
         mpw=0,
@@ -81,6 +83,17 @@ async def run() -> None:
         pass
     else:
         raise AssertionError("Direct task creation must not bypass the acceptance workflow")
+
+    try:
+        AcceptanceCriterionRevisionRequest(
+            criterion_id=uuid.uuid4(),
+            approved=False,
+            comment=" ",
+        )
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError("Acceptance decision revision requires a reason")
 
     async with AsyncSessionLocal() as db:
         owner = smoke_user(UserRole.teamlead, "owner")
@@ -209,6 +222,80 @@ async def run() -> None:
         assert sum(item.status == "accepted" for item in partial.criteria) == 1
 
         await expect_http_error(
+            revise_acceptance_decision(
+                db,
+                task.id,
+                AcceptanceCriterionRevisionRequest(
+                    criterion_id=first.id,
+                    approved=False,
+                    comment="Outsider must not revise the decision.",
+                ),
+                outsider,
+            ),
+            403,
+        )
+        await expect_http_error(
+            revise_acceptance_decision(
+                db,
+                task.id,
+                AcceptanceCriterionRevisionRequest(
+                    criterion_id=first.id,
+                    approved=False,
+                    comment="Executor must not revise own acceptance.",
+                ),
+                executor,
+            ),
+            403,
+        )
+
+        revised_to_returned = await revise_acceptance_decision(
+            db,
+            task.id,
+            AcceptanceCriterionRevisionRequest(
+                criterion_id=first.id,
+                approved=False,
+                comment="Accepted by mistake; inspect the report again.",
+            ),
+            owner,
+        )
+        first_after_return = revised_to_returned.criteria[0]
+        assert first_after_return.status == "returned"
+        assert first_after_return.decision_change_count == 1
+
+        revised_to_accepted = await revise_acceptance_decision(
+            db,
+            task.id,
+            AcceptanceCriterionRevisionRequest(
+                criterion_id=first.id,
+                approved=True,
+                comment="Second review confirms the submitted evidence.",
+            ),
+            owner,
+        )
+        first_after_accept = revised_to_accepted.criteria[0]
+        assert first_after_accept.status == "accepted"
+        assert first_after_accept.decision_change_count == 2
+        assert [event.event_type for event in first_after_accept.events] == [
+            "submitted",
+            "accepted",
+            "decision_changed",
+            "decision_changed",
+        ]
+        await expect_http_error(
+            revise_acceptance_decision(
+                db,
+                task.id,
+                AcceptanceCriterionRevisionRequest(
+                    criterion_id=first.id,
+                    approved=False,
+                    comment="Third change must be rejected.",
+                ),
+                owner,
+            ),
+            409,
+        )
+
+        await expect_http_error(
             submit_for_review(db, executor.id, task.id, brief_rating=5),
             409,
         )
@@ -285,6 +372,54 @@ async def run() -> None:
             brief_rating=5,
         )
         assert submitted_task.acceptance_state == "submitted"
+
+        reopened_by_revision = await revise_acceptance_decision(
+            db,
+            task.id,
+            AcceptanceCriterionRevisionRequest(
+                criterion_id=second.id,
+                approved=False,
+                comment="Final review exposed an incorrect criterion decision.",
+            ),
+            owner,
+        )
+        await db.refresh(task)
+        assert task.status == TaskStatus.in_progress
+        assert task.completed_at is None
+        assert reopened_by_revision.criteria[1].status == "returned"
+        assert reopened_by_revision.criteria[1].decision_change_count == 1
+        assert executor.wallet_main == Decimal("0")
+
+        reaccepted_after_revision = await revise_acceptance_decision(
+            db,
+            task.id,
+            AcceptanceCriterionRevisionRequest(
+                criterion_id=second.id,
+                approved=True,
+                comment="Repeated review confirms the original evidence.",
+            ),
+            owner,
+        )
+        assert reaccepted_after_revision.criteria[1].status == "accepted"
+        assert reaccepted_after_revision.criteria[1].decision_change_count == 2
+        assert [
+            event.event_type for event in reaccepted_after_revision.criteria[1].events
+        ] == [
+            "submitted",
+            "returned",
+            "submitted",
+            "accepted",
+            "decision_changed",
+            "decision_changed",
+        ]
+        await submit_for_review(
+            db,
+            executor.id,
+            task.id,
+            comment="Criteria decisions were reconciled.",
+            brief_rating=5,
+        )
+
         returned_task = await validate_task(
             db,
             owner.id,
@@ -323,6 +458,19 @@ async def run() -> None:
         accepted = await validate_task(db, owner.id, task.id, approved=True)
         assert accepted.status == TaskStatus.done
         assert accepted.acceptance_state == "accepted"
+        await expect_http_error(
+            revise_acceptance_decision(
+                db,
+                task.id,
+                AcceptanceCriterionRevisionRequest(
+                    criterion_id=second.id,
+                    approved=False,
+                    comment="Final payout must make decisions immutable.",
+                ),
+                owner,
+            ),
+            409,
+        )
 
         payout_prefix = f"task:{task.id}:acceptance:{task.acceptance_revision}"
         wallet_after_acceptance = executor.wallet_main
@@ -368,7 +516,7 @@ async def run() -> None:
         assert article_exists == 1
 
         await db.rollback()
-        print("Task acceptance smoke OK: criteria, authority, immutable accepted parts, and Q idempotency.")
+        print("Task acceptance smoke OK: criteria, two audited decision changes, final lock, and Q idempotency.")
 
 
 if __name__ == "__main__":

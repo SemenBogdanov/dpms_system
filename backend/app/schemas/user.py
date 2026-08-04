@@ -1,7 +1,7 @@
 """Схемы для пользователей."""
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
@@ -93,3 +93,35 @@ class TemporaryPasswordRequest(BaseModel):
     """Выдать пользователю новый временный пароль."""
 
     temporary_password: str = Field(..., min_length=8, max_length=128)
+
+
+AdminUserAuditAction = Literal["created", "updated", "temporary_password_issued"]
+
+
+class AdminUserAuditChangeRead(BaseModel):
+    """Одно безопасное изменение поля сотрудника."""
+
+    field: str
+    before: Any | None = None
+    after: Any | None = None
+
+
+class AdminUserAuditEventRead(BaseModel):
+    """Типизированное событие истории администрирования сотрудника."""
+
+    id: UUID
+    actor_id: UUID
+    actor_name: str
+    target_user_id: UUID
+    action: AdminUserAuditAction
+    changes: list[AdminUserAuditChangeRead]
+    sessions_revoked: bool = False
+    occurred_at: datetime
+
+
+class AdminUserAuditHistoryRead(BaseModel):
+    """Ограниченная история административных изменений сотрудника."""
+
+    items: list[AdminUserAuditEventRead]
+    total: int
+    limit: int

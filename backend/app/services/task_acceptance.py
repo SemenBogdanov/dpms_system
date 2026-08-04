@@ -21,6 +21,7 @@ from app.schemas.task_acceptance import (
     AcceptanceCriterionCreate,
     AcceptanceCriterionEventRead,
     AcceptanceCriterionRead,
+    AcceptanceCriterionRevisionRequest,
     AcceptancePlanUpdate,
     TaskAcceptanceRead,
 )
@@ -295,7 +296,9 @@ async def get_task_acceptance(
     )
     can_submit = task.assignee_id == actor.id and task.status == TaskStatus.in_progress
     can_review = (
-        actor.id != task.assignee_id
+        task.status in {TaskStatus.in_progress, TaskStatus.review}
+        and task.acceptance_mode == "criteria"
+        and actor.id != task.assignee_id
         and (actor.id == task.acceptance_owner_id or actor.role == UserRole.admin)
     )
     criterion_reads: list[AcceptanceCriterionRead] = []
@@ -316,6 +319,7 @@ async def get_task_acceptance(
                 submitted_at=item.submitted_at,
                 reviewed_at=item.reviewed_at,
                 return_count=item.return_count,
+                decision_change_count=item.decision_change_count,
                 events=events_by_criterion.get(item.id, []),
             )
         )
@@ -509,6 +513,115 @@ async def review_acceptance_criteria(
                 if returned_titles
                 else f"«{task.title}»: приняты новые критерии"
             ),
+            link="/my-tasks",
+        )
+    await db.flush()
+    return await get_task_acceptance(db, task.id, actor)
+
+
+async def revise_acceptance_decision(
+    db: AsyncSession,
+    task_id: UUID,
+    body: AcceptanceCriterionRevisionRequest,
+    actor: User,
+) -> TaskAcceptanceRead:
+    """Change one recorded criterion decision with a bounded, append-only audit trail."""
+    result = await db.execute(
+        select(Task).where(Task.id == task_id).with_for_update()
+    )
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    if task.acceptance_mode != "criteria":
+        raise HTTPException(status_code=409, detail="Для задачи не включена приемка по критериям")
+    if actor.id == task.assignee_id:
+        raise HTTPException(status_code=403, detail="Нельзя изменять решение по собственной задаче")
+    if actor.id != task.acceptance_owner_id and actor.role != UserRole.admin:
+        raise HTTPException(status_code=403, detail="Решение изменяет ответственный за приемку")
+    if task.status not in {TaskStatus.in_progress, TaskStatus.review}:
+        raise HTTPException(
+            status_code=409,
+            detail="После финальной приемки и начисления Q решение изменить нельзя",
+        )
+
+    criteria = await _load_criteria(db, task.id, for_update=True)
+    criterion = next((item for item in criteria if item.id == body.criterion_id), None)
+    if not criterion:
+        raise HTTPException(status_code=404, detail="Критерий приемки не найден")
+    if criterion.status not in {"accepted", "returned"}:
+        raise HTTPException(
+            status_code=409,
+            detail=f"По критерию «{criterion.title}» еще нет решения, которое можно изменить",
+        )
+    target_status = "accepted" if body.approved else "returned"
+    if criterion.status == target_status:
+        raise HTTPException(status_code=409, detail="Выбрано уже действующее решение")
+    if criterion.decision_change_count >= 2:
+        raise HTTPException(
+            status_code=409,
+            detail="Лимит изменений решения по критерию исчерпан (2 из 2)",
+        )
+
+    now = datetime.now(timezone.utc)
+    previous_status = criterion.status
+    criterion.status = target_status
+    criterion.reviewer_comment = body.comment
+    criterion.reviewed_by_id = actor.id
+    criterion.reviewed_at = now
+    criterion.decision_change_count += 1
+    if target_status == "returned":
+        criterion.return_count += 1
+
+    _add_criterion_event(
+        db,
+        task,
+        criterion,
+        actor.id,
+        "decision_changed",
+        previous_status,
+        target_status,
+        comment=body.comment,
+        created_at=now,
+    )
+
+    if target_status == "returned" and task.status == TaskStatus.review:
+        task.status = TaskStatus.in_progress
+        task.completed_at = None
+        task.validator_id = None
+        task.validated_at = None
+        task.focus_started_at = None
+        db.add(
+            TaskReviewEvent(
+                task_id=task.id,
+                actor_id=actor.id,
+                event_type=TaskReviewEventType.returned,
+                comment=f"Решение изменено, возвращен критерий: {criterion.title}",
+                created_at=now,
+            )
+        )
+
+    sync_acceptance_summary(task, criteria)
+    await record_activity_event(
+        db,
+        actor.id,
+        "task_acceptance_decision_revised",
+        task_id=task.id,
+        metadata={
+            "criterion_id": str(criterion.id),
+            "from_status": previous_status,
+            "to_status": target_status,
+            "decision_change_count": criterion.decision_change_count,
+        },
+        occurred_at=now,
+    )
+    if task.assignee_id:
+        decision_label = "принят" if target_status == "accepted" else "возвращен"
+        await create_notification(
+            db,
+            task.assignee_id,
+            "task_acceptance_decision_revised",
+            "Решение по критерию изменено",
+            message=f"«{task.title}»: {criterion.title} — {decision_label}",
             link="/my-tasks",
         )
     await db.flush()

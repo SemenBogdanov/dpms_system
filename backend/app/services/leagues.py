@@ -10,6 +10,10 @@ from app.models.task import Task, TaskStatus
 from app.models.user import User
 from app.services.absences import absence_dates_for_user, month_bounds_for
 from app.services.planning import effective_plan_for_user
+from app.services.user_admin_audit import (
+    USER_UPDATED_EVENT,
+    record_admin_user_audit_event,
+)
 from app.schemas.leagues import (
     CriteriaPeriod,
     LeagueCriterion,
@@ -217,7 +221,12 @@ async def evaluate_league_change(db: AsyncSession, user_id: UUID) -> LeagueEvalu
 
 async def apply_league_changes(db: AsyncSession, admin_id: UUID) -> list[LeagueChange]:
     """Применить рекомендованные изменения лиг для всех сотрудников."""
-    result = await db.execute(select(User).where(User.is_active.is_(True)))
+    result = await db.execute(
+        select(User)
+        .where(User.is_active.is_(True))
+        .order_by(User.id)
+        .with_for_update()
+    )
     users = result.scalars().all()
 
     changes: list[LeagueChange] = []
@@ -226,6 +235,14 @@ async def apply_league_changes(db: AsyncSession, admin_id: UUID) -> list[LeagueC
         if ev.suggested_league != ev.current_league:
             old = ev.current_league
             u.league = ev.suggested_league
+            await record_admin_user_audit_event(
+                db,
+                actor_id=admin_id,
+                target=u,
+                event_type=USER_UPDATED_EVENT,
+                before={"league": old},
+                after={"league": ev.suggested_league},
+            )
             changes.append(LeagueChange(
                 user_id=str(u.id),
                 full_name=u.full_name,

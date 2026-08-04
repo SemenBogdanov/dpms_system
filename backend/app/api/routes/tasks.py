@@ -31,6 +31,7 @@ from app.schemas.task import (
 from app.schemas.task_acceptance import (
     AcceptanceCriteriaReviewRequest,
     AcceptanceCriteriaSubmitRequest,
+    AcceptanceCriterionRevisionRequest,
     AcceptancePlanUpdate,
     TaskAcceptanceRead,
 )
@@ -45,6 +46,7 @@ from app.services.task_acceptance import (
     initialize_acceptance_plan,
     replace_acceptance_plan,
     review_acceptance_criteria,
+    revise_acceptance_decision,
     submit_acceptance_criteria,
 )
 
@@ -324,6 +326,17 @@ async def review_acceptance_items(
 ):
     """Accept or return selected criteria."""
     return await review_acceptance_criteria(db, task_id, body, user)
+
+
+@router.post("/{task_id}/acceptance/revise", response_model=TaskAcceptanceRead)
+async def revise_acceptance_item(
+    task_id: UUID,
+    body: AcceptanceCriterionRevisionRequest,
+    user: User = Depends(require_task_workspace_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """Change an accepted/returned decision with a mandatory reason and bounded audit."""
+    return await revise_acceptance_decision(db, task_id, body, user)
 
 
 @router.get("/{task_id}/attachments", response_model=list[TaskAttachmentRead])

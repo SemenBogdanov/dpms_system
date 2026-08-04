@@ -245,6 +245,10 @@ class TaskAcceptanceCriterion(Base):
             "status IN ('pending', 'submitted', 'accepted', 'returned', 'not_applicable')",
             name="ck_task_acceptance_criteria_status",
         ),
+        CheckConstraint(
+            "decision_change_count BETWEEN 0 AND 2",
+            name="ck_task_acceptance_criteria_decision_change_count",
+        ),
         UniqueConstraint("task_id", "position", name="uq_task_acceptance_criteria_task_position"),
     )
 
@@ -281,6 +285,7 @@ class TaskAcceptanceCriterion(Base):
     )
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     return_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    decision_change_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -302,7 +307,7 @@ class TaskAcceptanceCriterionEvent(Base):
     __tablename__ = "task_acceptance_criterion_events"
     __table_args__ = (
         CheckConstraint(
-            "event_type IN ('submitted', 'accepted', 'returned', 'not_applicable')",
+            "event_type IN ('submitted', 'accepted', 'returned', 'not_applicable', 'decision_changed')",
             name="ck_task_acceptance_criterion_events_type",
         ),
     )

@@ -4,19 +4,34 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_current_user, require_role, ensure_task_workspace_access
 from app.core.security import get_password_hash, validate_password_strength, verify_password
 from app.models.user import User, League, UserRole
-from app.schemas.user import AdminUserRead, TemporaryPasswordRequest, UserCreate, UserRead, UserUpdate
+from app.schemas.user import (
+    AdminUserAuditHistoryRead,
+    AdminUserRead,
+    TemporaryPasswordRequest,
+    UserCreate,
+    UserRead,
+    UserUpdate,
+)
 from app.schemas.dashboard import UserProgress, RunRate
 from app.schemas.transaction import QTransactionRead
 from app.schemas.leagues import LeagueProgress
-from app.services.activity import record_activity_event
 from app.services.analytics import get_user_progress, get_run_rate
 from app.services.planning import add_months
 from app.services.leagues import get_league_progress as get_league_progress_svc
+from app.services.user_admin_audit import (
+    TEMPORARY_PASSWORD_EVENT,
+    USER_CREATED_EVENT,
+    USER_UPDATED_EVENT,
+    admin_user_snapshot,
+    list_admin_user_audit_history,
+    record_admin_user_audit_event,
+)
 
 router = APIRouter()
 TEMPORARY_PASSWORD_TTL = timedelta(days=7)
@@ -60,6 +75,24 @@ async def list_users_for_admin(
         stmt = stmt.where(User.role == role)
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+@router.get("/{user_id}/admin-history", response_model=AdminUserAuditHistoryRead)
+async def get_user_admin_history(
+    user_id: UUID,
+    limit: int = Query(50, ge=1, le=200),
+    _: User = Depends(require_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Безопасная история административных изменений сотрудника."""
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    return await list_admin_user_audit_history(
+        db,
+        target_user_id=user_id,
+        limit=limit,
+    )
 
 
 @router.get("/{user_id}", response_model=UserRead)
@@ -116,14 +149,19 @@ async def create_user(
         temporary_password_expires_at=now + TEMPORARY_PASSWORD_TTL,
     )
     db.add(user)
-    await db.flush()
-    await record_activity_event(
-        db,
-        admin.id,
-        "authn_user_created",
-        metadata={"target_user_id": user.id, "temporary_password": True},
-    )
-    await db.commit()
+    try:
+        await db.flush()
+        await record_admin_user_audit_event(
+            db,
+            actor_id=admin.id,
+            target=user,
+            event_type=USER_CREATED_EVENT,
+            after=admin_user_snapshot(user),
+        )
+        await db.commit()
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Пользователь с таким email уже существует") from error
     await db.refresh(user)
     return user
 
@@ -157,11 +195,12 @@ async def issue_temporary_password(
     user.password_change_required = True
     user.temporary_password_expires_at = datetime.now(timezone.utc) + TEMPORARY_PASSWORD_TTL
     user.auth_version += 1
-    await record_activity_event(
+    await record_admin_user_audit_event(
         db,
-        admin.id,
-        "authn_temporary_password_issued",
-        metadata={"target_user_id": user.id},
+        actor_id=admin.id,
+        target=user,
+        event_type=TEMPORARY_PASSWORD_EVENT,
+        sessions_revoked=True,
     )
     await db.commit()
     await db.refresh(user)
@@ -173,13 +212,14 @@ async def update_user(
     user_id: UUID,
     body: UserUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role("admin")),
+    admin: User = Depends(require_role("admin")),
 ):
     """Обновить сотрудника (только admin)."""
     result = await db.execute(select(User).where(User.id == user_id).with_for_update())
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
+    before = admin_user_snapshot(user)
     revoke_sessions = False
     if body.full_name is not None:
         user.full_name = body.full_name
@@ -237,7 +277,20 @@ async def update_user(
         user.task_workspace_enabled = body.task_workspace_enabled
     if revoke_sessions:
         user.auth_version += 1
-    await db.commit()
+    await record_admin_user_audit_event(
+        db,
+        actor_id=admin.id,
+        target=user,
+        event_type=USER_UPDATED_EVENT,
+        before=before,
+        after=admin_user_snapshot(user),
+        sessions_revoked=revoke_sessions,
+    )
+    try:
+        await db.commit()
+    except IntegrityError as error:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Пользователь с таким email уже существует") from error
     await db.refresh(user)
     return user
 

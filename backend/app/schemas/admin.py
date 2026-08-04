@@ -7,8 +7,7 @@ from pydantic import BaseModel
 
 
 class RolloverRequest(BaseModel):
-    """Запрос на закрытие периода (только admin). admin_id опционален (из JWT)."""
-    admin_id: UUID | None = None
+    """Запрос на закрытие периода (только admin)."""
     period: str | None = None
     mode: str = "manual"
 
@@ -46,15 +45,3 @@ class PeriodHistoryItem(BaseModel):
     users_count: int
     total_main_reset: float
     total_karma_burned: float
-
-
-class PeriodCancelRequest(BaseModel):
-    """Отмена закрытия периода."""
-
-    admin_id: UUID | None = None
-
-
-class PeriodAutoCloseRequest(BaseModel):
-    """Автозакрытие просроченного периода."""
-
-    admin_id: UUID | None = None

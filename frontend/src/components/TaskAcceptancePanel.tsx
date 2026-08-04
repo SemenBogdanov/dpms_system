@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
-import { Check, History, RotateCcw, Send } from 'lucide-react'
+import { Check, History, RefreshCcw, RotateCcw, Send } from 'lucide-react'
 import { api } from '@/api/client'
 import type { Task, TaskAcceptance, TaskAcceptanceCriterion } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
@@ -48,6 +48,7 @@ const eventLabels: Record<TaskAcceptanceCriterion['events'][number]['event_type'
   accepted: 'Принят',
   returned: 'Возвращен',
   not_applicable: 'Не применяется',
+  decision_changed: 'Решение изменено',
 }
 
 function formatEventDate(value: string): string {
@@ -68,6 +69,8 @@ export function TaskAcceptancePanel({ task, onUpdated }: TaskAcceptancePanelProp
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [evidence, setEvidence] = useState<Evidence>({})
   const [reviewComments, setReviewComments] = useState<ReviewComments>({})
+  const [revisionCriterionId, setRevisionCriterionId] = useState<string | null>(null)
+  const [revisionComments, setRevisionComments] = useState<ReviewComments>({})
 
   const loadPlan = useCallback(async () => {
     setLoading(true)
@@ -124,6 +127,20 @@ export function TaskAcceptancePanel({ task, onUpdated }: TaskAcceptancePanelProp
       toast.error('Для каждого выбранного критерия добавьте комментарий или ссылку')
       return
     }
+    const invalidUrl = [...selected].find((criterionId) => {
+      const rawUrl = evidence[criterionId]?.url.trim()
+      if (!rawUrl) return false
+      try {
+        const parsed = new URL(rawUrl)
+        return parsed.protocol !== 'http:' && parsed.protocol !== 'https:'
+      } catch {
+        return true
+      }
+    })
+    if (invalidUrl) {
+      toast.error('Ссылка на результат должна начинаться с http:// или https://')
+      return
+    }
     setBusy(true)
     try {
       await api.post(`/api/tasks/${task.id}/acceptance/submit`, {
@@ -170,6 +187,32 @@ export function TaskAcceptancePanel({ task, onUpdated }: TaskAcceptancePanelProp
     }
   }
 
+  const reviseCriterion = async (criterion: TaskAcceptanceCriterion) => {
+    const comment = revisionComments[criterion.id]?.trim() || ''
+    if (!comment) {
+      toast.error('Укажите причину изменения решения')
+      return
+    }
+    const approved = criterion.status === 'returned'
+    setBusy(true)
+    try {
+      await api.post(`/api/tasks/${task.id}/acceptance/revise`, {
+        criterion_id: criterion.id,
+        approved,
+        comment,
+      })
+      toast.success(approved ? 'Решение изменено: критерий принят' : 'Решение изменено: критерий возвращен')
+      setRevisionComments((current) => ({ ...current, [criterion.id]: '' }))
+      setRevisionCriterionId(null)
+      await loadPlan()
+      onUpdated?.()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось изменить решение')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (loading) {
     return <p className="text-sm text-slate-500">Загрузка критериев приемки...</p>
   }
@@ -200,7 +243,10 @@ export function TaskAcceptancePanel({ task, onUpdated }: TaskAcceptancePanelProp
         {plan.criteria.map((criterion) => {
           const canSubmitCriterion = plan.can_submit && (criterion.status === 'pending' || criterion.status === 'returned')
           const canReviewCriterion = plan.can_review && criterion.status === 'submitted'
+          const hasRecordedDecision = criterion.status === 'accepted' || criterion.status === 'returned'
+          const canReviseCriterion = plan.can_review && hasRecordedDecision && criterion.decision_change_count < 2
           const comment = reviewComments[criterion.id] ?? ''
+          const revisionComment = revisionComments[criterion.id] ?? ''
           const needsOverrideReason = canReviewCriterion && isAdminOverride
           return (
             <div key={criterion.id} className="rounded-md border border-slate-200 bg-white p-3">
@@ -243,7 +289,11 @@ export function TaskAcceptancePanel({ task, onUpdated }: TaskAcceptancePanelProp
                         {criterion.events.map((event) => (
                           <li key={event.id} className="text-xs text-slate-600">
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                              <span className="font-medium text-slate-700">{eventLabels[event.event_type]}</span>
+                              <span className="font-medium text-slate-700">
+                                {event.event_type === 'decision_changed'
+                                  ? `Решение изменено: ${event.to_status === 'accepted' ? 'принят' : 'возвращен'}`
+                                  : eventLabels[event.event_type]}
+                              </span>
                               <span>{formatEventDate(event.created_at)}</span>
                               {event.actor_name && <span>· {event.actor_name}</span>}
                             </div>
@@ -263,14 +313,17 @@ export function TaskAcceptancePanel({ task, onUpdated }: TaskAcceptancePanelProp
                     onChange={(event) => updateEvidence(criterion.id, 'comment', event.target.value)}
                     rows={2}
                     placeholder="Комментарий к результату"
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    aria-label={`Комментарий к результату: ${criterion.title}`}
+                    className="min-h-[4.75rem] w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                   />
-                  <input
-                    type="url"
+                  <textarea
+                    inputMode="url"
                     value={evidence[criterion.id]?.url ?? ''}
                     onChange={(event) => updateEvidence(criterion.id, 'url', event.target.value)}
+                    rows={2}
                     placeholder="Ссылка на результат"
-                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                    aria-label={`Ссылка на результат: ${criterion.title}`}
+                    className="min-h-[4.75rem] w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                   />
                 </div>
               )}
@@ -304,6 +357,58 @@ export function TaskAcceptancePanel({ task, onUpdated }: TaskAcceptancePanelProp
                       <RotateCcw className="h-4 w-4" /> Вернуть
                     </button>
                   </div>
+                </div>
+              )}
+
+              {plan.can_review && hasRecordedDecision && (
+                <div className="mt-3 border-t border-slate-100 pt-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs text-slate-500">
+                      Изменения решения: {criterion.decision_change_count}/2
+                    </p>
+                    {canReviseCriterion && (
+                      <button
+                        type="button"
+                        onClick={() => setRevisionCriterionId((current) => current === criterion.id ? null : criterion.id)}
+                        disabled={busy}
+                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        <RefreshCcw className="h-3.5 w-3.5" /> Изменить решение
+                      </button>
+                    )}
+                    {!canReviseCriterion && criterion.decision_change_count >= 2 && (
+                      <span className="text-xs font-medium text-slate-500">Лимит исчерпан</span>
+                    )}
+                  </div>
+                  {canReviseCriterion && revisionCriterionId === criterion.id && (
+                    <div className="mt-2 space-y-2 rounded-md border border-slate-200 bg-slate-50 p-2.5">
+                      <textarea
+                        value={revisionComment}
+                        onChange={(event) => setRevisionComments((current) => ({
+                          ...current,
+                          [criterion.id]: event.target.value,
+                        }))}
+                        rows={2}
+                        placeholder="Причина изменения решения"
+                        aria-label={`Причина изменения решения: ${criterion.title}`}
+                        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
+                      />
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => void reviseCriterion(criterion)}
+                          disabled={busy || !revisionComment.trim()}
+                          className={criterion.status === 'accepted'
+                            ? 'inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-50 disabled:opacity-50'
+                            : 'inline-flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50'}
+                        >
+                          {criterion.status === 'accepted'
+                            ? <><RotateCcw className="h-4 w-4" /> Вернуть критерий</>
+                            : <><Check className="h-4 w-4" /> Принять критерий</>}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -24,6 +24,29 @@ function errorMessage(payload: unknown, fallback: string): string {
   if (!payload || typeof payload !== 'object') return fallback
   const detail = (payload as { detail?: unknown }).detail
   if (typeof detail === 'string' && detail) return detail
+  if (Array.isArray(detail)) {
+    const validationMessages = detail
+      .map((item) => {
+        if (!item || typeof item !== 'object') return ''
+        const validation = item as { loc?: unknown; msg?: unknown }
+        const rawMessage = typeof validation.msg === 'string' ? validation.msg : ''
+        if (!rawMessage) return ''
+        const message = rawMessage.startsWith('Value error, ')
+          ? rawMessage.slice('Value error, '.length)
+          : rawMessage === 'Field required'
+            ? 'Поле обязательно'
+            : rawMessage
+        const location = Array.isArray(validation.loc)
+          ? validation.loc
+              .filter((part) => part !== 'body')
+              .map(String)
+              .join('.')
+          : ''
+        return location ? `${location}: ${message}` : message
+      })
+      .filter(Boolean)
+    if (validationMessages.length > 0) return validationMessages.join('\n')
+  }
   if (detail && typeof detail === 'object') {
     const structured = detail as {
       message?: unknown
@@ -138,7 +161,8 @@ async function request<T>(
   }
   if (!res.ok) {
     const err: unknown = await res.json().catch(() => null)
-    throw new Error(errorMessage(err, res.statusText || 'Ошибка запроса'))
+    const fallback = res.status === 422 ? 'Проверьте заполнение полей' : res.statusText || 'Ошибка запроса'
+    throw new Error(errorMessage(err, fallback))
   }
   const text = await res.text()
   return (text ? JSON.parse(text) : null) as T
@@ -162,7 +186,8 @@ async function requestBlob(path: string): Promise<Blob> {
   }
   if (!res.ok) {
     const err: unknown = await res.json().catch(() => null)
-    throw new Error(errorMessage(err, res.statusText || 'Ошибка запроса'))
+    const fallback = res.status === 422 ? 'Проверьте заполнение полей' : res.statusText || 'Ошибка запроса'
+    throw new Error(errorMessage(err, fallback))
   }
   return res.blob()
 }

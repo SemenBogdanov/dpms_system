@@ -126,11 +126,31 @@ class AcceptanceCriteriaReviewRequest(BaseModel):
         return self
 
 
+class AcceptanceCriterionRevisionRequest(BaseModel):
+    criterion_id: UUID
+    approved: bool
+    comment: str = Field(min_length=2, max_length=4000)
+
+    @field_validator("comment")
+    @classmethod
+    def normalize_comment(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 2:
+            raise ValueError("Укажите причину изменения решения")
+        return normalized
+
+
 class AcceptanceCriterionEventRead(BaseModel):
     id: UUID
     actor_id: UUID | None
     actor_name: str | None
-    event_type: Literal["submitted", "accepted", "returned", "not_applicable"]
+    event_type: Literal[
+        "submitted",
+        "accepted",
+        "returned",
+        "not_applicable",
+        "decision_changed",
+    ]
     from_status: str | None
     to_status: str
     comment: str | None
@@ -154,6 +174,7 @@ class AcceptanceCriterionRead(BaseModel):
     submitted_at: datetime | None
     reviewed_at: datetime | None
     return_count: int
+    decision_change_count: int
     events: list[AcceptanceCriterionEventRead] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}

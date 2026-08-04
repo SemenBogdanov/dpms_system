@@ -9,13 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, require_role
 from app.models.user import User
 from app.schemas.admin import (
-    PeriodAutoCloseRequest,
-    PeriodCancelRequest,
     PeriodSnapshotResponse,
     RolloverRequest,
     RolloverResponse,
 )
-from app.schemas.leagues import LeagueEvaluation, LeagueChange, ApplyLeagueChangesRequest
+from app.schemas.leagues import LeagueEvaluation, LeagueChange
 from app.services.admin import (
     auto_close_previous_period,
     cancel_period_closure,
@@ -35,33 +33,28 @@ async def rollover_period_route(
     db: AsyncSession = Depends(get_db),
 ):
     """Закрыть выбранный период: снимки, списание базового плана, перенос сверхплана и karma."""
-    admin_id = body.admin_id or user.id
-    result = await rollover_period(db, admin_id, period=body.period, mode=body.mode)
+    result = await rollover_period(db, user.id, period=body.period, mode=body.mode)
     return RolloverResponse(**result)
 
 
 @router.post("/period-close/auto", response_model=RolloverResponse)
 async def auto_close_previous_period_route(
-    body: PeriodAutoCloseRequest,
     user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """Автоматически закрыть предыдущий месяц, если он еще открыт."""
-    admin_id = body.admin_id or user.id
-    result = await auto_close_previous_period(db, admin_id)
+    result = await auto_close_previous_period(db, user.id)
     return RolloverResponse(**result)
 
 
 @router.post("/period-history/{period}/cancel", response_model=RolloverResponse)
 async def cancel_period_closure_route(
     period: str,
-    body: PeriodCancelRequest,
     user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """Отменить закрытие периода и восстановить списанные по базовому плану баллы."""
-    admin_id = body.admin_id or user.id
-    result = await cancel_period_closure(db, admin_id, period)
+    result = await cancel_period_closure(db, user.id, period)
     return RolloverResponse(**result)
 
 
@@ -101,10 +94,8 @@ async def league_evaluation_route(
 
 @router.post("/apply-league-changes", response_model=list[LeagueChange])
 async def apply_league_changes_route(
-    body: ApplyLeagueChangesRequest,
     user: User = Depends(require_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     """Применить изменения лиг. Только admin."""
-    admin_id = body.admin_id or user.id
-    return await apply_league_changes(db, admin_id)
+    return await apply_league_changes(db, user.id)

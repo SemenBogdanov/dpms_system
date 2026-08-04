@@ -1,6 +1,5 @@
 """Схемы прогресса по лигам."""
 from pydantic import BaseModel
-from uuid import UUID
 
 
 class CriteriaPeriod(BaseModel):
@@ -52,7 +51,3 @@ class LeagueChange(BaseModel):
     full_name: str
     old_league: str
     new_league: str
-
-class ApplyLeagueChangesRequest(BaseModel):
-    """Запрос на применение изменений лиг."""
-    admin_id: UUID | None = None

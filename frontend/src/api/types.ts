@@ -126,6 +126,31 @@ export interface AdminUser extends AuthenticatedUser {
   temporary_password_expires_at: string | null
 }
 
+export type AdminUserAuditAction = 'created' | 'updated' | 'temporary_password_issued'
+
+export interface AdminUserAuditChange {
+  field: string
+  before: unknown
+  after: unknown
+}
+
+export interface AdminUserAuditEvent {
+  id: string
+  actor_id: string
+  actor_name: string
+  target_user_id: string
+  action: AdminUserAuditAction
+  changes: AdminUserAuditChange[]
+  sessions_revoked: boolean
+  occurred_at: string
+}
+
+export interface AdminUserAuditHistory {
+  items: AdminUserAuditEvent[]
+  total: number
+  limit: number
+}
+
 export interface QuickNote {
   id: string
   owner_id: string
@@ -1084,6 +1109,7 @@ export interface TaskAcceptanceCriterion {
   reviewed_at: string | null
   baseline_revision: number
   return_count: number
+  decision_change_count: number
   events: TaskAcceptanceCriterionEvent[]
 }
 
@@ -1091,7 +1117,7 @@ export interface TaskAcceptanceCriterionEvent {
   id: string
   actor_id: string | null
   actor_name: string | null
-  event_type: 'submitted' | 'accepted' | 'returned' | 'not_applicable'
+  event_type: 'submitted' | 'accepted' | 'returned' | 'not_applicable' | 'decision_changed'
   from_status: string | null
   to_status: string
   comment: string | null
@@ -1125,6 +1151,12 @@ export interface TaskAcceptancePlanUpdate {
   mode: AcceptanceMode
   acceptance_owner_id?: string | null
   criteria: TaskAcceptanceCriterionInput[]
+}
+
+export interface TaskAcceptanceCriterionRevisionRequest {
+  criterion_id: string
+  approved: boolean
+  comment: string
 }
 
 export type TaskReviewEventType = 'submitted' | 'returned' | 'accepted'
