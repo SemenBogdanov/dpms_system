@@ -20,6 +20,7 @@ async def credit_q(
     amount: Decimal,
     reason: str,
     task_id: UUID | None = None,
+    idempotency_prefix: str | None = None,
 ) -> None:
     """
     Начислить Q пользователю. Три сценария:
@@ -28,10 +29,22 @@ async def credit_q(
     3) иначе → split: часть на main до плана, остаток на karma
     Все суммы округляются до 1 знака.
     """
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(select(User).where(User.id == user_id).with_for_update())
     user = result.scalar_one_or_none()
     if not user:
         raise ValueError("User not found")
+
+    transaction_keys = (
+        [f"{idempotency_prefix}:main", f"{idempotency_prefix}:karma"]
+        if idempotency_prefix
+        else []
+    )
+    if transaction_keys:
+        existing_result = await db.execute(
+            select(QTransaction.id).where(QTransaction.idempotency_key.in_(transaction_keys)).limit(1)
+        )
+        if existing_result.scalar_one_or_none() is not None:
+            return
 
     amount = _round_q(amount)
     mpw = Decimal(str(user.mpw))
@@ -59,6 +72,7 @@ async def credit_q(
                 wallet_type=WalletType.main,
                 reason=reason,
                 task_id=task_id,
+                idempotency_key=f"{idempotency_prefix}:main" if idempotency_prefix else None,
             )
         )
     if to_karma > 0:
@@ -70,6 +84,7 @@ async def credit_q(
                 wallet_type=WalletType.karma,
                 reason=reason,
                 task_id=task_id,
+                idempotency_key=f"{idempotency_prefix}:karma" if idempotency_prefix else None,
             )
         )
     await db.flush()

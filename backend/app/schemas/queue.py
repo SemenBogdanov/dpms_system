@@ -33,6 +33,9 @@ class QueueTaskResponse(BaseModel):
     can_assign: bool = False
     recommended: bool = False
     assigned_by_name: str | None = None
+    acceptance_mode: str = "full"
+    acceptance_total_count: int = 0
+    acceptance_required_count: int = 0
 
     class Config:
         from_attributes = True

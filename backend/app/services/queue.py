@@ -17,6 +17,11 @@ from app.schemas.task import compute_deadline_zone
 from app.services.focus import add_bounded_focus_time
 from app.services.activity import record_activity_event
 from app.services.wallet import credit_q
+from app.services.task_acceptance import (
+    ensure_criteria_ready_for_final_acceptance,
+    ensure_criteria_ready_for_submission,
+    refresh_acceptance_summary,
+)
 
 _LEAGUE_ORDER = {League.C: 0, League.B: 1, League.A: 2}
 _PRIORITY_ORDER = {TaskPriority.low: 1, TaskPriority.medium: 2, TaskPriority.high: 3, TaskPriority.critical: 4}
@@ -176,6 +181,10 @@ async def get_available_tasks(
             can_pull = True
             locked = False
             lock_reason = None
+        if task.acceptance_owner_id == user.id:
+            can_pull = False
+            locked = True
+            lock_reason = "Нельзя выполнять задачу, за приемку которой вы отвечаете"
 
         recommended = (
             can_pull
@@ -212,6 +221,9 @@ async def get_available_tasks(
                 can_assign=can_assign,
                 recommended=recommended,
                 assigned_by_name=assigned_by_name,
+                acceptance_mode=task.acceptance_mode,
+                acceptance_total_count=task.acceptance_total_count,
+                acceptance_required_count=task.acceptance_required_count,
             )
         )
     return out
@@ -232,6 +244,11 @@ async def pull_task(db: AsyncSession, user_id: UUID, task_id: UUID) -> Task:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     if task.status != TaskStatus.in_queue:
         raise HTTPException(status_code=400, detail="Задача уже взята другим")
+    if task.acceptance_owner_id == user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Нельзя выполнять задачу, за приемку которой вы отвечаете",
+        )
     if task.priority != TaskPriority.critical and await _critical_queue_exists(db, exclude_task_id=task.id):
         raise HTTPException(status_code=400, detail=CRITICAL_BLOCK_REASON)
     if _LEAGUE_ORDER.get(user.league, 0) < _LEAGUE_ORDER.get(task.min_league, 0):
@@ -329,7 +346,7 @@ async def submit_for_review(
     brief_feedback: str | None = None,
 ) -> Task:
     """Сдать задачу на проверку."""
-    result = await db.execute(select(Task).where(Task.id == task_id))
+    result = await db.execute(select(Task).where(Task.id == task_id).with_for_update())
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Задача не найдена")
@@ -339,6 +356,7 @@ async def submit_for_review(
         raise HTTPException(status_code=400, detail="Задача не в работе")
     if brief_rating is None:
         raise HTTPException(status_code=400, detail="Оценка постановки задачи обязательна")
+    await ensure_criteria_ready_for_submission(db, task)
     # Если задача в фокусе — зафиксировать время и снять с фокуса
     now = datetime.now(timezone.utc)
     if task.focus_started_at:
@@ -362,6 +380,10 @@ async def submit_for_review(
         task.brief_rating = brief_rating
     if brief_feedback is not None:
         task.brief_feedback = brief_feedback.strip() or None
+    if task.acceptance_mode == "full":
+        task.acceptance_state = "submitted"
+    else:
+        await refresh_acceptance_summary(db, task)
     _add_review_event(
         db,
         task,
@@ -393,10 +415,10 @@ async def validate_task(
     comment: str | None = None,
 ) -> Task:
     """
-    Принять или отклонить. Запрет самовалидации. При reject comment обязателен.
-    Валидатор — teamlead или admin.
+    Принять или отклонить. Принимает назначенный владелец приемки;
+    admin может вмешаться только с обязательным объяснением.
     """
-    result = await db.execute(select(Task).where(Task.id == task_id))
+    result = await db.execute(select(Task).where(Task.id == task_id).with_for_update())
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Задача не найдена")
@@ -407,10 +429,13 @@ async def validate_task(
     validator = validator_result.scalar_one_or_none()
     if not validator:
         raise HTTPException(status_code=404, detail="Валидатор не найден")
-    if validator.role not in (UserRole.teamlead, UserRole.admin):
-        raise HTTPException(status_code=400, detail="Валидировать могут только тимлид или админ")
     if task.assignee_id == validator_id:
         raise HTTPException(status_code=400, detail="Нельзя валидировать свою задачу")
+    is_acceptance_owner = task.acceptance_owner_id == validator_id
+    if not is_acceptance_owner and validator.role != UserRole.admin:
+        raise HTTPException(status_code=403, detail="Задачу принимает назначенный ответственный")
+    if not is_acceptance_owner and not (comment and comment.strip()):
+        raise HTTPException(status_code=400, detail="Admin override требует комментарий")
 
     if not approved:
         if not (comment and comment.strip()):
@@ -420,6 +445,7 @@ async def validate_task(
         task.validated_at = None
         task.completed_at = None
         task.rejection_comment = comment.strip()
+        task.acceptance_state = "returned"
         # При возврате задача не должна оставаться в фокусе
         task.focus_started_at = None
         # Счётчик возвратов
@@ -428,7 +454,9 @@ async def validate_task(
 
         # Quality Score: штраф за возврат
         if task.assignee_id:
-            assignee_result = await db.execute(select(User).where(User.id == task.assignee_id))
+            assignee_result = await db.execute(
+                select(User).where(User.id == task.assignee_id).with_for_update()
+            )
             assignee = assignee_result.scalar_one_or_none()
             if assignee:
                 old_score = float(getattr(assignee, "quality_score", 100.0))
@@ -491,16 +519,20 @@ async def validate_task(
         return task
 
     # Принятие задачи
+    await ensure_criteria_ready_for_final_acceptance(db, task)
     validated_at = datetime.now(timezone.utc)
     task.status = TaskStatus.done
     task.validator_id = validator_id
     task.validated_at = validated_at
     task.rejection_comment = None
     task.is_overdue = False
+    task.acceptance_state = "accepted"
 
     assignee = None
     if task.assignee_id:
-        assignee_result = await db.execute(select(User).where(User.id == task.assignee_id))
+        assignee_result = await db.execute(
+            select(User).where(User.id == task.assignee_id).with_for_update()
+        )
         assignee = assignee_result.scalar_one_or_none()
 
     if task.assignee_id:
@@ -518,6 +550,7 @@ async def validate_task(
                         wallet_type=WalletType.karma,
                         reason=f"Гарантийный баг-фикс #{task.id}",
                         task_id=task.id,
+                        idempotency_key=f"task:{task.id}:acceptance:{task.acceptance_revision}:karma",
                     )
                 )
             # Если est_q == 0 — автор чинит бесплатно, без начисления Q
@@ -529,6 +562,7 @@ async def validate_task(
                 task.estimated_q,
                 reason=f"Задача #{task.id} принята",
                 task_id=task.id,
+                idempotency_prefix=f"task:{task.id}:acceptance:{task.acceptance_revision}",
             )
 
         # Quality Score: бонус за успешную валидацию
@@ -620,6 +654,7 @@ async def create_bugfix(
             min_league=parent_task.min_league,
             assignee_id=assignee.id,
             estimator_id=reporter_id,
+            acceptance_owner_id=reporter_id,
             validator_id=None,
             parent_task_id=parent_task.id,
         )
@@ -650,6 +685,7 @@ async def create_bugfix(
         min_league=parent_task.min_league,
         assignee_id=None,
         estimator_id=reporter_id,
+        acceptance_owner_id=reporter_id,
         validator_id=None,
         parent_task_id=parent_task.id,
     )
@@ -778,6 +814,11 @@ async def assign_task(
         if assigner.role == UserRole.teamlead:
             detail = "Тимлид может назначить задачу только на исполнителя"
         raise HTTPException(status_code=400, detail=detail)
+    if task.acceptance_owner_id == executor.id:
+        raise HTTPException(
+            status_code=400,
+            detail="Ответственного за приемку нельзя назначить исполнителем",
+        )
     if _LEAGUE_ORDER.get(executor.league, 0) < _LEAGUE_ORDER.get(task.min_league, 0):
         raise HTTPException(status_code=400, detail="У исполнителя недостаточный уровень лиги")
 
@@ -861,6 +902,8 @@ async def get_assign_candidates(db: AsyncSession, task_id: UUID, assigner_id: UU
     executors = list(executors_result.scalars().all())
     out = []
     for u in executors:
+        if u.id == task.acceptance_owner_id:
+            continue
         if _LEAGUE_ORDER.get(u.league, 0) < task_league_order:
             continue
         wip_result = await db.execute(

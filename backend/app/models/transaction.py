@@ -40,6 +40,12 @@ class QTransaction(Base):
         ForeignKey("tasks.id"),
         nullable=True,
     )
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 
     user = relationship("User", back_populates="transactions")

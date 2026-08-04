@@ -16,6 +16,10 @@ export type TaskStatus =
   | 'done'
   | 'cancelled'
 export type TaskPriority = 'low' | 'medium' | 'high' | 'critical'
+export type AcceptanceMode = 'full' | 'criteria'
+export type AcceptanceState = 'none' | 'submitted' | 'partially_accepted' | 'returned' | 'accepted'
+export type TaskAcceptanceCriterionKind = 'required' | 'optional' | 'quality_gate'
+export type TaskAcceptanceCriterionStatus = 'pending' | 'submitted' | 'accepted' | 'returned' | 'not_applicable'
 export type KnowledgeStatus = 'draft' | 'published'
 export type AbsenceType = 'vacation' | 'sick_leave' | 'day_off' | 'other'
 export type FeedbackCategory = 'improvement' | 'disagreement' | 'bug' | 'process' | 'other'
@@ -1029,6 +1033,16 @@ export interface Task {
   min_league: League
   assignee_id: string | null
   estimator_id: string
+  acceptance_owner_id: string | null
+  acceptance_mode: AcceptanceMode
+  acceptance_state: AcceptanceState
+  acceptance_revision: number
+  acceptance_total_count: number
+  acceptance_required_count: number
+  acceptance_accepted_count: number
+  acceptance_required_accepted_count: number
+  acceptance_submitted_count: number
+  acceptance_returned_count: number
   validator_id: string | null
   estimation_details: Record<string, unknown> | null
   result_url: string | null
@@ -1053,6 +1067,64 @@ export interface Task {
   active_seconds: number
   active_hours: number
   is_focused: boolean
+}
+
+export interface TaskAcceptanceCriterion {
+  id: string
+  task_id: string
+  position: number
+  title: string
+  description: string | null
+  kind: TaskAcceptanceCriterionKind
+  status: TaskAcceptanceCriterionStatus
+  evidence_comment: string | null
+  evidence_url: string | null
+  reviewer_comment: string | null
+  submitted_at: string | null
+  reviewed_at: string | null
+  baseline_revision: number
+  return_count: number
+  events: TaskAcceptanceCriterionEvent[]
+}
+
+export interface TaskAcceptanceCriterionEvent {
+  id: string
+  actor_id: string | null
+  actor_name: string | null
+  event_type: 'submitted' | 'accepted' | 'returned' | 'not_applicable'
+  from_status: string | null
+  to_status: string
+  comment: string | null
+  evidence_url: string | null
+  acceptance_revision: number
+  created_at: string
+}
+
+export interface TaskAcceptance {
+  task_id: string
+  mode: AcceptanceMode
+  state: AcceptanceState
+  revision: number
+  owner_id: string | null
+  owner_name: string | null
+  locked: boolean
+  can_manage_plan: boolean
+  can_submit: boolean
+  can_review: boolean
+  criteria: TaskAcceptanceCriterion[]
+}
+
+export interface TaskAcceptanceCriterionInput {
+  title: string
+  description?: string
+  kind: TaskAcceptanceCriterionKind
+}
+
+export interface TaskAcceptancePlanUpdate {
+  expected_revision: number
+  mode: AcceptanceMode
+  acceptance_owner_id?: string | null
+  criteria: TaskAcceptanceCriterionInput[]
 }
 
 export type TaskReviewEventType = 'submitted' | 'returned' | 'accepted'
@@ -1566,6 +1638,9 @@ export interface QueueTaskResponse {
   can_assign?: boolean
   recommended?: boolean
   assigned_by_name?: string | null
+  acceptance_mode: AcceptanceMode
+  acceptance_total_count: number
+  acceptance_required_count: number
 }
 
 /** Кандидат для назначения задачи */

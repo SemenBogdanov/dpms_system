@@ -248,6 +248,21 @@ a {
   background-color: hsl(var(--primary));
 }
 
+[data-theme='rose'] .bg-sky-50,
+[data-theme='rose'] .bg-sky-50\/40 {
+  background-color: hsl(330 72% 94% / 0.72);
+}
+
+[data-theme='rose'] .text-sky-700,
+[data-theme='rose'] .text-sky-800 {
+  color: hsl(330 68% 36%);
+}
+
+[data-theme='rose'] .border-sky-100,
+[data-theme='rose'] .border-sky-200 {
+  border-color: hsl(330 62% 76% / 0.72);
+}
+
 [data-theme='rose'] .text-accent-dark {
   color: hsl(330 68% 36%);
 }
@@ -607,6 +622,21 @@ a {
 
 [data-theme='dark'] .border-blue-200,
 [data-theme='dark'] .border-blue-300 {
+  border-color: hsl(217 91% 60% / 0.42);
+}
+
+[data-theme='dark'] .bg-sky-50,
+[data-theme='dark'] .bg-sky-50\/40 {
+  background-color: hsl(217 91% 60% / 0.13);
+}
+
+[data-theme='dark'] .text-sky-700,
+[data-theme='dark'] .text-sky-800 {
+  color: hsl(213 94% 75%);
+}
+
+[data-theme='dark'] .border-sky-100,
+[data-theme='dark'] .border-sky-200 {
   border-color: hsl(217 91% 60% / 0.42);
 }
 

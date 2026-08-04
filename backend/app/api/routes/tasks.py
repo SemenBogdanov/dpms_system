@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_task_workspace_access, require_task_workspace_role
@@ -28,12 +28,25 @@ from app.schemas.task import (
     TimeCorrection,
     compute_deadline_zone,
 )
+from app.schemas.task_acceptance import (
+    AcceptanceCriteriaReviewRequest,
+    AcceptanceCriteriaSubmitRequest,
+    AcceptancePlanUpdate,
+    TaskAcceptanceRead,
+)
 from app.services.attachments import attachment_path, save_task_attachment
 from app.services.activity import record_activity_event
 from app.services.queue import create_bugfix
 from app.services.focus import start_focus, pause_focus, correct_active_time
 from app.services.task_import import commit_task_import, preview_task_import
 from app.services.task_policy import ensure_critical_priority_allowed, resolve_task_estimator_id
+from app.services.task_acceptance import (
+    get_task_acceptance,
+    initialize_acceptance_plan,
+    replace_acceptance_plan,
+    review_acceptance_criteria,
+    submit_acceptance_criteria,
+)
 
 router = APIRouter()
 
@@ -50,6 +63,8 @@ async def _get_task_or_404(db: AsyncSession, task_id: UUID) -> Task:
 async def list_tasks(
     status: TaskStatus | None = Query(None),
     assignee_id: UUID | None = Query(None),
+    acceptance_owner_id: UUID | None = Query(None),
+    review_inbox: bool = Query(False),
     task_type: str | None = Query(None),
     is_overdue: bool | None = Query(None),
     user: User = Depends(require_task_workspace_access),
@@ -68,8 +83,16 @@ async def list_tasks(
         if user.role == UserRole.executor and assignee_id != user.id:
             raise HTTPException(status_code=403, detail="Недостаточно прав")
         stmt = stmt.where(Task.assignee_id == assignee_id)
-    elif user.role == UserRole.executor:
+    elif acceptance_owner_id is None and user.role == UserRole.executor:
         stmt = stmt.where(Task.assignee_id == user.id)
+    if acceptance_owner_id is not None:
+        if user.role == UserRole.executor and acceptance_owner_id != user.id:
+            raise HTTPException(status_code=403, detail="Недостаточно прав")
+        stmt = stmt.where(Task.acceptance_owner_id == acceptance_owner_id)
+    if review_inbox:
+        stmt = stmt.where(
+            or_(Task.status == TaskStatus.review, Task.acceptance_submitted_count > 0)
+        )
     if task_type is not None:
         from app.models.task import TaskType
         try:
@@ -260,6 +283,49 @@ async def list_task_review_events(
     return events
 
 
+@router.get("/{task_id}/acceptance", response_model=TaskAcceptanceRead)
+async def get_acceptance_plan(
+    task_id: UUID,
+    user: User = Depends(require_task_workspace_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return criteria, progress, and permissions for task acceptance."""
+    return await get_task_acceptance(db, task_id, user)
+
+
+@router.put("/{task_id}/acceptance-plan", response_model=TaskAcceptanceRead)
+async def update_acceptance_plan(
+    task_id: UUID,
+    body: AcceptancePlanUpdate,
+    user: User = Depends(require_task_workspace_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replace an unlocked acceptance baseline using optimistic revision control."""
+    return await replace_acceptance_plan(db, task_id, body, user)
+
+
+@router.post("/{task_id}/acceptance/submit", response_model=TaskAcceptanceRead)
+async def submit_acceptance_items(
+    task_id: UUID,
+    body: AcceptanceCriteriaSubmitRequest,
+    user: User = Depends(require_task_workspace_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """Submit selected acceptance criteria with evidence."""
+    return await submit_acceptance_criteria(db, task_id, body, user)
+
+
+@router.post("/{task_id}/acceptance/review", response_model=TaskAcceptanceRead)
+async def review_acceptance_items(
+    task_id: UUID,
+    body: AcceptanceCriteriaReviewRequest,
+    user: User = Depends(require_task_workspace_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """Accept or return selected criteria."""
+    return await review_acceptance_criteria(db, task_id, body, user)
+
+
 @router.get("/{task_id}/attachments", response_model=list[TaskAttachmentRead])
 async def list_task_attachments(
     task_id: UUID,
@@ -336,10 +402,19 @@ async def create_task(
         status=body.status,
         min_league=body.min_league,
         estimator_id=estimator_id,
+        acceptance_owner_id=body.acceptance_owner_id or estimator_id,
+        acceptance_mode=body.acceptance_mode,
         estimation_details=body.estimation_details,
     )
     db.add(task)
     await db.flush()
+    await initialize_acceptance_plan(
+        db,
+        task,
+        owner_id=body.acceptance_owner_id or estimator_id,
+        mode=body.acceptance_mode,
+        criteria=body.acceptance_criteria,
+    )
     await db.refresh(task)
     await record_activity_event(
         db,

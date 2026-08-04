@@ -93,6 +93,65 @@ async def run_alembic(
         await engine.dispose()
 
 
+async def seed_conflicting_acceptance_article(database_url: URL) -> uuid.UUID:
+    article_id = uuid.uuid4()
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO knowledge_articles (
+                        id, slug, title, summary, section, body, status, sort_order,
+                        created_at, updated_at, published_at
+                    )
+                    VALUES (
+                        :id,
+                        'priemka-zadach-po-kriteriyam',
+                        'Пользовательская статья',
+                        'Не принадлежит миграции 050.',
+                        'tasks',
+                        'Эта запись должна пережить upgrade и downgrade.',
+                        'published',
+                        999,
+                        now(),
+                        now(),
+                        now()
+                    )
+                    """
+                ),
+                {"id": article_id},
+            )
+    finally:
+        await engine.dispose()
+    return article_id
+
+
+async def verify_conflicting_acceptance_article(
+    database_url: URL,
+    article_id: uuid.UUID,
+) -> None:
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.connect() as connection:
+            article = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT id, title, body
+                        FROM knowledge_articles
+                        WHERE slug = 'priemka-zadach-po-kriteriyam'
+                        """
+                    )
+                )
+            ).one()
+            assert article.id == article_id
+            assert article.title == "Пользовательская статья"
+            assert article.body == "Эта запись должна пережить upgrade и downgrade."
+    finally:
+        await engine.dispose()
+
+
 async def verify_head_schema(database_url: URL) -> None:
     engine = create_async_engine(database_url)
     try:
@@ -102,7 +161,7 @@ async def verify_head_schema(database_url: URL) -> None:
                     text("SELECT version_num FROM alembic_version")
                 )
             ).scalar_one()
-            assert revision == "049_project_route_integrity"
+            assert revision == "050_task_acceptance_criteria"
             tables = set(
                 (
                     await connection.execute(
@@ -211,6 +270,40 @@ async def verify_head_schema(database_url: URL) -> None:
             assert "WHERE" in target_index
             assert "status" in target_index
             assert "active" in target_index
+            acceptance_tables = set(
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT tablename
+                            FROM pg_tables
+                            WHERE schemaname = 'public'
+                              AND tablename IN (
+                                'task_acceptance_criteria',
+                                'task_acceptance_criterion_events'
+                              )
+                            """
+                        )
+                    )
+                ).scalars()
+            )
+            assert acceptance_tables == {
+                "task_acceptance_criteria",
+                "task_acceptance_criterion_events",
+            }
+            acceptance_article = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT title, body
+                        FROM knowledge_articles
+                        WHERE slug = 'priemka-zadach-po-kriteriyam'
+                        """
+                    )
+                )
+            ).one()
+            assert acceptance_article.title == "Приемка задач по критериям"
+            assert "не означает пропорциональную оплату" in acceptance_article.body
     finally:
         await engine.dispose()
 
@@ -733,10 +826,49 @@ def run() -> None:
         asyncio.run(verify_head_schema(temporary_url))
         asyncio.run(verify_legacy_conversion(temporary_url, legacy_values))
 
+        asyncio.run(
+            run_alembic(
+                temporary_url,
+                "downgrade",
+                "049_project_route_integrity",
+            )
+        )
+        conflicting_article_id = asyncio.run(
+            seed_conflicting_acceptance_article(temporary_url)
+        )
+        asyncio.run(run_alembic(temporary_url, "upgrade", "head"))
+        asyncio.run(
+            verify_conflicting_acceptance_article(
+                temporary_url,
+                conflicting_article_id,
+            )
+        )
+        asyncio.run(
+            run_alembic(
+                temporary_url,
+                "downgrade",
+                "049_project_route_integrity",
+            )
+        )
+        asyncio.run(
+            verify_conflicting_acceptance_article(
+                temporary_url,
+                conflicting_article_id,
+            )
+        )
+        asyncio.run(run_alembic(temporary_url, "upgrade", "head"))
+        asyncio.run(
+            verify_conflicting_acceptance_article(
+                temporary_url,
+                conflicting_article_id,
+            )
+        )
+
         print(
             "Work entity migration smoke OK: fresh head, DB constraints, "
             "044 schema restoration, legacy lifecycle normalization, and "
-            "task/milestone/dependency/artifact conversion"
+            "task/milestone/dependency/artifact conversion; knowledge article "
+            "conflicts survive 050 upgrade/downgrade"
         )
     finally:
         if created:

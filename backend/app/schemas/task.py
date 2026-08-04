@@ -3,12 +3,18 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.core.limits import TASK_TITLE_MAX_LENGTH
 from app.models.task import TaskPriority, TaskReviewEventType, TaskStatus, TaskType
 from app.models.catalog import Complexity
 from app.models.user import League
+from app.schemas.task_acceptance import (
+    AcceptanceCriterionCreate,
+    AcceptanceMode,
+    AcceptanceState,
+    validate_acceptance_plan,
+)
 
 
 class TaskBase(BaseModel):
@@ -28,6 +34,18 @@ class TaskCreate(TaskBase):
     status: TaskStatus = TaskStatus.new
     estimator_id: UUID
     estimation_details: dict | None = None
+    acceptance_mode: AcceptanceMode = "full"
+    acceptance_owner_id: UUID | None = None
+    acceptance_criteria: list[AcceptanceCriterionCreate] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def validate_acceptance(self):
+        if self.status not in {TaskStatus.new, TaskStatus.estimated, TaskStatus.in_queue}:
+            raise ValueError(
+                "Новую задачу можно создать только в статусе new, estimated или in_queue"
+            )
+        validate_acceptance_plan(self.acceptance_mode, self.acceptance_criteria)
+        return self
 
 
 class TaskUpdate(BaseModel):
@@ -45,6 +63,16 @@ class TaskRead(TaskBase):
     status: TaskStatus
     assignee_id: UUID | None = None
     estimator_id: UUID
+    acceptance_owner_id: UUID | None = None
+    acceptance_mode: AcceptanceMode = "full"
+    acceptance_state: AcceptanceState = "none"
+    acceptance_revision: int = 1
+    acceptance_total_count: int = 0
+    acceptance_required_count: int = 0
+    acceptance_accepted_count: int = 0
+    acceptance_required_accepted_count: int = 0
+    acceptance_submitted_count: int = 0
+    acceptance_returned_count: int = 0
     validator_id: UUID | None = None
     estimation_details: dict | None = None
     result_url: str | None = None

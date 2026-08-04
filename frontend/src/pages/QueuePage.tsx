@@ -430,6 +430,8 @@ export function QueuePage() {
     (t as QueueTaskResponse).is_stale === true ||
     (!(t as QueueTaskResponse).is_stale && ((t as QueueTaskResponse).hours_in_queue ?? 0) > 24) ||
     (t as QueueTaskResponse).recommended === true ||
+    (t as QueueTaskResponse).acceptance_mode === 'criteria' ||
+    (t as Task).acceptance_mode === 'criteria' ||
     taskTags(t).length > 0 ||
     Boolean((t as QueueTaskResponse).assigned_by_name)
 
@@ -636,6 +638,14 @@ export function QueuePage() {
                               {(row.task as Task).rejection_count > 0 && (
                                 <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium leading-5 text-amber-500">
                                   ↩ {(row.task as Task).rejection_count}
+                                </span>
+                              )}
+                              {((row.task as QueueTaskResponse).acceptance_mode ?? (row.task as Task).acceptance_mode) === 'criteria' && (
+                                <span
+                                  className="inline-flex items-center rounded-full bg-sky-50 px-2.5 py-0.5 text-xs font-medium leading-5 text-sky-700"
+                                  title="Задача принимается по заранее заданным критериям"
+                                >
+                                  Приемка: {(row.task as QueueTaskResponse).acceptance_required_count ?? (row.task as Task).acceptance_required_count} обяз.
                                 </span>
                               )}
                               {(row.task as QueueTaskResponse).is_stale && (

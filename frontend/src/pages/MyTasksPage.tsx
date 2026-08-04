@@ -32,6 +32,8 @@ export function MyTasksPage() {
 
   const [rejectTask, setRejectTask] = useState<Task | null>(null)
   const [rejectComment, setRejectComment] = useState('')
+  const [approveTask, setApproveTask] = useState<Task | null>(null)
+  const [approveComment, setApproveComment] = useState('')
 
   const [bugfixParent, setBugfixParent] = useState<Task | null>(null)
   const [bugfixTitle, setBugfixTitle] = useState('')
@@ -64,13 +66,27 @@ export function MyTasksPage() {
   }, [currentUser])
 
   const loadReviewTasks = useCallback(async () => {
+    if (!currentUser) {
+      setReviewTasks([])
+      return
+    }
     try {
-      const list = await api.get<Task[]>('/api/tasks?status=review')
-      setReviewTasks(list)
+      const ownerTasks = await api.get<Task[]>('/api/tasks', {
+        acceptance_owner_id: currentUser.id,
+        review_inbox: 'true',
+      })
+      if (currentUser.role === 'admin') {
+        const allReviewTasks = await api.get<Task[]>('/api/tasks', { review_inbox: 'true' })
+        const taskById = new Map(ownerTasks.map((task) => [task.id, task]))
+        allReviewTasks.forEach((task) => taskById.set(task.id, task))
+        setReviewTasks([...taskById.values()])
+      } else {
+        setReviewTasks(ownerTasks)
+      }
     } catch {
       setReviewTasks([])
     }
-  }, [])
+  }, [currentUser])
 
   const loadPurchaseApprovals = useCallback(async () => {
     if (currentUser?.role !== 'teamlead' && currentUser?.role !== 'admin') {
@@ -111,6 +127,17 @@ export function MyTasksPage() {
     ])
     setTasks(newTasks)
   }, [currentUser, loadReviewTasks, loadPurchaseApprovals])
+
+  const refreshAfterAcceptance = useCallback(async () => {
+    await refreshTasks()
+    if (!detailTask) return
+    try {
+      const updatedTask = await api.get<Task>(`/api/tasks/${detailTask.id}`)
+      setDetailTask(updatedTask)
+    } catch {
+      setDetailTask(null)
+    }
+  }, [detailTask, refreshTasks])
 
   const isTaskInTracker = useCallback((taskId: string) => {
     return deadlineTrackers.some((tracker) => tracker.linked_task_id === taskId && tracker.status !== 'archived')
@@ -248,6 +275,26 @@ export function MyTasksPage() {
   const handleRejectClick = (task: Task) => {
     setRejectTask(task)
     setRejectComment('')
+  }
+
+  const handleApproveClick = (task: Task) => {
+    const requiresOverrideReason = isAdmin && task.acceptance_owner_id !== currentUser?.id
+    if (!requiresOverrideReason) {
+      void handleValidate(task.id, true)
+      return
+    }
+    setApproveTask(task)
+    setApproveComment('')
+  }
+
+  const handleApproveModalOk = () => {
+    if (!approveTask || !approveComment.trim()) {
+      toast.error('Укажите причину admin override')
+      return
+    }
+    void handleValidate(approveTask.id, true, approveComment.trim())
+    setApproveTask(null)
+    setApproveComment('')
   }
 
   const handleRejectModalOk = () => {
@@ -579,11 +626,12 @@ export function MyTasksPage() {
         onToggleTracker={handleToggleTracker}
         isInTracker={detailTask ? isTaskInTracker(detailTask.id) : false}
         trackerBusy={detailTask ? trackerBusyId === detailTask.id : false}
+        onAcceptanceUpdated={() => void refreshAfterAcceptance()}
       />
 
-      {isTeamleadOrAdmin && (reviewTasks.length > 0 || purchaseApprovals.length > 0) && (
+      {(reviewTasks.length > 0 || purchaseApprovals.length > 0) && (
         <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
-          <h2 className="mb-3 font-medium text-amber-800">На валидацию</h2>
+          <h2 className="mb-3 font-medium text-amber-800">На приемку и согласование</h2>
           <div className="space-y-2">
             {reviewTasks.map((t) => (
               <TaskCard
@@ -591,6 +639,7 @@ export function MyTasksPage() {
                 task={t}
                 showActions
                 onValidate={handleValidate}
+                onApproveClick={handleApproveClick}
                 onRejectClick={handleRejectClick}
                 busyTaskId={busyTaskId}
                 currentUserId={currentUser?.id ?? ''}
@@ -649,6 +698,44 @@ export function MyTasksPage() {
             })}
           </div>
         </section>
+      )}
+
+      {approveTask && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
+          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+            <h3 className="text-lg font-semibold text-slate-900">Принять по admin override</h3>
+            <p className="mt-1 text-sm text-slate-500">#{approveTask.task_number} {approveTask.title}</p>
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-slate-700">
+                Причина override <span className="text-red-600">*</span>
+              </label>
+              <textarea
+                value={approveComment}
+                onChange={(event) => setApproveComment(event.target.value)}
+                rows={3}
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                placeholder="Обязательно укажите причину"
+              />
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setApproveTask(null)}
+                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                onClick={handleApproveModalOk}
+                disabled={!approveComment.trim() || busyTaskId === approveTask.id}
+                className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {busyTaskId === approveTask.id ? '...' : 'Принять'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Модалка: Сдать на проверку */}

@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState, type ChangeEvent, type ClipboardEvent } f
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
-import type { CatalogItem, User, EstimateResponse, Task, TaskAttachment, TaskTagSuggestion } from '@/api/types'
+import type { CatalogItem, User, EstimateResponse, Task, TaskAcceptanceCriterionInput, TaskAttachment, TaskTagSuggestion } from '@/api/types'
 import type { CartRow } from '@/components/EstimateCart'
 import { CatalogPicker } from '@/components/CatalogPicker'
 import { EstimateCart } from '@/components/EstimateCart'
 import { TagInput } from '@/components/TagInput'
-import { ImagePlus, Paperclip, Search, X } from 'lucide-react'
+import { ImagePlus, Paperclip, Plus, Search, Trash2, X } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
 
 const MAX_TASK_ATTACHMENTS = 5
@@ -51,6 +51,10 @@ export function CalculatorPage() {
   const [createAttachments, setCreateAttachments] = useState<File[]>([])
   const [createEstimatorId, setCreateEstimatorId] = useState('')
   const [dueDate, setDueDate] = useState('')
+  const [createAcceptanceMode, setCreateAcceptanceMode] = useState<'full' | 'criteria'>('full')
+  const [createAcceptanceCriteria, setCreateAcceptanceCriteria] = useState<TaskAcceptanceCriterionInput[]>([
+    { title: '', kind: 'required' },
+  ])
   const [creating, setCreating] = useState(false)
   const [categoryTab, setCategoryTab] = useState<'all' | 'widget' | 'etl' | 'api' | 'docs' | 'proactive'>('all')
   const [catalogSearch, setCatalogSearch] = useState('')
@@ -137,7 +141,33 @@ export function CalculatorPage() {
     setCreateAttachments([])
     setCreateEstimatorId(isAdmin ? taskCreators[0]?.id ?? '' : currentUser?.id ?? '')
     setDueDate('')
+    setCreateAcceptanceMode('full')
+    setCreateAcceptanceCriteria([{ title: '', kind: 'required' }])
     setCreateModalOpen(true)
+  }
+
+  const updateAcceptanceCriterion = (
+    index: number,
+    patch: Partial<TaskAcceptanceCriterionInput>,
+  ) => {
+    setCreateAcceptanceCriteria((criteria) =>
+      criteria.map((criterion, criterionIndex) =>
+        criterionIndex === index ? { ...criterion, ...patch } : criterion
+      )
+    )
+  }
+
+  const addAcceptanceCriterion = () => {
+    setCreateAcceptanceCriteria((criteria) => [
+      ...criteria,
+      { title: '', description: '', kind: 'required' },
+    ])
+  }
+
+  const removeAcceptanceCriterion = (index: number) => {
+    setCreateAcceptanceCriteria((criteria) =>
+      criteria.length === 1 ? criteria : criteria.filter((_, criterionIndex) => criterionIndex !== index)
+    )
   }
 
   const isAllowedAttachment = (file: File, imagesOnly = false) => {
@@ -233,6 +263,21 @@ export function CalculatorPage() {
       toast.error('Не выбран постановщик задачи')
       return
     }
+    const acceptanceCriteria = createAcceptanceCriteria.map((criterion) => ({
+      ...criterion,
+      title: criterion.title.trim(),
+      description: criterion.description?.trim() || undefined,
+    }))
+    if (createAcceptanceMode === 'criteria') {
+      if (acceptanceCriteria.some((criterion) => !criterion.title)) {
+        toast.error('Заполните название критерия приемки')
+        return
+      }
+      if (!acceptanceCriteria.some((criterion) => criterion.kind !== 'optional')) {
+        toast.error('Нужен хотя бы один обязательный критерий или quality gate')
+        return
+      }
+    }
     const hasProactive = cart.some((r) => r.catalog.category === 'proactive')
     const adminSafePriority = !isAdmin && createPriority === 'critical' ? 'high' : createPriority
     const priorityToSend = hasProactive && (adminSafePriority === 'critical' || adminSafePriority === 'high') ? 'medium' : adminSafePriority
@@ -248,6 +293,8 @@ export function CalculatorPage() {
           items: cart.map((r) => ({ catalog_id: r.catalog.id, quantity: r.quantity })),
           tags: createTags,
           due_date: dueDate ? new Date(dueDate).toISOString() : undefined,
+          acceptance_mode: createAcceptanceMode,
+          acceptance_criteria: createAcceptanceMode === 'criteria' ? acceptanceCriteria : [],
         }
       )
       let uploaded = 0
@@ -391,24 +438,28 @@ export function CalculatorPage() {
 
       {createModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           role="dialog"
           aria-modal="true"
+          aria-labelledby="create-task-dialog-title"
           onKeyDown={(e) => e.key === 'Escape' && setCreateModalOpen(false)}
         >
           <div
-            className="max-h-[calc(100vh-3rem)] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 shadow-lg"
+            className={`max-h-[calc(100vh-2rem)] w-full overflow-y-auto rounded-xl bg-white p-6 shadow-lg ${
+              createAcceptanceMode === 'criteria' ? 'max-w-2xl' : 'max-w-lg'
+            }`}
             onClick={(e) => e.stopPropagation()}
             onPaste={handleAttachmentPaste}
           >
-            <h3 className="text-lg font-semibold text-slate-900">
+            <h3 id="create-task-dialog-title" className="text-lg font-semibold text-slate-900">
               Создать задачу и отправить в очередь
             </h3>
             <div className="mt-4 space-y-3">
-              <label className="block text-sm font-medium text-slate-700">
+              <label htmlFor="create-task-title" className="block text-sm font-medium text-slate-700">
                 Название задачи *
               </label>
               <input
+                id="create-task-title"
                 type="text"
                 value={createTitle}
                 onChange={(e) => setCreateTitle(e.target.value)}
@@ -417,19 +468,20 @@ export function CalculatorPage() {
                 minLength={5}
                 maxLength={TASK_TITLE_MAX_LENGTH}
               />
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-500">
                 {createTitle.trim().length}/{TASK_TITLE_MAX_LENGTH} символов
               </p>
-              <label className="block text-sm font-medium text-slate-700">
+              <label htmlFor="create-task-description" className="block text-sm font-medium text-slate-700">
                 Описание
               </label>
               <textarea
+                id="create-task-description"
                 value={createDescription}
                 onChange={(e) => setCreateDescription(e.target.value)}
                 rows={3}
                 className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
               />
-              <label className="block text-sm font-medium text-slate-700">
+              <label htmlFor="create-task-priority" className="block text-sm font-medium text-slate-700">
                 Приоритет
               </label>
               {(() => {
@@ -450,6 +502,7 @@ export function CalculatorPage() {
                 return (
                   <>
                     <select
+                      id="create-task-priority"
                       value={effectivePriority}
                       onChange={(e) => setCreatePriority(e.target.value)}
                       className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
@@ -466,7 +519,7 @@ export function CalculatorPage() {
                       </p>
                     )}
                     {!hasProactive && (
-                      <p className="mt-1 text-xs text-slate-400">
+                      <p className="mt-1 text-xs text-slate-500">
                         {priorityHint[effectivePriority] ?? ''}
                       </p>
                     )}
@@ -474,16 +527,103 @@ export function CalculatorPage() {
                 )
               })()}
               <div>
-                <label className="block text-sm font-medium text-slate-700">
-                  Крайний срок <span className="text-slate-400">(необязательно)</span>
+                <label htmlFor="create-task-due-date" className="block text-sm font-medium text-slate-700">
+                  Крайний срок <span className="text-slate-500">(необязательно)</span>
                 </label>
                 <input
+                  id="create-task-due-date"
                   type="datetime-local"
                   value={dueDate}
                   onChange={(e) => setDueDate(e.target.value)}
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                 />
               </div>
+              <fieldset className="border-y border-slate-200 py-3">
+                <legend className="text-sm font-medium text-slate-700">Критерии приемки</legend>
+                <div className="mt-2 inline-flex rounded-md border border-slate-300 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setCreateAcceptanceMode('full')}
+                    className={`rounded px-2.5 py-1.5 text-xs font-medium ${
+                      createAcceptanceMode === 'full'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    Полная приемка
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreateAcceptanceMode('criteria')}
+                    className={`rounded px-2.5 py-1.5 text-xs font-medium ${
+                      createAcceptanceMode === 'criteria'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    По критериям
+                  </button>
+                </div>
+                {createAcceptanceMode === 'criteria' && (
+                  <div className="mt-3 space-y-3">
+                    <p className="text-xs text-slate-500">
+                      После назначения исполнителя этот список фиксируется. Q начисляются после полной приемки задачи.
+                    </p>
+                    <div className="divide-y divide-slate-200 border-y border-slate-200">
+                      {createAcceptanceCriteria.map((criterion, index) => (
+                        <div key={index} className="grid gap-2 py-3 sm:grid-cols-[minmax(0,1fr)_150px_36px]">
+                          <div className="min-w-0 space-y-2">
+                            <input
+                              type="text"
+                              value={criterion.title}
+                              onChange={(event) => updateAcceptanceCriterion(index, { title: event.target.value })}
+                              placeholder={`Критерий ${index + 1}: наблюдаемый результат`}
+                              className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                            />
+                            <input
+                              type="text"
+                              value={criterion.description ?? ''}
+                              onChange={(event) => updateAcceptanceCriterion(index, { description: event.target.value })}
+                              placeholder="Как проверить результат (необязательно)"
+                              className="w-full min-w-0 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <select
+                            value={criterion.kind}
+                            onChange={(event) => updateAcceptanceCriterion(index, {
+                              kind: event.target.value as TaskAcceptanceCriterionInput['kind'],
+                            })}
+                            className="h-10 rounded-md border border-slate-300 px-3 py-2 text-sm"
+                            aria-label={`Тип критерия ${index + 1}`}
+                          >
+                            <option value="required">Обязательный</option>
+                            <option value="quality_gate">Quality gate</option>
+                            <option value="optional">Необязательный</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => removeAcceptanceCriterion(index)}
+                            disabled={createAcceptanceCriteria.length === 1}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-500 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30"
+                            title="Удалить критерий"
+                            aria-label={`Удалить критерий ${index + 1}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={addAcceptanceCriterion}
+                      disabled={createAcceptanceCriteria.length >= 50}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      <Plus className="h-4 w-4" /> Добавить критерий
+                    </button>
+                  </div>
+                )}
+              </fieldset>
               <label className="block text-sm font-medium text-slate-700">
                 Теги
               </label>
@@ -509,7 +649,7 @@ export function CalculatorPage() {
                     disabled={creating}
                   />
                 </label>
-                <p className="mt-1 text-xs text-slate-400">
+                <p className="mt-1 text-xs text-slate-500">
                   PNG, JPG, WEBP, GIF, DOCX, XLS или XLSX. До 10 МБ, максимум {MAX_TASK_ATTACHMENTS} файлов. Скриншоты можно вставлять через Ctrl+V.
                 </p>
                 <div className="mt-2 flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-500">
@@ -545,24 +685,30 @@ export function CalculatorPage() {
                   </ul>
                 )}
               </div>
-              <label className="block text-sm font-medium text-slate-700">
-                Постановщик задачи
-              </label>
               {isAdmin ? (
-                <select
-                  value={createEstimatorId}
-                  onChange={(e) => setCreateEstimatorId(e.target.value)}
-                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                >
-                  {taskCreators.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.full_name}
-                    </option>
-                  ))}
-                </select>
+                <>
+                  <label htmlFor="create-task-estimator" className="block text-sm font-medium text-slate-700">
+                    Постановщик задачи
+                  </label>
+                  <select
+                    id="create-task-estimator"
+                    value={createEstimatorId}
+                    onChange={(e) => setCreateEstimatorId(e.target.value)}
+                    className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    {taskCreators.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.full_name}
+                      </option>
+                    ))}
+                  </select>
+                </>
               ) : (
-                <div className="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                  {currentUser?.full_name ?? 'Текущий пользователь'}
+                <div>
+                  <p className="text-sm font-medium text-slate-700">Постановщик задачи</p>
+                  <div className="mt-1 w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                    {currentUser?.full_name ?? 'Текущий пользователь'}
+                  </div>
                 </div>
               )}
             </div>

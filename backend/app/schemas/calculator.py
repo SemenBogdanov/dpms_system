@@ -2,9 +2,14 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.core.limits import TASK_TITLE_MAX_LENGTH
+from app.schemas.task_acceptance import (
+    AcceptanceCriterionCreate,
+    AcceptanceMode,
+    validate_acceptance_plan,
+)
 
 
 class CalcItemInput(BaseModel):
@@ -45,3 +50,10 @@ class CreateTaskFromCalcRequest(BaseModel):
     items: list[CalcItemInput]
     tags: list[str] = []
     due_date: datetime | None = None
+    acceptance_mode: AcceptanceMode = "full"
+    acceptance_criteria: list[AcceptanceCriterionCreate] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def validate_acceptance(self):
+        validate_acceptance_plan(self.acceptance_mode, self.acceptance_criteria)
+        return self

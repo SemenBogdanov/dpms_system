@@ -729,6 +729,7 @@ async def promote_personal_task(
         min_league=body.min_league,
         assignee_id=None,
         estimator_id=user.id,
+        acceptance_owner_id=user.id,
         validator_id=None,
         estimation_details={
             "source": "personal_task",

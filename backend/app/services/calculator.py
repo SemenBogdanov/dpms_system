@@ -16,6 +16,7 @@ from app.schemas.calculator import (
     CreateTaskFromCalcRequest,
 )
 from app.services.task_policy import ensure_critical_priority_allowed, resolve_task_estimator_id
+from app.services.task_acceptance import initialize_acceptance_plan
 
 _LEAGUE_ORDER = {League.C: 0, League.B: 1, League.A: 2}
 _COMPLEXITY_ORDER = {Complexity.S: 0, Complexity.M: 1, Complexity.L: 2, Complexity.XL: 3}
@@ -152,6 +153,8 @@ async def create_task_from_calc(
         min_league=league_enum,
         assignee_id=None,
         estimator_id=estimator_id,
+        acceptance_owner_id=estimator_id,
+        acceptance_mode=request.acceptance_mode,
         validator_id=None,
         estimation_details=estimation_details,
         due_date=request.due_date,
@@ -159,5 +162,12 @@ async def create_task_from_calc(
     )
     db.add(task)
     await db.flush()
+    await initialize_acceptance_plan(
+        db,
+        task,
+        owner_id=estimator_id,
+        mode=request.acceptance_mode,
+        criteria=request.acceptance_criteria,
+    )
     await db.refresh(task)
     return task

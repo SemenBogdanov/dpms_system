@@ -6,6 +6,7 @@ import { PriorityBadge } from './PriorityBadge'
 import { CalendarClock, Copy, FileText, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { WorkEntityBacklinks } from './WorkEntityBacklinks'
+import { TaskAcceptancePanel } from './TaskAcceptancePanel'
 
 interface TaskDetailModalProps {
   task: Task | null
@@ -18,6 +19,7 @@ interface TaskDetailModalProps {
   onToggleTracker?: (task: Task) => void
   isInTracker?: boolean
   trackerBusy?: boolean
+  onAcceptanceUpdated?: () => void
 }
 
 const statusLabels: Record<string, string> = {
@@ -70,6 +72,7 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
   onToggleTracker,
   isInTracker,
   trackerBusy,
+  onAcceptanceUpdated,
 }) => {
   const taskId = task?.id
   const [attachments, setAttachments] = useState<TaskAttachment[]>([])
@@ -139,7 +142,12 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
       active = false
       createdUrls.forEach((url) => URL.revokeObjectURL(url))
     }
-  }, [taskId])
+  }, [
+    taskId,
+    task?.acceptance_state,
+    task?.acceptance_accepted_count,
+    task?.acceptance_returned_count,
+  ])
 
   if (!task) return null
 
@@ -171,10 +179,6 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
     accepted: 'border-emerald-200 bg-emerald-50 text-emerald-800',
   }
 
-  const handleOverlayClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) onClose()
-  }
-
   const handleCopyTaskLabel = async () => {
     try {
       if (navigator.clipboard?.writeText) {
@@ -201,11 +205,13 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="task-detail-title"
-      onKeyDown={(e) => e.key === 'Escape' && onClose()}
-      onClick={handleOverlayClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose()
+        e.stopPropagation()
+      }}
     >
       <div
-        className="relative w-full max-w-lg rounded-xl bg-white shadow-2xl"
+        className={`relative w-full rounded-xl bg-white shadow-2xl ${task.acceptance_mode === 'criteria' ? 'max-w-3xl' : 'max-w-lg'}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between border-b border-slate-200 p-4">
@@ -325,6 +331,10 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
           </div>
 
           <WorkEntityBacklinks targetType="task" targetId={task.id} />
+
+          {task.acceptance_mode === 'criteria' && (
+            <TaskAcceptancePanel task={task} onUpdated={onAcceptanceUpdated} />
+          )}
 
           {(attachmentsLoading || attachments.length > 0) && (
             <div>

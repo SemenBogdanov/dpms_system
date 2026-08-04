@@ -10,6 +10,7 @@ interface TaskCardProps {
   onPull?: (taskId: string) => void
   onSubmitReview?: (taskId: string) => void
   onValidate?: (taskId: string, approved: boolean, comment?: string) => void
+  onApproveClick?: (task: Task) => void
   /** Открыть модалку «Вернуть» с полем «Причина возврата»; сабмит вызовет onValidate(taskId, false, comment) */
   onRejectClick?: (task: Task) => void
   /** Клик по названию задачи — открыть детальную модалку */
@@ -54,6 +55,7 @@ export function TaskCard({
   onPull,
   onSubmitReview,
   onValidate,
+  onApproveClick,
   onRejectClick,
   onOpenDetail,
   showActions,
@@ -74,9 +76,18 @@ export function TaskCard({
   const canSubmit = showActions && inProgress && onSubmitReview
   const canValidate = showActions && inReview && onValidate
   const isSelfTask = currentUserId && task.assignee_id === currentUserId
+  const isCriteriaMode = task.acceptance_mode === 'criteria'
+  const hasRequiredAcceptance =
+    !isCriteriaMode || task.acceptance_required_accepted_count >= task.acceptance_required_count
   const isPulling = pullingTaskId === task.id
   const isBusy = busyTaskId === task.id
-  const validateDisabled = Boolean(isBusy || isSelfTask)
+  const approveDisabled = Boolean(isBusy || isSelfTask || !hasRequiredAcceptance)
+  const rejectDisabled = Boolean(isBusy || isSelfTask)
+  const validationDisabledTitle = isSelfTask
+    ? 'Нельзя валидировать свою задачу'
+    : !hasRequiredAcceptance
+      ? 'Сначала примите все обязательные критерии'
+      : undefined
   const days = daysSince(task.started_at)
   const completedLate = wasCompletedLate(task)
   const briefStars = task.brief_rating
@@ -125,6 +136,14 @@ export function TaskCard({
               {statusLabels[task.status] ?? task.status}
             </span>
             <span className="text-xs text-slate-400">· {task.complexity}</span>
+            {isCriteriaMode && (
+              <span
+                className="rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700"
+                title={`Принято ${task.acceptance_required_accepted_count} из ${task.acceptance_required_count} обязательных критериев`}
+              >
+                {task.acceptance_required_accepted_count}/{task.acceptance_required_count}
+              </span>
+            )}
             {days != null && (
               <span className="text-xs text-slate-400">· {days} д. в работе</span>
             )}
@@ -223,9 +242,9 @@ export function TaskCard({
             <>
               <button
                 type="button"
-                onClick={() => onValidate(task.id, true)}
-                disabled={validateDisabled}
-                title={isSelfTask ? 'Нельзя валидировать свою задачу' : undefined}
+                onClick={() => (onApproveClick ? onApproveClick(task) : onValidate(task.id, true))}
+                disabled={approveDisabled}
+                title={validationDisabledTitle}
                 className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
               >
                 {isBusy ? '...' : '✓ Принять'}
@@ -233,7 +252,7 @@ export function TaskCard({
               <button
                 type="button"
                 onClick={() => (onRejectClick ? onRejectClick(task) : onValidate(task.id, false))}
-                disabled={validateDisabled}
+                disabled={rejectDisabled}
                 title={isSelfTask ? 'Нельзя валидировать свою задачу' : undefined}
                 className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
               >

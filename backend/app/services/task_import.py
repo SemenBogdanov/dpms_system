@@ -541,6 +541,7 @@ async def commit_task_import(
             assignee_id=None,
             assigned_by_id=None,
             estimator_id=user.id,
+            acceptance_owner_id=user.id,
             validator_id=None,
             estimation_details={
                 "source": "task_import_csv",
