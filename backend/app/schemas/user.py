@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 from app.models.user import League, UserRole
 
@@ -19,6 +19,7 @@ class UserBase(BaseModel):
     wip_limit: int = Field(default=2, ge=1)
     is_new_employee: bool = False
     task_workspace_enabled: bool = False
+    can_link_queue_tasks_to_projects: bool = False
     feedback_enabled: bool = False
     competency_development_enabled: bool = True
     competency_constructor_enabled: bool = False
@@ -35,9 +36,18 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=8, max_length=128)
     is_new_employee: bool = False
     task_workspace_enabled: bool = False
+    can_link_queue_tasks_to_projects: bool = False
     feedback_enabled: bool = False
     competency_development_enabled: bool = True
     competency_constructor_enabled: bool = False
+
+    @model_validator(mode="after")
+    def validate_project_queue_capability(self):
+        if self.can_link_queue_tasks_to_projects and not self.task_workspace_enabled:
+            raise ValueError(
+                "Привязка Q-задач к проектам требует доступа к разделу задач"
+            )
+        return self
 
 
 class UserUpdate(BaseModel):
@@ -50,6 +60,7 @@ class UserUpdate(BaseModel):
     is_active: bool | None = None
     is_new_employee: bool | None = None
     task_workspace_enabled: bool | None = None
+    can_link_queue_tasks_to_projects: bool | None = None
     feedback_enabled: bool | None = None
     competency_development_enabled: bool | None = None
     competency_constructor_enabled: bool | None = None

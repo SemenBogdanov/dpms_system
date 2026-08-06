@@ -138,6 +138,7 @@ async def create_user(
         is_active=True,
         is_new_employee=body.is_new_employee,
         task_workspace_enabled=body.task_workspace_enabled,
+        can_link_queue_tasks_to_projects=body.can_link_queue_tasks_to_projects,
         feedback_enabled=body.feedback_enabled,
         competency_development_enabled=body.competency_development_enabled,
         competency_constructor_enabled=body.competency_constructor_enabled,
@@ -275,6 +276,20 @@ async def update_user(
             or body.task_workspace_enabled != user.task_workspace_enabled
         )
         user.task_workspace_enabled = body.task_workspace_enabled
+        if not body.task_workspace_enabled:
+            user.can_link_queue_tasks_to_projects = False
+    if body.can_link_queue_tasks_to_projects is not None:
+        if body.can_link_queue_tasks_to_projects and not user.task_workspace_enabled:
+            raise HTTPException(
+                status_code=400,
+                detail="Привязка Q-задач к проектам требует доступа к разделу задач",
+            )
+        revoke_sessions = (
+            revoke_sessions
+            or body.can_link_queue_tasks_to_projects
+            != user.can_link_queue_tasks_to_projects
+        )
+        user.can_link_queue_tasks_to_projects = body.can_link_queue_tasks_to_projects
     if revoke_sessions:
         user.auth_version += 1
     await record_admin_user_audit_event(

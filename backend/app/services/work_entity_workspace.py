@@ -37,6 +37,7 @@ from app.schemas.work_entity import (
     WorkEntityWorkspaceRead,
 )
 from app.services.work_entities import serialize_links
+from app.services.execution_contracts import load_active_execution_contracts
 
 WORKSPACE_GRAPH_ADVISORY_LOCK_KEY = 460047
 TERMINAL_TASK_STATUSES = {"done", "cancelled"}
@@ -664,6 +665,14 @@ async def build_workspace(
     )
 
     can_manage = access_role in {"owner", "editor"}
+    can_manage_execution_contract = (
+        can_manage and current_user.can_link_queue_tasks_to_projects
+    )
+    execution_contracts = await load_active_execution_contracts(
+        db,
+        entity.id,
+        can_manage=can_manage_execution_contract,
+    )
     stage_map = {item.id: item for item in stages}
     task_map = {item.id: item for item in tasks}
     milestone_map = {item.id: item for item in milestones}
@@ -762,6 +771,8 @@ async def build_workspace(
             position=task.position,
             predecessor_ids=predecessor_ids.get(node_key("task", task.id), []),
             can_manage=can_manage,
+            can_manage_execution_contract=can_manage_execution_contract,
+            execution_contract=execution_contracts.get(task.id),
             can_execute=can_manage
             or (
                 access_role == "participant"

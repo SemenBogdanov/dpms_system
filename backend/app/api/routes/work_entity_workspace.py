@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -25,6 +25,10 @@ from app.schemas.work_entity import (
     WorkEntityArtifactRead,
     WorkEntityArtifactUpdate,
     WorkEntityEventRead,
+    WorkEntityExecutionContractCreateRequest,
+    WorkEntityExecutionContractRead,
+    WorkEntityExecutionContractReleaseRequest,
+    WorkEntityExecutionContractTaskOption,
     WorkEntityJournalEntryCreate,
     WorkEntityMapRead,
     WorkEntityMilestoneCreate,
@@ -42,6 +46,12 @@ from app.schemas.work_entity import (
     WorkEntityTaskRead,
     WorkEntityTaskUpdate,
     WorkEntityWorkspaceRead,
+)
+from app.services.execution_contracts import (
+    create_execution_contract,
+    list_execution_contract_options,
+    load_active_execution_contracts,
+    release_execution_contract,
 )
 from app.services.work_entities import (
     get_entity_access,
@@ -657,6 +667,111 @@ async def create_work_entity_task(
     )
     await db.commit()
     return await _workspace_task_read(db, entity, access_role, user, task.id)
+
+
+@router.get(
+    "/{entity_id}/tasks/{task_id}/execution-contract",
+    response_model=WorkEntityExecutionContractRead | None,
+)
+async def get_operation_execution_contract(
+    entity_id: UUID,
+    task_id: UUID,
+    user: User = Depends(require_task_workspace_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the current live Q execution contract for a project operation."""
+    entity, access_role = await _entity_access_or_404(db, entity_id, user)
+    operation = await _task_or_404(db, entity.id, task_id)
+    can_manage = (
+        access_role in {"owner", "editor"}
+        and user.can_link_queue_tasks_to_projects
+    )
+    contracts = await load_active_execution_contracts(
+        db,
+        entity.id,
+        can_manage=can_manage,
+    )
+    return contracts.get(operation.id)
+
+
+@router.get(
+    "/{entity_id}/tasks/{task_id}/execution-contract-options",
+    response_model=list[WorkEntityExecutionContractTaskOption],
+)
+async def get_execution_contract_options(
+    entity_id: UUID,
+    task_id: UUID,
+    search: str | None = Query(None, max_length=120),
+    limit: int = Query(50, ge=1, le=100),
+    user: User = Depends(require_task_workspace_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """List eligible pre-start Q tasks for a project operation."""
+    entity, access_role = await _entity_access_or_404(db, entity_id, user)
+    ensure_workspace_mutable(entity)
+    operation = await _task_or_404(db, entity.id, task_id)
+    return await list_execution_contract_options(
+        db,
+        entity=entity,
+        operation=operation,
+        user=user,
+        access_role=access_role,
+        search=search,
+        limit=limit,
+    )
+
+
+@router.post(
+    "/{entity_id}/tasks/{task_id}/execution-contract",
+    response_model=WorkEntityExecutionContractRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def publish_or_link_execution_contract(
+    entity_id: UUID,
+    task_id: UUID,
+    body: WorkEntityExecutionContractCreateRequest,
+    user: User = Depends(require_task_workspace_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """Publish an operation into the Q pool or bind an existing Q task."""
+    entity, access_role = await _entity_access_or_404(db, entity_id, user)
+    ensure_workspace_mutable(entity)
+    contract = await create_execution_contract(
+        db,
+        entity=entity,
+        operation_id=task_id,
+        body=body,
+        user=user,
+        access_role=access_role,
+    )
+    await db.commit()
+    return contract
+
+
+@router.patch(
+    "/{entity_id}/tasks/{task_id}/execution-contract",
+    response_model=WorkEntityExecutionContractRead,
+)
+async def release_operation_execution_contract(
+    entity_id: UUID,
+    task_id: UUID,
+    body: WorkEntityExecutionContractReleaseRequest,
+    user: User = Depends(require_task_workspace_access),
+    db: AsyncSession = Depends(get_db),
+):
+    """Release a Q contract while its task is still unassigned and unstarted."""
+    entity, access_role = await _entity_access_or_404(db, entity_id, user)
+    ensure_workspace_mutable(entity)
+    contract = await release_execution_contract(
+        db,
+        entity=entity,
+        operation_id=task_id,
+        reason=body.reason,
+        user=user,
+        access_role=access_role,
+    )
+    await db.commit()
+    return contract
 
 
 @router.patch(

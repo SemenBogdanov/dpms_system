@@ -199,7 +199,10 @@ def target_column_values(target_type: WorkEntityTargetType, target_id: UUID) -> 
 
 
 def _task_access_filter(user: User):
-    if user.role in (UserRole.admin, UserRole.teamlead):
+    if (
+        user.role in (UserRole.admin, UserRole.teamlead)
+        or user.can_link_queue_tasks_to_projects
+    ):
         return True
     return Task.assignee_id == user.id
 

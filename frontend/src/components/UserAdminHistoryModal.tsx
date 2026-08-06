@@ -22,6 +22,7 @@ const FIELD_LABELS: Record<string, string> = {
   is_active: 'Учетная запись',
   is_new_employee: 'Новый сотрудник',
   task_workspace_enabled: 'Работа с задачами',
+  can_link_queue_tasks_to_projects: 'Q-задачи в проектах',
   feedback_enabled: 'Обратная связь',
   competency_development_enabled: 'Развитие',
   competency_constructor_enabled: 'Конструктор компетенций',

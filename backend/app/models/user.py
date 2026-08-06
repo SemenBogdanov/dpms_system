@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, Integer, Numeric, String
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum, Float, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -29,6 +29,12 @@ class User(Base):
     """Сотрудник дата-офиса."""
 
     __tablename__ = "users"
+    __table_args__ = (
+        CheckConstraint(
+            "NOT can_link_queue_tasks_to_projects OR task_workspace_enabled",
+            name="ck_users_queue_project_link_requires_task_workspace",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -43,6 +49,11 @@ class User(Base):
     wip_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     is_new_employee: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     task_workspace_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    can_link_queue_tasks_to_projects: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
     feedback_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     competency_development_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     competency_constructor_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

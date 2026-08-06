@@ -12,5 +12,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 ENV PYTHONPATH=/app
 
-# Миграции и seed при старте (опционально — можно убрать в prod)
-CMD alembic upgrade head && python -m app.seed 2>/dev/null || true; uvicorn app.main:app --host 0.0.0.0 --port 8000
+# Не запускаем приложение поверх схемы, которую не удалось обновить.
+CMD ["sh", "-c", "set -e; alembic upgrade head; python -m app.seed || true; exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

@@ -1,9 +1,20 @@
 """Schemas for projects, goals, and their typed links."""
 from datetime import datetime
+from decimal import Decimal
 from typing import ClassVar, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.models.catalog import Complexity
+from app.models.task import TaskPriority, TaskStatus, TaskType
+from app.models.user import League
+from app.schemas.task_acceptance import (
+    AcceptanceCriterionCreate,
+    AcceptanceMode,
+    AcceptanceState,
+    validate_acceptance_plan,
+)
 
 WorkEntityType = Literal["project", "initiative", "goal", "system", "kpi", "other"]
 WorkEntityStatus = Literal["draft", "active", "paused", "done", "archived"]
@@ -65,6 +76,11 @@ WorkEntityRelationType = Literal[
     "measures",
     "related",
 ]
+WorkEntityExecutionContractSource = Literal[
+    "linked_existing",
+    "created_from_operation",
+]
+WorkEntityExecutionContractStatus = Literal["active", "released"]
 
 
 def _clean_required(value: str, message: str) -> str:
@@ -586,6 +602,134 @@ class WorkEntityTaskUpdate(_PatchModel):
         return _clean_optional(value)
 
 
+class WorkEntityExecutionContractTaskOption(BaseModel):
+    """Eligible global Q task that can be linked to an operation."""
+
+    task_id: UUID
+    task_number: int
+    title: str
+    status: TaskStatus
+    estimated_q: Decimal
+    priority: TaskPriority
+    due_date: datetime
+    acceptance_mode: AcceptanceMode
+    acceptance_state: AcceptanceState
+    assignee_name: str | None = None
+
+
+class WorkEntityExecutionContractCreateRequest(BaseModel):
+    """Link an existing Q task or publish a new one from an operation."""
+
+    mode: Literal["link", "publish"]
+    idempotency_key: UUID
+    task_id: UUID | None = None
+    title: str | None = Field(None, min_length=5, max_length=120)
+    description: str | None = Field(None, max_length=8000)
+    task_type: TaskType | None = None
+    complexity: Complexity | None = None
+    estimated_q: Decimal | None = Field(None, ge=0, le=9999)
+    priority: TaskPriority | None = None
+    min_league: League | None = None
+    due_date: datetime | None = None
+    tags: list[str] = Field(default_factory=list, max_length=30)
+    acceptance_mode: AcceptanceMode | None = None
+    acceptance_criteria: list[AcceptanceCriterionCreate] = Field(
+        default_factory=list,
+        max_length=50,
+    )
+
+    @field_validator("title", "description", mode="before")
+    @classmethod
+    def clean_publish_text(cls, value: str | None) -> str | None:
+        return _clean_optional(value)
+
+    @field_validator("due_date")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("Срок Q-задачи должен содержать часовой пояс")
+        return value
+
+    @model_validator(mode="after")
+    def validate_mode_payload(self):
+        if self.mode == "link":
+            if self.task_id is None:
+                raise ValueError("Выберите Q-задачу для привязки")
+            publish_fields = (
+                self.title,
+                self.task_type,
+                self.complexity,
+                self.estimated_q,
+                self.priority,
+                self.min_league,
+                self.due_date,
+                self.acceptance_mode,
+            )
+            if any(value is not None for value in publish_fields) or self.acceptance_criteria:
+                raise ValueError("Для привязки существующей задачи не передавайте поля публикации")
+            return self
+
+        if self.task_id is not None:
+            raise ValueError("Для новой Q-задачи task_id не передается")
+        required = {
+            "title": self.title,
+            "task_type": self.task_type,
+            "complexity": self.complexity,
+            "estimated_q": self.estimated_q,
+            "priority": self.priority,
+            "min_league": self.min_league,
+            "due_date": self.due_date,
+            "acceptance_mode": self.acceptance_mode,
+        }
+        missing = [field for field, value in required.items() if value is None]
+        if missing:
+            raise ValueError(
+                "Заполните поля публикации: " + ", ".join(missing)
+            )
+        validate_acceptance_plan(self.acceptance_mode, self.acceptance_criteria)
+        return self
+
+
+class WorkEntityExecutionContractReleaseRequest(BaseModel):
+    reason: str = Field(min_length=5, max_length=4000)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def clean_reason(cls, value: str) -> str:
+        return _clean_required(value, "Укажите причину освобождения Q-контракта")
+
+
+class WorkEntityExecutionContractRead(BaseModel):
+    """Current Q execution state projected into a project operation."""
+
+    id: UUID
+    entity_id: UUID
+    operation_id: UUID
+    task_id: UUID
+    task_number: int
+    source: WorkEntityExecutionContractSource
+    status: WorkEntityExecutionContractStatus
+    task_title: str
+    task_status: TaskStatus
+    estimated_q: Decimal
+    priority: TaskPriority
+    assignee_id: UUID | None
+    assignee_name: str | None
+    planned_starts_at: datetime | None
+    planned_due_at: datetime | None
+    due_date: datetime | None
+    acceptance_mode: AcceptanceMode
+    acceptance_state: AcceptanceState
+    acceptance_total_count: int
+    acceptance_accepted_count: int
+    acceptance_required_count: int
+    acceptance_required_accepted_count: int
+    result_url: str | None
+    result_comment: str | None
+    created_at: datetime
+    can_release: bool
+
+
 class WorkEntityTaskRead(BaseModel):
     """Executable project task with baseline, forecast, and actual dates."""
 
@@ -620,6 +764,8 @@ class WorkEntityTaskRead(BaseModel):
     predecessor_ids: list[str]
     can_manage: bool
     can_execute: bool
+    can_manage_execution_contract: bool = False
+    execution_contract: WorkEntityExecutionContractRead | None = None
     created_at: datetime
     updated_at: datetime
 

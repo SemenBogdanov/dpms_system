@@ -230,10 +230,20 @@ async def run() -> None:
         assert history["items"][0]["action"] == "created"
         assert_audit_is_sanitized(history)
 
+        status, payload = request(
+            "PATCH",
+            f"/api/users/{target_id}",
+            admin_token,
+            {"can_link_queue_tasks_to_projects": True},
+        )
+        expect(status, 400, payload, "project Q capability requires task workspace")
+
         changed_body = {
             "role": "teamlead",
             "mpw": 17,
             "feedback_enabled": True,
+            "task_workspace_enabled": True,
+            "can_link_queue_tasks_to_projects": True,
         }
         status, payload = request(
             "PATCH",
@@ -254,7 +264,13 @@ async def run() -> None:
         assert latest["action"] == "updated"
         assert latest["sessions_revoked"] is True
         changes = {item["field"]: item for item in latest["changes"]}
-        assert set(changes) == {"role", "mpw", "feedback_enabled"}
+        assert set(changes) == {
+            "role",
+            "mpw",
+            "feedback_enabled",
+            "task_workspace_enabled",
+            "can_link_queue_tasks_to_projects",
+        }
         assert changes["role"] == {
             "field": "role",
             "before": "executor",
@@ -300,6 +316,8 @@ async def run() -> None:
                 "role": "executor",
                 "mpw": 0,
                 "feedback_enabled": False,
+                "task_workspace_enabled": False,
+                "can_link_queue_tasks_to_projects": False,
             },
         )
         expect(status, 200, payload, "restore audited employee fields")
@@ -329,5 +347,6 @@ if __name__ == "__main__":
     asyncio.run(run())
     print(
         "Admin user audit smoke OK: auth, create, before/after, no-op, "
-        "failed update, rollback, privacy, role guard, and trusted actor."
+        "capability implication, failed update, rollback, privacy, role guard, "
+        "and trusted actor."
     )

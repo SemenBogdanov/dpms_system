@@ -10,10 +10,12 @@ const focusableSelector = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',')
 
-export function useProtectedModal<T extends HTMLElement>(): RefObject<T> {
+export function useProtectedModal<T extends HTMLElement>(active = true): RefObject<T> {
   const panelRef = useRef<T>(null)
 
   useEffect(() => {
+    if (!active) return
+
     const previousFocus = document.activeElement as HTMLElement | null
     const previousOverflow = document.body.style.overflow
     const scrollOwner = document.querySelector<HTMLElement>('.app-main')
@@ -64,7 +66,7 @@ export function useProtectedModal<T extends HTMLElement>(): RefObject<T> {
       if (scrollOwner) scrollOwner.style.overflow = previousScrollOwnerOverflow || ''
       previousFocus?.focus()
     }
-  }, [])
+  }, [active])
 
   return panelRef
 }

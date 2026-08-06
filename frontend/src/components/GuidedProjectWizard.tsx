@@ -63,7 +63,7 @@ type GuidedProjectWizardProps = {
 const steps = [
   { label: 'Результат', icon: Target },
   { label: 'Проверки', icon: CheckCircle2 },
-  { label: 'Работы', icon: ClipboardCheck },
+  { label: 'Операции', icon: ClipboardCheck },
   { label: 'Команда', icon: Users },
 ] as const
 
@@ -276,7 +276,7 @@ export function GuidedProjectWizard({
               ),
         )
       ) {
-        toast.error('Заполните работы и завершите каждую до связанной проверки')
+        toast.error('Заполните операции и завершите каждую до связанной проверки')
         return false
       }
     }
@@ -378,7 +378,7 @@ export function GuidedProjectWizard({
               Новый проект
             </h2>
             <p className="mt-0.5 text-xs text-slate-500">
-              Планируем от проверяемого результата к конкретной работе.
+              Планируем от проверяемого результата к конкретным операциям.
             </p>
           </div>
           <button
@@ -520,7 +520,7 @@ export function GuidedProjectWizard({
                   </h3>
                   <p className="mt-1 max-w-2xl text-sm text-slate-500">
                     Контрольная точка занимает одну дату. Если действие занимает время,
-                    добавьте его на следующем шаге как работу.
+                    добавьте его на следующем шаге как операцию.
                   </p>
                 </div>
                 <button
@@ -614,7 +614,7 @@ export function GuidedProjectWizard({
                             }
                             className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary"
                           >
-                            <option value="control">Контроль хода работы</option>
+                            <option value="control">Контроль хода исполнения</option>
                             <option value="key">Открывает следующий шаг</option>
                             <option value="critical">Определяет успех проекта</option>
                           </select>
@@ -666,7 +666,7 @@ export function GuidedProjectWizard({
                     Что нужно сделать до каждой проверки?
                   </h3>
                   <p className="mt-1 max-w-2xl text-sm text-slate-500">
-                    Работа занимает время и заканчивается проверяемым результатом.
+                    Операция занимает время и заканчивается проверяемым результатом.
                   </p>
                 </div>
                 <button
@@ -675,14 +675,14 @@ export function GuidedProjectWizard({
                   className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground"
                 >
                   <Plus className="h-4 w-4" />
-                  Добавить работу
+                  Добавить операцию
                 </button>
               </div>
               {tasks.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-slate-300 px-5 py-10 text-center">
                   <ClipboardCheck className="mx-auto h-7 w-7 text-slate-300" />
                   <p className="mt-2 text-sm font-medium text-slate-700">
-                    Работы пока не добавлены
+                    Операции пока не добавлены
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
                     Проект можно сохранить только с проверками, но readiness попросит
@@ -718,7 +718,7 @@ export function GuidedProjectWizard({
                             />
                           </label>
                           <label className="lg:col-span-2">
-                            <FieldLabel title="Какой результат работы примем" />
+                            <FieldLabel title="Какой результат операции примем" />
                             <textarea
                               value={task.acceptanceCriteria}
                               onChange={(event) =>
@@ -735,7 +735,7 @@ export function GuidedProjectWizard({
                             />
                           </label>
                           <label>
-                            <FieldLabel title="Начало работы" />
+                            <FieldLabel title="Начало операции" />
                             <input
                               type="datetime-local"
                               value={task.startsAt}
@@ -832,7 +832,7 @@ export function GuidedProjectWizard({
                             )
                           }
                           className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600"
-                          aria-label="Удалить работу"
+                          aria-label="Удалить операцию"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -853,7 +853,7 @@ export function GuidedProjectWizard({
                 </h3>
                 <p className="mt-1 text-sm text-slate-500">
                   Выберите принятые контакты. Участники увидят проект и назначенную им
-                  работу.
+                  операцию.
                 </p>
                 <div className="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200">
                   {acceptedContacts.length === 0 ? (
@@ -944,7 +944,7 @@ export function GuidedProjectWizard({
                   {tasks.length > 0 && (
                     <div>
                       <h4 className="text-xs font-semibold uppercase text-slate-500">
-                        Исполнители работ
+                        Исполнители операций
                       </h4>
                       <div className="mt-2 space-y-2">
                         {tasks.map((task) => (
@@ -953,7 +953,7 @@ export function GuidedProjectWizard({
                             className="grid gap-2 rounded-lg border border-slate-200 p-3 sm:grid-cols-[minmax(0,1fr)_220px] sm:items-center"
                           >
                             <span className="min-w-0 text-sm font-medium text-slate-800">
-                              {task.title || 'Работа'}
+                              {task.title || 'Операция'}
                             </span>
                             <select
                               value={task.assigneeId}
@@ -993,7 +993,7 @@ export function GuidedProjectWizard({
                         </dd>
                       </div>
                       <div>
-                        <dt className="text-xs text-emerald-700">Работ</dt>
+                        <dt className="text-xs text-emerald-700">Операций</dt>
                         <dd className="mt-0.5 text-lg font-semibold text-emerald-900">
                           {tasks.length}
                         </dd>

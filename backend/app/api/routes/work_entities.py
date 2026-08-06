@@ -831,6 +831,11 @@ async def link_options(
     db: AsyncSession = Depends(get_db),
 ):
     """Search only objects the current user can already access."""
+    if target_type == "task" and not user.can_link_queue_tasks_to_projects:
+        raise HTTPException(
+            status_code=403,
+            detail="Администратор не выдал право связывать Q-задачи с проектами",
+        )
     return await list_link_options(
         db,
         target_type,
@@ -1479,6 +1484,11 @@ async def create_work_entity_link(
 ):
     await lock_entity_state(db)
     entity, _ = await _get_editable_entity_or_404(db, entity_id, user)
+    if body.target_type == "task" and not user.can_link_queue_tasks_to_projects:
+        raise HTTPException(
+            status_code=403,
+            detail="Администратор не выдал право связывать Q-задачи с проектами",
+        )
     if entity.status == "archived":
         raise HTTPException(status_code=409, detail="Архивный проект нельзя изменять")
     if body.target_type == "entity" and body.target_id == entity.id:

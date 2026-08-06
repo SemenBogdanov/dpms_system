@@ -93,7 +93,7 @@ async def run_alembic(
         await engine.dispose()
 
 
-async def seed_conflicting_acceptance_article(database_url: URL) -> uuid.UUID:
+async def seed_conflicting_article(database_url: URL, slug: str) -> uuid.UUID:
     article_id = uuid.uuid4()
     engine = create_async_engine(database_url)
     try:
@@ -107,9 +107,9 @@ async def seed_conflicting_acceptance_article(database_url: URL) -> uuid.UUID:
                     )
                     VALUES (
                         :id,
-                        'priemka-zadach-po-kriteriyam',
+                        :slug,
                         'Пользовательская статья',
-                        'Не принадлежит миграции 050.',
+                        'Не принадлежит миграции DPMS.',
                         'tasks',
                         'Эта запись должна пережить upgrade и downgrade.',
                         'published',
@@ -120,16 +120,17 @@ async def seed_conflicting_acceptance_article(database_url: URL) -> uuid.UUID:
                     )
                     """
                 ),
-                {"id": article_id},
+                {"id": article_id, "slug": slug},
             )
     finally:
         await engine.dispose()
     return article_id
 
 
-async def verify_conflicting_acceptance_article(
+async def verify_conflicting_article(
     database_url: URL,
     article_id: uuid.UUID,
+    slug: str,
 ) -> None:
     engine = create_async_engine(database_url)
     try:
@@ -140,9 +141,10 @@ async def verify_conflicting_acceptance_article(
                         """
                         SELECT id, title, body
                         FROM knowledge_articles
-                        WHERE slug = 'priemka-zadach-po-kriteriyam'
+                        WHERE slug = :slug
                         """
-                    )
+                    ),
+                    {"slug": slug},
                 )
             ).one()
             assert article.id == article_id
@@ -267,7 +269,7 @@ async def verify_head_schema(database_url: URL) -> None:
                     text("SELECT version_num FROM alembic_version")
                 )
             ).scalar_one()
-            assert revision == "052_admin_user_audit"
+            assert revision == "053_execution_contracts"
             admin_audit_index = (
                 await connection.execute(
                     text(
@@ -294,7 +296,8 @@ async def verify_head_schema(database_url: URL) -> None:
                                 'work_entity_tasks',
                                 'work_entity_milestones',
                                 'work_entity_schedule_dependencies',
-                                'work_entity_artifacts'
+                                'work_entity_artifacts',
+                                'work_entity_execution_contracts'
                               )
                             """
                         )
@@ -307,7 +310,52 @@ async def verify_head_schema(database_url: URL) -> None:
                 "work_entity_milestones",
                 "work_entity_schedule_dependencies",
                 "work_entity_artifacts",
+                "work_entity_execution_contracts",
             }
+            user_columns = set(
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT column_name
+                            FROM information_schema.columns
+                            WHERE table_name = 'users'
+                            """
+                        )
+                    )
+                ).scalars()
+            )
+            assert "can_link_queue_tasks_to_projects" in user_columns
+            contract_indexes = set(
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT indexname
+                            FROM pg_indexes
+                            WHERE schemaname = 'public'
+                              AND tablename = 'work_entity_execution_contracts'
+                            """
+                        )
+                    )
+                ).scalars()
+            )
+            assert {
+                "uq_work_entity_execution_contracts_active_operation",
+                "uq_work_entity_execution_contracts_active_task",
+            }.issubset(contract_indexes)
+            execution_article = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT status
+                        FROM knowledge_articles
+                        WHERE slug = 'operaciya-proekta-i-q-zadacha'
+                        """
+                    )
+                )
+            ).scalar_one_or_none()
+            assert execution_article == "published"
             task_columns = set(
                 (
                     await connection.execute(
@@ -987,13 +1035,17 @@ def run() -> None:
             )
         )
         conflicting_article_id = asyncio.run(
-            seed_conflicting_acceptance_article(temporary_url)
+            seed_conflicting_article(
+                temporary_url,
+                "priemka-zadach-po-kriteriyam",
+            )
         )
         asyncio.run(run_alembic(temporary_url, "upgrade", "head"))
         asyncio.run(
-            verify_conflicting_acceptance_article(
+            verify_conflicting_article(
                 temporary_url,
                 conflicting_article_id,
+                "priemka-zadach-po-kriteriyam",
             )
         )
         asyncio.run(
@@ -1004,16 +1056,62 @@ def run() -> None:
             )
         )
         asyncio.run(
-            verify_conflicting_acceptance_article(
+            verify_conflicting_article(
                 temporary_url,
                 conflicting_article_id,
+                "priemka-zadach-po-kriteriyam",
             )
         )
         asyncio.run(run_alembic(temporary_url, "upgrade", "head"))
         asyncio.run(
-            verify_conflicting_acceptance_article(
+            verify_conflicting_article(
                 temporary_url,
                 conflicting_article_id,
+                "priemka-zadach-po-kriteriyam",
+            )
+        )
+
+        asyncio.run(
+            run_alembic(
+                temporary_url,
+                "downgrade",
+                "052_admin_user_audit",
+            )
+        )
+        execution_article_id = asyncio.run(
+            seed_conflicting_article(
+                temporary_url,
+                "operaciya-proekta-i-q-zadacha",
+            )
+        )
+        asyncio.run(run_alembic(temporary_url, "upgrade", "head"))
+        asyncio.run(
+            verify_conflicting_article(
+                temporary_url,
+                execution_article_id,
+                "operaciya-proekta-i-q-zadacha",
+            )
+        )
+        asyncio.run(
+            run_alembic(
+                temporary_url,
+                "downgrade",
+                "052_admin_user_audit",
+            )
+        )
+        asyncio.run(
+            verify_conflicting_article(
+                temporary_url,
+                execution_article_id,
+                "operaciya-proekta-i-q-zadacha",
+            )
+        )
+        asyncio.run(run_alembic(temporary_url, "upgrade", "head"))
+        asyncio.run(
+            verify_conflicting_article(
+                temporary_url,
+                execution_article_id,
+                "operaciya-proekta-i-q-zadacha",
             )
         )
 
@@ -1021,7 +1119,7 @@ def run() -> None:
             "Work entity migration smoke OK: fresh head, DB constraints, "
             "044 schema restoration, legacy lifecycle normalization, and "
             "task/milestone/dependency/artifact conversion; knowledge article "
-            "conflicts survive acceptance upgrade/downgrade"
+            "conflicts survive acceptance and execution-contract upgrade/downgrade"
         )
     finally:
         if created:

@@ -27,8 +27,8 @@ USERS = [
     {"full_name": "Орловская Валентина", "email": "orlovskaya@ac.gov.ru", "league": League.B, "role": UserRole.executor, "mpw": 80, "quality_score": 88.0, "task_workspace_enabled": True},
     {"full_name": "Завьялова Екатерина", "email": "zavyalova@ac.gov.ru", "league": League.B, "role": UserRole.executor, "mpw": 80, "quality_score": 92.0, "task_workspace_enabled": True},
     {"full_name": "Скачков Егор", "email": "petrov@ac.gov.ru", "league": League.C, "role": UserRole.executor, "mpw": 70, "quality_score": 72.0, "task_workspace_enabled": True},
-    {"full_name": "Богданов Семён", "email": "bogdanov@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0, "quality_score": 100.0, "task_workspace_enabled": True, "feedback_enabled": True, "competency_development_enabled": True, "competency_constructor_enabled": True},
-    {"full_name": "Админ Системы", "email": "admin@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0, "quality_score": 100.0, "task_workspace_enabled": True, "feedback_enabled": True, "competency_development_enabled": True, "competency_constructor_enabled": True},
+    {"full_name": "Богданов Семён", "email": "bogdanov@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0, "quality_score": 100.0, "task_workspace_enabled": True, "can_link_queue_tasks_to_projects": True, "feedback_enabled": True, "competency_development_enabled": True, "competency_constructor_enabled": True},
+    {"full_name": "Админ Системы", "email": "admin@ac.gov.ru", "league": League.A, "role": UserRole.admin, "mpw": 0, "quality_score": 100.0, "task_workspace_enabled": True, "can_link_queue_tasks_to_projects": True, "feedback_enabled": True, "competency_development_enabled": True, "competency_constructor_enabled": True},
 ]
 
 WIP_BY_LEAGUE = {"C": 2, "B": 3, "A": 4}

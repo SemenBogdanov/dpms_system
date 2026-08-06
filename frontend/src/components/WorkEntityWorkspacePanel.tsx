@@ -50,6 +50,10 @@ import type {
 } from '@/api/types'
 import { cn } from '@/lib/utils'
 import { preventBackdropDismiss, useProtectedModal } from '@/hooks/useProtectedModal'
+import {
+  OperationExecutionContractButton,
+  OperationExecutionContractModal,
+} from '@/components/OperationExecutionContract'
 
 const inputClass =
   'h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/15'
@@ -122,8 +126,8 @@ const criticalityLabels: Record<WorkEntityMilestoneCriticality, string> = {
 }
 
 const criticalityHelp: Record<WorkEntityMilestoneCriticality, string> = {
-  control: 'Внутренняя проверка хода работ. Не является обязательным внешним обязательством.',
-  key: 'Открывает следующий этап, результат или работу другой команды. Требуется обоснование.',
+  control: 'Внутренняя проверка хода исполнения. Не является обязательным внешним обязательством.',
+  key: 'Открывает следующий этап, результат или операцию другой команды. Требуется обоснование.',
   critical: 'Связана с внешним обязательством, решением руководящего органа или сроком проекта. Требуется обоснование.',
 }
 
@@ -344,6 +348,8 @@ export function WorkEntityWorkspacePanel({
   const [busy, setBusy] = useState(false)
 
   const [expandedTaskId, setExpandedTaskId] = useState('')
+  const [executionContractTask, setExecutionContractTask] =
+    useState<WorkEntityTask | null>(null)
   const [expandedMilestoneId, setExpandedMilestoneId] = useState('')
 
   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
@@ -412,6 +418,7 @@ export function WorkEntityWorkspacePanel({
     setJournalTarget(null)
     setArtifactDialogOpen(false)
     setWaivingDependencyId(null)
+    setExecutionContractTask(null)
   }, [entity.status])
 
   const refresh = async () => {
@@ -508,7 +515,7 @@ export function WorkEntityWorkspacePanel({
       entity.entity_type === 'project' &&
       !taskForm.targetMilestoneId
     ) {
-      toast.error('Выберите контрольную точку, которую подготавливает задача')
+      toast.error('Выберите контрольную точку, которую подготавливает операция')
       return
     }
     setBusy(true)
@@ -549,9 +556,9 @@ export function WorkEntityWorkspacePanel({
       }
       setTaskDialogOpen(false)
       await refresh()
-      toast.success(editingTask ? 'Задача обновлена' : 'Задача добавлена')
+      toast.success(editingTask ? 'Операция обновлена' : 'Операция добавлена')
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось сохранить задачу')
+      toast.error(error instanceof Error ? error.message : 'Не удалось сохранить операцию')
     } finally {
       setBusy(false)
     }
@@ -562,7 +569,7 @@ export function WorkEntityWorkspacePanel({
     try {
       await api.patch(`/api/work-entities/${entity.id}/tasks/${task.id}`, { status })
       await refresh()
-      toast.success('Статус задачи обновлен')
+      toast.success('Статус операции обновлен')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось изменить статус')
     } finally {
@@ -947,9 +954,9 @@ export function WorkEntityWorkspacePanel({
     <div className="space-y-5">
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Работа проекта</h3>
+          <h3 className="text-sm font-semibold text-slate-900">Операции проекта</h3>
           <p className="mt-1 text-xs text-slate-500">
-            Задачи описывают работу, контрольные точки фиксируют проверяемое событие на одну дату.
+            Операции описывают исполняемые действия, контрольные точки фиксируют проверяемое событие на одну дату.
           </p>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
@@ -977,7 +984,7 @@ export function WorkEntityWorkspacePanel({
                 className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90"
               >
                 <Plus className="h-4 w-4" />
-                Задача
+                Операция
               </button>
             </>
           )}
@@ -1004,7 +1011,7 @@ export function WorkEntityWorkspacePanel({
           </span>
         </div>
         {workspace.stages.length === 0 ? (
-          <p className="text-sm text-slate-500">Этапы не заданы. Задачи и точки можно планировать без них.</p>
+          <p className="text-sm text-slate-500">Этапы не заданы. Операции и точки можно планировать без них.</p>
         ) : (
           <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {workspace.stages.map((stage, index) => (
@@ -1022,7 +1029,7 @@ export function WorkEntityWorkspacePanel({
                     </span>
                   </div>
                   <p className="mt-1 text-xs text-slate-500">
-                    {stage.tasks_count} задач · {stage.milestones_count} точек
+                    {stage.tasks_count} операций · {stage.milestones_count} точек
                   </p>
                   {stage.completion_criteria && (
                     <p className="mt-1 line-clamp-2 text-xs text-slate-600">
@@ -1052,14 +1059,14 @@ export function WorkEntityWorkspacePanel({
           <section>
             <div className="mb-2 flex items-center justify-between gap-2">
               <h4 className="text-xs font-semibold uppercase text-slate-500">
-                Задачи · {activeTasks.length}
+                Операции · {activeTasks.length}
               </h4>
               <span className="text-xs text-slate-500">{assignableParticipants.length} исполнителей</span>
             </div>
             {activeTasks.length === 0 ? (
               <div className="rounded-lg border border-dashed border-slate-300 px-4 py-10 text-center">
                 <ListTodo className="mx-auto h-7 w-7 text-slate-300" />
-                <p className="mt-2 text-sm font-medium text-slate-700">Исполняемая работа не добавлена</p>
+                <p className="mt-2 text-sm font-medium text-slate-700">Исполняемые операции не добавлены</p>
               </div>
             ) : (
               <div className="divide-y divide-slate-100 rounded-lg border border-slate-200">
@@ -1112,6 +1119,12 @@ export function WorkEntityWorkspacePanel({
                           )}
                         </div>
                         <div className="flex shrink-0 items-center gap-1">
+                          <OperationExecutionContractButton
+                            operation={task}
+                            projectStatus={entity.status}
+                            compact
+                            onClick={() => setExecutionContractTask(task)}
+                          />
                           {task.can_execute && (
                             <button
                               type="button"
@@ -1125,7 +1138,7 @@ export function WorkEntityWorkspacePanel({
                               }
                               className={iconButtonClass}
                               title="Добавить запись в журнал"
-                              aria-label={`Добавить запись в журнал задачи ${task.title}`}
+                              aria-label={`Добавить запись в журнал операции ${task.title}`}
                             >
                               <MessageSquarePlus className="h-4 w-4" />
                             </button>
@@ -1135,8 +1148,8 @@ export function WorkEntityWorkspacePanel({
                               type="button"
                               onClick={() => openEditTask(task)}
                               className={iconButtonClass}
-                              title="Редактировать задачу"
-                              aria-label={`Редактировать задачу ${task.title}`}
+                              title="Редактировать операцию"
+                              aria-label={`Редактировать операцию ${task.title}`}
                             >
                               <Pencil className="h-4 w-4" />
                             </button>
@@ -1145,7 +1158,7 @@ export function WorkEntityWorkspacePanel({
                             type="button"
                             onClick={() => setExpandedTaskId(expanded ? '' : task.id)}
                             className={iconButtonClass}
-                            aria-label={expanded ? 'Свернуть детали задачи' : 'Раскрыть детали задачи'}
+                            aria-label={expanded ? 'Свернуть детали операции' : 'Раскрыть детали операции'}
                           >
                             {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                           </button>
@@ -1155,7 +1168,7 @@ export function WorkEntityWorkspacePanel({
                         <div className="border-t border-slate-100 bg-slate-50/50 px-3 py-3">
                           <div className="grid gap-3 text-xs text-slate-600 sm:grid-cols-2">
                             <div>
-                              <span className="font-semibold text-slate-700">Описание работы</span>
+                              <span className="font-semibold text-slate-700">Описание операции</span>
                               <p className="mt-1 whitespace-pre-wrap">{task.description || 'Не заполнено'}</p>
                             </div>
                             <div>
@@ -1184,7 +1197,7 @@ export function WorkEntityWorkspacePanel({
                               </div>
                             )}
                             <div>
-                              <span className="font-semibold text-slate-700">Приоритет задачи</span>
+                              <span className="font-semibold text-slate-700">Приоритет операции</span>
                               <p className="mt-1">{taskPriorityLabels[task.priority]}</p>
                             </div>
                           </div>
@@ -1395,7 +1408,7 @@ export function WorkEntityWorkspacePanel({
                     onChange={(event) => setDependencyPredecessor(event.target.value)}
                     className={inputClass}
                   >
-                    <option value="">Выберите задачу или точку</option>
+                    <option value="">Выберите операцию или точку</option>
                     {scheduleNodes.map((node) => (
                       <option key={node.value} value={node.value}>{node.label}</option>
                     ))}
@@ -1571,7 +1584,7 @@ export function WorkEntityWorkspacePanel({
                         <p className="break-words text-sm font-medium text-slate-800">{artifact.title}</p>
                         <p className="mt-0.5 text-[11px] text-slate-500">
                           {artifactLabels[artifact.artifact_type]}
-                          {artifact.task_title && ` · задача: ${artifact.task_title}`}
+                          {artifact.task_title && ` · операция: ${artifact.task_title}`}
                           {artifact.milestone_title && ` · точка: ${artifact.milestone_title}`}
                         </p>
                         {artifact.body && <p className="mt-1 line-clamp-3 text-xs text-slate-600">{artifact.body}</p>}
@@ -1619,15 +1632,15 @@ export function WorkEntityWorkspacePanel({
 
       {taskDialogOpen && (
         <Dialog
-          title={editingTask ? `Редактировать PRJ-${editingTask.task_number}` : 'Новая задача'}
-          subtitle="Задача имеет исполнителя, длительность и результат, который можно принять."
+          title={editingTask ? `Редактировать PRJ-${editingTask.task_number}` : 'Новая операция'}
+          subtitle="Операция имеет исполнителя, длительность и результат, который можно принять."
           onClose={() => setTaskDialogOpen(false)}
           wide
         >
           <form onSubmit={(event) => void saveTask(event)} className="space-y-4 p-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="sm:col-span-2">
-                <span className="mb-1 block text-sm font-medium text-slate-700">Название задачи</span>
+                <span className="mb-1 block text-sm font-medium text-slate-700">Название операции</span>
                 <input
                   autoFocus
                   required
@@ -1638,7 +1651,7 @@ export function WorkEntityWorkspacePanel({
                 />
               </label>
               <label className="sm:col-span-2">
-                <span className="mb-1 block text-sm font-medium text-slate-700">Описание работы</span>
+                <span className="mb-1 block text-sm font-medium text-slate-700">Описание операции</span>
                 <textarea
                   rows={4}
                   value={taskForm.description}
@@ -1700,7 +1713,7 @@ export function WorkEntityWorkspacePanel({
                     ))}
                   </select>
                   <FieldHelp>
-                    Работа должна готовить конкретную проверку результата.
+                    Операция должна готовить конкретную проверку результата.
                     {editingTask
                       ? ' Переназначение требует причины и сохраняется в журнале.'
                       : ' Без этой связи маршрут проекта неполон.'}
@@ -1730,7 +1743,7 @@ export function WorkEntityWorkspacePanel({
                     <option key={value} value={value}>{label}</option>
                   ))}
                 </select>
-                <FieldHelp>Приоритет определяет очередность исполняемой работы, а не важность контрольной точки.</FieldHelp>
+                <FieldHelp>Приоритет определяет очередность исполнения операции, а не важность контрольной точки.</FieldHelp>
               </label>
               <label className="sm:col-span-2">
                 <span className="mb-1 block text-sm font-medium text-slate-700">Критерии приемки</span>
@@ -1740,7 +1753,7 @@ export function WorkEntityWorkspacePanel({
                   onChange={(event) => setTaskForm((value) => ({ ...value, acceptanceCriteria: event.target.value }))}
                   className={textareaClass}
                 />
-                <FieldHelp>Наблюдаемый результат, по которому задача считается выполненной.</FieldHelp>
+                <FieldHelp>Наблюдаемый результат, по которому операция считается выполненной.</FieldHelp>
               </label>
               <label>
                 <span className="mb-1 block text-sm font-medium text-slate-700">Следующий шаг</span>
@@ -1837,7 +1850,7 @@ export function WorkEntityWorkspacePanel({
                 className="inline-flex h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
               >
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ListTodo className="h-4 w-4" />}
-                Сохранить задачу
+                Сохранить операцию
               </button>
             </div>
           </form>
@@ -1899,7 +1912,7 @@ export function WorkEntityWorkspacePanel({
                     <option key={participant.user_id} value={participant.user_id}>{participant.user_name}</option>
                   ))}
                 </select>
-                <FieldHelp>Подтверждает, что критерий выполнен. Это не исполнитель работы.</FieldHelp>
+                <FieldHelp>Подтверждает, что критерий выполнен. Это не исполнитель операции.</FieldHelp>
               </label>
               <label>
                 <span className="mb-1 block text-sm font-medium text-slate-700">Этап</span>
@@ -2020,7 +2033,7 @@ export function WorkEntityWorkspacePanel({
       {stageDialogOpen && (
         <Dialog
           title={editingStage ? 'Редактировать этап' : 'Новый этап'}
-          subtitle="Этап объединяет задачи и контрольные точки общим результатом."
+          subtitle="Этап объединяет операции и контрольные точки общим результатом."
           onClose={() => setStageDialogOpen(false)}
         >
           <form onSubmit={(event) => void saveStage(event)} className="space-y-4 p-4">
@@ -2424,6 +2437,15 @@ export function WorkEntityWorkspacePanel({
             </div>
           </form>
         </Dialog>
+      )}
+
+      {executionContractTask && (
+        <OperationExecutionContractModal
+          entityId={entity.id}
+          operation={executionContractTask}
+          onClose={() => setExecutionContractTask(null)}
+          onChanged={refresh}
+        />
       )}
     </div>
   )

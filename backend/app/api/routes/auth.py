@@ -34,6 +34,7 @@ def _user_to_read(user: User) -> AuthenticatedUserRead:
         wip_limit=user.wip_limit,
         is_new_employee=user.is_new_employee,
         task_workspace_enabled=user.task_workspace_enabled,
+        can_link_queue_tasks_to_projects=user.can_link_queue_tasks_to_projects,
         feedback_enabled=user.feedback_enabled,
         competency_development_enabled=user.competency_development_enabled,
         competency_constructor_enabled=user.competency_constructor_enabled,

@@ -238,6 +238,7 @@ export function AdminUsersPage() {
         mpw: payload.mpw,
         is_new_employee: payload.is_new_employee,
         task_workspace_enabled: payload.task_workspace_enabled,
+        can_link_queue_tasks_to_projects: payload.can_link_queue_tasks_to_projects,
         feedback_enabled: payload.feedback_enabled,
         competency_development_enabled: payload.competency_development_enabled,
         competency_constructor_enabled: payload.competency_constructor_enabled,
@@ -252,6 +253,7 @@ export function AdminUsersPage() {
         mpw: payload.mpw,
         is_new_employee: payload.is_new_employee,
         task_workspace_enabled: payload.task_workspace_enabled,
+        can_link_queue_tasks_to_projects: payload.can_link_queue_tasks_to_projects,
         feedback_enabled: payload.feedback_enabled,
         competency_development_enabled: payload.competency_development_enabled,
         competency_constructor_enabled: payload.competency_constructor_enabled,
@@ -305,6 +307,7 @@ export function AdminUsersPage() {
           mpw: 0,
           is_new_employee: false,
           task_workspace_enabled: false,
+          can_link_queue_tasks_to_projects: false,
           feedback_enabled: false,
           competency_development_enabled: true,
           competency_constructor_enabled: false,
@@ -388,6 +391,11 @@ export function AdminUsersPage() {
       <span className={accessBadgeClass(u.task_workspace_enabled, 'bg-sky-50 text-sky-700')}>
         Задачи: {u.task_workspace_enabled ? 'вкл' : 'выкл'}
       </span>
+      {u.can_link_queue_tasks_to_projects && (
+        <span className="rounded bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+          Проект → Q
+        </span>
+      )}
       <span className={accessBadgeClass(u.feedback_enabled, 'bg-emerald-50 text-emerald-700')}>
         ОС: {u.feedback_enabled ? 'вкл' : 'выкл'}
       </span>

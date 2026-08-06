@@ -107,6 +107,7 @@ export interface User {
   is_active: boolean
   is_new_employee: boolean
   task_workspace_enabled: boolean
+  can_link_queue_tasks_to_projects: boolean
   feedback_enabled: boolean
   competency_development_enabled: boolean
   competency_constructor_enabled: boolean
@@ -705,8 +706,72 @@ export interface WorkEntityTask {
   predecessor_ids: string[]
   can_manage: boolean
   can_execute: boolean
+  can_manage_execution_contract: boolean
+  execution_contract: WorkEntityExecutionContract | null
   created_at: string
   updated_at: string
+}
+
+export type WorkEntityExecutionContractSource = 'linked_existing' | 'created_from_operation'
+export type WorkEntityExecutionContractStatus = 'active' | 'released'
+
+export interface WorkEntityExecutionContract {
+  id: string
+  entity_id: string
+  operation_id: string
+  task_id: string
+  task_number: number
+  source: WorkEntityExecutionContractSource
+  status: WorkEntityExecutionContractStatus
+  task_title: string
+  task_status: TaskStatus
+  estimated_q: number
+  priority: TaskPriority
+  assignee_id: string | null
+  assignee_name: string | null
+  planned_starts_at: string | null
+  planned_due_at: string | null
+  due_date: string | null
+  acceptance_mode: AcceptanceMode
+  acceptance_state: AcceptanceState
+  acceptance_total_count: number
+  acceptance_accepted_count: number
+  acceptance_required_count: number
+  acceptance_required_accepted_count: number
+  result_url: string | null
+  result_comment: string | null
+  created_at: string
+  can_release: boolean
+}
+
+export interface WorkEntityExecutionContractTaskOption {
+  task_id: string
+  task_number: number
+  title: string
+  status: TaskStatus
+  estimated_q: number
+  priority: TaskPriority
+  due_date: string
+  acceptance_mode: AcceptanceMode
+  acceptance_state: AcceptanceState
+  assignee_name: string | null
+}
+
+export interface WorkEntityExecutionContractCreate {
+  mode: 'link' | 'publish'
+  idempotency_key: string
+  task_id?: string
+  title?: string
+  description?: string | null
+  task_type?: TaskType
+  complexity?: Complexity
+  estimated_q?: number
+  priority?: TaskPriority
+  min_league?: League
+  due_date?: string
+  tags?: string[]
+  acceptance_mode?: AcceptanceMode
+  acceptance_criteria?: TaskAcceptanceCriterionInput[]
 }
 
 export interface WorkEntityTaskCreate {

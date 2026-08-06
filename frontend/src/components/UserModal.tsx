@@ -3,6 +3,7 @@ import type { User } from '@/api/types'
 import { validatePassword } from '@/lib/passwordValidation'
 import { cn } from '@/lib/utils'
 import { PasswordRevealButton } from '@/components/PasswordRevealButton'
+import { preventBackdropDismiss, useProtectedModal } from '@/hooks/useProtectedModal'
 
 export type UserFormPayload = {
   full_name: string
@@ -12,6 +13,7 @@ export type UserFormPayload = {
   mpw: number
   is_new_employee: boolean
   task_workspace_enabled: boolean
+  can_link_queue_tasks_to_projects: boolean
   feedback_enabled: boolean
   competency_development_enabled: boolean
   competency_constructor_enabled: boolean
@@ -44,6 +46,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
   const [mpw, setMpw] = useState(60)
   const [isNewEmployee, setIsNewEmployee] = useState(false)
   const [taskWorkspaceEnabled, setTaskWorkspaceEnabled] = useState(false)
+  const [canLinkQueueTasksToProjects, setCanLinkQueueTasksToProjects] = useState(false)
   const [feedbackEnabled, setFeedbackEnabled] = useState(false)
   const [competencyDevelopmentEnabled, setCompetencyDevelopmentEnabled] = useState(true)
   const [competencyConstructorEnabled, setCompetencyConstructorEnabled] = useState(false)
@@ -51,6 +54,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
   const [showPassword, setShowPassword] = useState(false)
   const [busy, setBusy] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
+  const panelRef = useProtectedModal<HTMLDivElement>(open)
 
   useEffect(() => {
     if (!open) return
@@ -63,6 +67,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setMpw(initial.mpw)
       setIsNewEmployee(Boolean(initial.is_new_employee))
       setTaskWorkspaceEnabled(Boolean(initial.task_workspace_enabled))
+      setCanLinkQueueTasksToProjects(Boolean(initial.can_link_queue_tasks_to_projects))
       setFeedbackEnabled(Boolean(initial.feedback_enabled))
       setCompetencyDevelopmentEnabled(Boolean(initial.competency_development_enabled))
       setCompetencyConstructorEnabled(Boolean(initial.competency_constructor_enabled))
@@ -76,6 +81,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setMpw(0)
       setIsNewEmployee(false)
       setTaskWorkspaceEnabled(false)
+      setCanLinkQueueTasksToProjects(false)
       setFeedbackEnabled(false)
       setCompetencyDevelopmentEnabled(true)
       setCompetencyConstructorEnabled(false)
@@ -92,6 +98,11 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
   const handleConstructorChange = (checked: boolean) => {
     setCompetencyConstructorEnabled(checked)
     if (checked) setCompetencyDevelopmentEnabled(true)
+  }
+
+  const handleTaskWorkspaceChange = (checked: boolean) => {
+    setTaskWorkspaceEnabled(checked)
+    if (!checked) setCanLinkQueueTasksToProjects(false)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -131,6 +142,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
         mpw,
         is_new_employee: isNewEmployee,
         task_workspace_enabled: taskWorkspaceEnabled,
+        can_link_queue_tasks_to_projects: canLinkQueueTasksToProjects,
         feedback_enabled: feedbackEnabled,
         competency_development_enabled: competencyDevelopmentEnabled,
         competency_constructor_enabled: competencyConstructorEnabled,
@@ -151,24 +163,26 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       role="dialog"
       aria-modal="true"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-      onKeyDown={(e) => e.key === 'Escape' && onClose()}
+      aria-labelledby="user-modal-title"
+      onPointerDown={preventBackdropDismiss}
     >
-      <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
-        <h3 className="text-lg font-semibold text-slate-900">
+      <div ref={panelRef} tabIndex={-1} className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
+        <h3 id="user-modal-title" className="text-lg font-semibold text-slate-900">
           {mode === 'create' ? 'Добавить сотрудника' : 'Редактировать сотрудника'}
         </h3>
         <form onSubmit={handleSubmit} className="mt-4 space-y-3">
-          <label className="block text-sm font-medium text-slate-700">ФИО *</label>
+          <label htmlFor="user-full-name" className="block text-sm font-medium text-slate-700">ФИО *</label>
           <input
+            id="user-full-name"
             type="text"
             value={full_name}
             onChange={(e) => setFullName(e.target.value)}
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             maxLength={255}
           />
-          <label className="block text-sm font-medium text-slate-700">Email *</label>
+          <label htmlFor="user-email" className="block text-sm font-medium text-slate-700">Email *</label>
           <input
+            id="user-email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -224,12 +238,32 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
                 <input
                   type="checkbox"
                   checked={taskWorkspaceEnabled}
-                  onChange={(e) => setTaskWorkspaceEnabled(e.target.checked)}
+                  onChange={(e) => handleTaskWorkspaceChange(e.target.checked)}
                   className="mt-1 h-4 w-4 rounded border-slate-300"
                 />
                 <span>
                   <span className="block font-medium text-slate-800">Работа с задачами</span>
                   <span className="block text-xs text-slate-500">Очередь, мои задачи, профиль, магазин, база знаний, отчеты и каталог.</span>
+                </span>
+              </label>
+              <label className={cn(
+                'flex items-start gap-3 rounded-md border px-3 py-2 text-sm',
+                taskWorkspaceEnabled
+                  ? 'border-slate-200 bg-white text-slate-700'
+                  : 'border-slate-200 bg-slate-100 text-slate-400',
+              )}>
+                <input
+                  type="checkbox"
+                  checked={canLinkQueueTasksToProjects}
+                  disabled={!taskWorkspaceEnabled}
+                  onChange={(e) => setCanLinkQueueTasksToProjects(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-slate-300"
+                />
+                <span>
+                  <span className="block font-medium">Q-задачи в проектах</span>
+                  <span className="block text-xs">
+                    Разрешает владельцу или редактору проекта публиковать операции в глобальную очередь и связывать существующие Q-задачи.
+                  </span>
                 </span>
               </label>
               <label className="flex items-start gap-3 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">

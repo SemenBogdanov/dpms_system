@@ -41,6 +41,11 @@ import {
   ProjectCockpit,
   type ProjectCockpitHandle,
 } from '@/components/ProjectCockpit'
+import {
+  WorkEntityHealthBadge,
+  WorkEntityPortfolio,
+  WorkEntityStatusBadge,
+} from '@/components/WorkEntityPortfolio'
 import { WorkEntityProjectMap } from '@/components/WorkEntityProjectMap'
 import { WorkEntityWorkspacePanel } from '@/components/WorkEntityWorkspacePanel'
 import type {
@@ -61,6 +66,7 @@ import type {
   WorkEntityUpdate,
 } from '@/api/types'
 import { cn } from '@/lib/utils'
+import { getWorkEntityHealth } from '@/lib/workEntityHealth'
 import { preventBackdropDismiss, useProtectedModal } from '@/hooks/useProtectedModal'
 
 type DetailTab = 'control' | 'work' | 'map' | 'links' | 'access' | 'events'
@@ -117,7 +123,7 @@ const relationLabels: Record<WorkEntityRelationType, string> = {
 
 const targetTypeLabels: Record<WorkEntityTargetType, string> = {
   entity: 'Проект или цель',
-  task: 'DPMS-задача',
+  task: 'Q-задача',
   personal_task: 'Личная задача',
   quick_note: 'Заметка',
   deadline_tracker: 'Контроль срока',
@@ -195,12 +201,15 @@ const legacyEventActions: Record<string, string> = {
   project_decision_recorded: 'decision_recorded',
   project_artifact_created: 'created',
   project_artifact_updated: 'updated',
+  execution_contract_published: 'published',
+  execution_contract_linked: 'linked',
+  execution_contract_released: 'released',
 }
 
 const objectTypeLabels: Record<string, string> = {
   entity: 'Проект или цель',
   stage: 'Этап',
-  task: 'Задача',
+  task: 'Операция',
   milestone: 'Контрольная точка',
   dependency: 'Зависимость',
   artifact: 'Артефакт',
@@ -212,7 +221,7 @@ const objectTypeLabels: Record<string, string> = {
 const objectTypeGenitiveLabels: Record<string, string> = {
   entity: 'проекта или цели',
   stage: 'этапа',
-  task: 'задачи',
+  task: 'операции',
   milestone: 'контрольной точки',
   dependency: 'зависимости',
   artifact: 'артефакта',
@@ -232,6 +241,9 @@ const actionFilterLabels: Record<string, string> = {
   target_deadline_changed: 'Изменение целевого срока',
   charter_changed: 'Поправка к паспорту',
   decision_recorded: 'Управленческое решение',
+  published: 'Публикация в Q-пул',
+  linked: 'Привязка Q-задачи',
+  released: 'Освобождение Q-контракта',
 }
 
 const projectTaskStatusLabels: Record<string, string> = {
@@ -339,9 +351,13 @@ const impactFieldLabels: Record<string, string> = {
   forecast_due_at: 'Прогноз проекта',
   members: 'Участников',
   milestones: 'Контрольных точек',
-  tasks: 'Работ',
+  tasks: 'Операций',
   schedule_revision: 'Ревизия графика',
   baseline_preserved: 'Исходный baseline сохранен',
+  q_task_number: 'Q-задача',
+  estimated_q: 'Оценка',
+  contract_source: 'Источник Q-задачи',
+  created_task_cancelled: 'Созданная Q-задача отменена',
 }
 
 const EVENT_PAGE_SIZE = 100
@@ -501,6 +517,15 @@ function formatAuditValue(field: string, value: unknown, objectType: string): st
   if (field === 'relation_type' && typeof value === 'string') {
     return relationLabels[value as WorkEntityRelationType] || value
   }
+  if (field === 'contract_source' && typeof value === 'string') {
+    return value === 'created_from_operation'
+      ? 'Создана из операции'
+      : value === 'linked_existing'
+        ? 'Связана существующая'
+        : value
+  }
+  if (field === 'q_task_number') return `Q #${String(value)}`
+  if (field === 'estimated_q') return `${String(value)} Q`
   if (
     typeof value === 'string' &&
     /(^|_)(at|date|starts|start|due|finish|finished)(_|$)/.test(field)
@@ -577,6 +602,9 @@ function eventHeadline(
     journal_entry_added: `запись в журнал ${objectLabel}`,
     forecast_shifted: `сдвиг прогноза ${objectLabel}`,
     schedule_rescheduled: `перенос графика от ${objectLabel}`,
+    published: `публикация ${objectLabel} в Q-пул`,
+    linked: `привязка Q-задачи к ${objectLabel}`,
+    released: `освобождение Q-контракта ${objectLabel}`,
   }
   const concreteAction =
     actionText[action] || `событие «${eventType}» для ${objectLabel}`
@@ -644,6 +672,8 @@ function journalDotClass(action: string): string {
   if (action === 'created') return 'bg-emerald-500'
   if (action === 'removed' || action === 'archived') return 'bg-rose-500'
   if (action === 'journal_entry_added') return 'bg-sky-500'
+  if (action === 'published' || action === 'linked') return 'bg-emerald-500'
+  if (action === 'released') return 'bg-amber-500'
   if (action === 'forecast_shifted' || action === 'schedule_rescheduled') {
     return 'bg-amber-500'
   }
@@ -877,6 +907,10 @@ export function WorkEntitiesPage() {
     () => entities.find((entity) => entity.id === selectedId) ?? null,
     [entities, selectedId],
   )
+  const selectedHealth = useMemo(
+    () => (selected ? getWorkEntityHealth(selected, summary?.overdue_items ?? 0) : null),
+    [selected, summary?.overdue_items],
+  )
   const canEdit = selected?.access_role === 'owner' || selected?.access_role === 'editor'
   const isOwner = selected?.access_role === 'owner'
   const normalizedEvents = useMemo(
@@ -944,12 +978,11 @@ export function WorkEntitiesPage() {
   const loadEntities = useCallback(async () => {
     const data = await api.get<WorkEntity[]>('/api/work-entities?include_archived=true')
     setEntities(data)
-    setSelectedId((current) => {
+    setSelectedId(() => {
       if (requestedEntityId && data.some((entity) => entity.id === requestedEntityId)) {
         return requestedEntityId
       }
-      if (current && data.some((entity) => entity.id === current)) return current
-      return data.find((entity) => !['done', 'archived'].includes(entity.status))?.id ?? data[0]?.id ?? ''
+      return ''
     })
     return data
   }, [requestedEntityId])
@@ -1112,7 +1145,7 @@ export function WorkEntitiesPage() {
     return acceptedContacts.filter((contact) => !memberIds.has(contact.id))
   }, [acceptedContacts, members])
 
-  const selectEntity = (entityId: string) => {
+  const selectEntity = (entityId: string, replaceHistory = true) => {
     if (entityId !== selectedId) {
       setLinks([])
       setSummary(null)
@@ -1124,12 +1157,25 @@ export function WorkEntitiesPage() {
     setSelectedId(entityId)
     setTab('control')
     setMobileActionsOpen(false)
-    navigate(`/work-entities?entity=${entityId}`, { replace: true })
+    navigate(`/work-entities?entity=${entityId}`, { replace: replaceHistory })
     if (window.matchMedia('(max-width: 1023px)').matches) {
       window.requestAnimationFrame(() =>
         detailSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
       )
     }
+  }
+
+  const openPortfolio = () => {
+    setSelectedId('')
+    setLinks([])
+    setSummary(null)
+    setReadiness(null)
+    setMembers([])
+    setEvents([])
+    setEventsHasMore(false)
+    setTab('control')
+    setMobileActionsOpen(false)
+    navigate('/work-entities')
   }
 
   const openCreate = () => {
@@ -1326,27 +1372,41 @@ export function WorkEntitiesPage() {
   return (
     <div className="w-full space-y-4">
       <header className="flex items-start justify-between gap-3">
-        <div className="relative min-w-0 flex-1 cursor-pointer">
-          <h1 className="inline-flex max-w-full items-center gap-2">
-            <span className="line-clamp-2 min-w-0 break-words text-xl font-semibold leading-7 text-slate-900 sm:text-2xl">
-              {selected?.title || 'Проекты и цели'}
-            </span>
-            <ChevronDown className="h-5 w-5 shrink-0 text-slate-500" />
-          </h1>
-          <select
-            value={selectedId}
-            onChange={(event) => selectEntity(event.target.value)}
-            disabled={loading || orderedEntities.length === 0}
-            className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-            aria-label="Выбрать проект или цель"
-          >
-            {orderedEntities.length === 0 && <option value="">Нет проектов</option>}
-            {orderedEntities.map((entity) => (
-              <option key={entity.id} value={entity.id}>
-                {entity.title} · {statusLabels[entity.status]}
-              </option>
-            ))}
-          </select>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <div className="relative min-w-0 max-w-full cursor-pointer">
+            <h1 className="inline-flex max-w-full items-center gap-2">
+              <span className="line-clamp-2 min-w-0 break-words text-xl font-semibold leading-7 text-slate-900 sm:text-2xl">
+                {selected?.title || 'Проекты и цели'}
+              </span>
+              <ChevronDown className="h-5 w-5 shrink-0 text-slate-500" />
+            </h1>
+            <select
+              value={selectedId || '__portfolio__'}
+              onChange={(event) => {
+                if (event.target.value === '__portfolio__') {
+                  openPortfolio()
+                  return
+                }
+                selectEntity(event.target.value)
+              }}
+              disabled={loading}
+              className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
+              aria-label="Выбрать проект или цель"
+            >
+              <option value="__portfolio__">Все проекты и цели · Обзор</option>
+              {orderedEntities.map((entity) => (
+                <option key={entity.id} value={entity.id}>
+                  {entity.title} · {statusLabels[entity.status]}
+                </option>
+              ))}
+            </select>
+          </div>
+          {selected && selectedHealth && (
+            <div className="flex flex-wrap items-center gap-1.5" aria-label="Статус выбранного проекта">
+              <WorkEntityStatusBadge status={selected.status} />
+              <WorkEntityHealthBadge health={selectedHealth} />
+            </div>
+          )}
         </div>
         <button
           type="button"
@@ -1359,6 +1419,13 @@ export function WorkEntitiesPage() {
         </button>
       </header>
 
+      {!selected ? (
+        <WorkEntityPortfolio
+          entities={orderedEntities}
+          loading={loading}
+          onSelect={(entityId) => selectEntity(entityId, false)}
+        />
+      ) : (
       <div className="grid min-h-[620px] min-w-0 items-start gap-4 lg:grid-cols-[232px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)]">
         <aside className="min-w-0 space-y-6 lg:sticky lg:top-[73px]">
           <section>
@@ -1464,7 +1531,7 @@ export function WorkEntitiesPage() {
                     className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
                   >
                     <Plus className="h-4 w-4" />
-                    Добавить работу
+                    Добавить операцию
                   </button>
                   <button
                     type="button"
@@ -1782,14 +1849,14 @@ export function WorkEntitiesPage() {
                       <p className="mt-1 text-xs text-slate-500">
                         {selected.visibility === 'private'
                           ? 'Сущность видна только владельцу.'
-                          : 'Работа и проектные артефакты доступны участникам по их ролям.'}
+                          : 'Операции и проектные артефакты доступны участникам по их ролям.'}
                       </p>
                     </div>
                     <div className="grid gap-2 text-xs sm:grid-cols-2 xl:grid-cols-4">
                       {[
-                        ['Владелец', 'Управляет проектом, работой и доступом'],
-                        ['Редактор', 'Планирует задачи, зависимости и артефакты'],
-                        ['Участник', 'Выполняет назначенную работу и ведет журнал'],
+                        ['Владелец', 'Управляет проектом, операциями и доступом'],
+                        ['Редактор', 'Планирует операции, зависимости и артефакты'],
+                        ['Участник', 'Выполняет назначенные операции и ведет журнал'],
                         ['Наблюдатель', 'Просматривает проект без изменений'],
                       ].map(([role, description]) => (
                         <div key={role} className="rounded-lg border border-slate-200 p-2.5">
@@ -2063,6 +2130,7 @@ export function WorkEntitiesPage() {
           )}
         </section>
       </div>
+      )}
 
       {guidedCreateOpen && (
         <GuidedProjectWizard

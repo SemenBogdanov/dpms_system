@@ -38,6 +38,10 @@ import type {
 } from '@/api/types'
 import { cn } from '@/lib/utils'
 import { preventBackdropDismiss, useProtectedModal } from '@/hooks/useProtectedModal'
+import {
+  OperationExecutionContractButton,
+  OperationExecutionContractModal,
+} from '@/components/OperationExecutionContract'
 
 type ProjectCockpitProps = {
   entity: WorkEntity
@@ -99,14 +103,6 @@ const milestoneStatusLabels: Record<string, string> = {
   overdue: 'Просрочена',
   achieved: 'Пройдена',
   cancelled: 'Отменена',
-}
-
-const projectStatusLabels: Record<WorkEntity['status'], string> = {
-  draft: 'Черновик',
-  active: 'Активный проект',
-  paused: 'Проект на паузе',
-  done: 'Проект завершен',
-  archived: 'Проект в архиве',
 }
 
 const charterFieldLabels = {
@@ -240,6 +236,8 @@ function ProjectCockpit(
   const [workspace, setWorkspace] = useState<WorkEntityWorkspace | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [executionContractTask, setExecutionContractTask] =
+    useState<WorkEntityTask | null>(null)
   const [dialog, setDialog] = useState<DialogName>(null)
   const [rescheduleMilestone, setRescheduleMilestone] = useState<WorkEntityMilestone | null>(null)
   const [deadlineTarget, setDeadlineTarget] = useState('')
@@ -350,12 +348,6 @@ function ProjectCockpit(
     [activeTasks, taskMilestoneTargets],
   )
   const nextMilestone = plannedMilestones[0]
-  const overdueTasks = activeTasks.filter(
-    (task) =>
-      !['done', 'cancelled'].includes(task.status) &&
-      Boolean(task.forecast_due_at) &&
-      new Date(task.forecast_due_at || 0) < new Date(),
-  )
   const targetVariance = daysBetween(entity.due_at, entity.target_due_at || entity.due_at)
   const forecastVariance = daysBetween(
     entity.target_due_at || entity.due_at,
@@ -373,55 +365,6 @@ function ProjectCockpit(
     .filter((participant) => participant.user_id !== ownerParticipant?.user_id)
     .slice(0, 4)
   const nearestMilestones = milestones.slice(0, 3)
-  const projectHealth = (() => {
-    if (entity.status === 'done') {
-      return {
-        label: 'Проект завершен',
-        detail: 'Финальный результат зафиксирован.',
-        tone: 'text-emerald-700',
-      }
-    }
-    if (entity.status === 'archived') {
-      return {
-        label: 'Проект в архиве',
-        detail: 'Изменения заблокированы.',
-        tone: 'text-slate-600',
-      }
-    }
-    if (entity.status === 'paused') {
-      return {
-        label: 'Проект на паузе',
-        detail: 'График сохранен, работа приостановлена.',
-        tone: 'text-amber-700',
-      }
-    }
-    if (entity.status === 'draft') {
-      return readiness?.can_activate
-        ? {
-            label: 'Готов к запуску',
-            detail: 'Обязательные параметры заполнены.',
-            tone: 'text-emerald-700',
-          }
-        : {
-            label: 'Черновик: есть замечания',
-            detail: `Блокеров: ${readiness?.blocking_count ?? 0}; предупреждений: ${readiness?.warning_count ?? 0}.`,
-            tone: 'text-amber-700',
-          }
-    }
-    if (overdueTasks.length > 0 || (forecastVariance || 0) > 0) {
-      return {
-        label: 'Требует внимания',
-        detail: `Просрочено работ: ${overdueTasks.length}; отклонение: ${Math.max(0, forecastVariance || 0)} дн.`,
-        tone: 'text-red-700',
-      }
-    }
-    return {
-      label: 'Идет по плану',
-      detail: 'Прогноз находится в пределах целевой даты.',
-      tone: 'text-emerald-700',
-    }
-  })()
-
   const refreshAll = async () => {
     await Promise.all([loadWorkspace(), onChanged()])
   }
@@ -456,7 +399,7 @@ function ProjectCockpit(
     event.preventDefault()
     if (!taskForm.title.trim() || !taskForm.acceptanceCriteria.trim()) return
     if (!taskForm.targetMilestoneId) {
-      toast.error('Выберите контрольную точку, которую подготавливает работа')
+      toast.error('Выберите контрольную точку, которую подготавливает операция')
       return
     }
     setBusy(true)
@@ -475,9 +418,9 @@ function ProjectCockpit(
       )
       setDialog(null)
       await refreshAll()
-      toast.success('Работа добавлена в маршрут')
+      toast.success('Операция добавлена в маршрут')
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось добавить работу')
+      toast.error(error instanceof Error ? error.message : 'Не удалось добавить операцию')
       await refreshAll()
     } finally {
       setBusy(false)
@@ -743,7 +686,6 @@ function ProjectCockpit(
           <article className="rounded-lg border border-slate-200 bg-white p-4">
             <h3 className="text-xs font-semibold uppercase text-primary">Описание проекта</h3>
             <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
-              <span>{projectStatusLabels[entity.status]}</span>
               <span>Владелец: {entity.owner_name}</span>
               <span>Начало: {formatDate(entity.starts_at)}</span>
               <span>Цель: {formatDate(entity.target_due_at || entity.due_at)}</span>
@@ -786,15 +728,15 @@ function ProjectCockpit(
                 Сроки проекта
               </h3>
               <div className="mt-2 grid grid-cols-3 divide-x divide-slate-200 border-y border-slate-200">
-                <div className="min-w-0 px-2 py-2.5">
+                <div className="min-w-0 px-1 py-2.5 text-center">
                   <span className="block text-[11px] text-slate-500">Базовый срок</span>
-                  <strong className="mt-1 block whitespace-nowrap text-sm font-semibold tabular-nums text-slate-900">
+                  <strong className="mt-1 block whitespace-nowrap text-[11px] font-semibold tabular-nums text-slate-900">
                     {formatDate(entity.due_at)}
                   </strong>
                 </div>
-                <div className="min-w-0 px-2 py-2.5">
+                <div className="min-w-0 px-1 py-2.5 text-center">
                   <span className="block text-[11px] text-slate-500">Текущая цель</span>
-                  <strong className="mt-1 block whitespace-nowrap text-sm font-semibold tabular-nums text-slate-900">
+                  <strong className="mt-1 block whitespace-nowrap text-[11px] font-semibold tabular-nums text-slate-900">
                     {formatDate(entity.target_due_at || entity.due_at)}
                   </strong>
                   {targetVariance !== null && targetVariance !== 0 && (
@@ -809,11 +751,11 @@ function ProjectCockpit(
                     </span>
                   )}
                 </div>
-                <div className="min-w-0 px-2 py-2.5">
+                <div className="min-w-0 px-1 py-2.5 text-center">
                   <span className="block text-[11px] text-slate-500">Прогноз</span>
                   <strong
                     className={cn(
-                      'mt-1 block whitespace-nowrap text-sm font-semibold tabular-nums',
+                      'mt-1 block whitespace-nowrap text-[11px] font-semibold tabular-nums',
                       forecastVariance && forecastVariance > 0
                         ? 'text-red-700'
                         : 'text-emerald-700',
@@ -826,21 +768,6 @@ function ProjectCockpit(
                       +{forecastVariance} дн.
                     </span>
                   )}
-                </div>
-              </div>
-              <div className="flex items-start gap-2.5 px-3 py-3">
-                {projectHealth.tone === 'text-emerald-700' ? (
-                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
-                ) : (
-                  <AlertTriangle className={cn('mt-0.5 h-5 w-5 shrink-0', projectHealth.tone)} />
-                )}
-                <div className="min-w-0">
-                  <h4 className={cn('text-sm font-semibold', projectHealth.tone)}>
-                    {projectHealth.label}
-                  </h4>
-                  <p className="mt-0.5 text-[11px] leading-4 text-slate-500">
-                    {projectHealth.detail}
-                  </p>
                 </div>
               </div>
             </article>
@@ -946,7 +873,7 @@ function ProjectCockpit(
           <div>
             <h3 className="text-base font-semibold text-slate-900">Маршрут к результату</h3>
             <p className="mt-0.5 text-xs text-slate-500">
-              Работы подготавливают проверку; проверка подтверждает переход дальше.
+              Операции подготавливают проверку; проверка подтверждает переход дальше.
             </p>
           </div>
           <button
@@ -1085,7 +1012,7 @@ function ProjectCockpit(
                   <div className="mt-3 border-t border-slate-100">
                     {tasks.length === 0 ? (
                       <p className="py-2 text-xs text-amber-800">
-                        До этой проверки не привязана работа.
+                        До этой проверки не привязана операция.
                       </p>
                     ) : (
                       tasks.map((task) => (
@@ -1100,9 +1027,17 @@ function ProjectCockpit(
                             <span className="text-slate-500">
                               {formatDate(task.forecast_due_at || task.baseline_due_at)}
                             </span>
-                            <span className={cn('rounded px-1.5 py-0.5 font-medium', statusTone(task.status))}>
-                              {taskStatusLabels[task.status]}
-                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <OperationExecutionContractButton
+                                operation={task}
+                                projectStatus={entity.status}
+                                compact
+                                onClick={() => setExecutionContractTask(task)}
+                              />
+                              <span className={cn('rounded px-1.5 py-0.5 font-medium', statusTone(task.status))}>
+                                {taskStatusLabels[task.status]}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       ))
@@ -1120,7 +1055,7 @@ function ProjectCockpit(
           <AlertTriangle className="h-5 w-5 shrink-0 text-amber-700" />
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-amber-900">
-              Есть работы без контрольной точки: {unlinkedTasks.length}
+              Есть операции без контрольной точки: {unlinkedTasks.length}
             </p>
             <p className="mt-0.5 text-xs leading-5 text-amber-800">
               {unlinkedTasks.slice(0, 3).map((task) => task.title).join(', ')}
@@ -1133,7 +1068,7 @@ function ProjectCockpit(
             onClick={() => onOpenAdvanced('work')}
             className="h-10 shrink-0 rounded-lg border border-amber-400 bg-white px-3 text-sm font-medium text-amber-900 hover:bg-amber-100"
           >
-            Связать работы
+            Связать операции
           </button>
         </div>
       )}
@@ -1171,11 +1106,11 @@ function ProjectCockpit(
       ) : null}
 
       {dialog === 'task' && (
-        <Modal title="Добавить работу" onClose={() => setDialog(null)}>
+        <Modal title="Добавить операцию" onClose={() => setDialog(null)}>
           <form onSubmit={(event) => void createTask(event)} className="space-y-4 p-4">
             <Field
               label="Что нужно сделать"
-              hint="Работа занимает время и выполняется конкретным человеком."
+              hint="Операция занимает время и выполняется конкретным человеком."
             >
               <input
                 value={taskForm.title}
@@ -1185,7 +1120,7 @@ function ProjectCockpit(
                 className="h-11 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-primary"
               />
             </Field>
-            <Field label="Какой результат работы будет принят">
+            <Field label="Какой результат операции будет принят">
               <textarea
                 value={taskForm.acceptanceCriteria}
                 onChange={(event) => setTaskForm((current) => ({ ...current, acceptanceCriteria: event.target.value }))}
@@ -1241,7 +1176,7 @@ function ProjectCockpit(
             </div>
             <Field
               label="К какой проверке готовит"
-              hint="Работа должна завершиться до выбранной контрольной точки."
+              hint="Операция должна завершиться до выбранной контрольной точки."
             >
               <select
                 value={taskForm.targetMilestoneId}
@@ -1258,7 +1193,7 @@ function ProjectCockpit(
               </select>
               {plannedMilestones.length === 0 && (
                 <p className="mt-1 text-xs leading-5 text-amber-700">
-                  Сначала добавьте контрольную точку: работа должна готовить проверяемый
+                  Сначала добавьте контрольную точку: операция должна готовить проверяемый
                   результат.
                 </p>
               )}
@@ -1326,7 +1261,7 @@ function ProjectCockpit(
                   onChange={(event) => setMilestoneForm((current) => ({ ...current, criticality: event.target.value as MilestoneForm['criticality'] }))}
                   className="h-11 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary"
                 >
-                  <option value="control">Контроль хода работы</option>
+                  <option value="control">Контроль хода исполнения</option>
                   <option value="key">Открывает следующий шаг</option>
                   <option value="critical">Определяет успех проекта</option>
                 </select>
@@ -1547,7 +1482,7 @@ function ProjectCockpit(
                 {deadlinePreview.conflicts.length ? (
                   <>
                     <p className="mt-1 text-xs leading-5 text-amber-900">
-                      Новая цель не меняет работы автоматически. После фиксации перепланируйте элементы:
+                      Новая цель не меняет операции автоматически. После фиксации перепланируйте элементы:
                     </p>
                     <div className="mt-2 max-h-48 space-y-1 overflow-y-auto">
                       {deadlinePreview.conflicts.map((conflict) => (
@@ -1620,7 +1555,7 @@ function ProjectCockpit(
                       className="mt-2 inline-flex h-10 items-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-medium text-red-700 hover:border-red-300"
                     >
                       <Gauge className="h-4 w-4" />
-                      Перепланировать работы
+                      Перепланировать операции
                     </button>
                   </div>
                 )}
@@ -1642,6 +1577,15 @@ function ProjectCockpit(
             </div>
           </div>
         </Modal>
+      )}
+
+      {executionContractTask && (
+        <OperationExecutionContractModal
+          entityId={entity.id}
+          operation={executionContractTask}
+          onClose={() => setExecutionContractTask(null)}
+          onChanged={refreshAll}
+        />
       )}
     </div>
   )
