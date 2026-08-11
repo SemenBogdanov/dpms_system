@@ -145,46 +145,90 @@ async def _get_owned_note_or_404(db: AsyncSession, note_id: UUID | None, owner_i
     return note
 
 
-async def _get_promoted_task_state(
+def _execution_task_id(task: PersonalTask) -> UUID | None:
+    return task.promoted_task_id or task.linked_task_id
+
+
+def _execution_task_ids_for(
+    promoted_task_id: UUID | None,
+    linked_task_id: UUID | None,
+) -> tuple[UUID, ...]:
+    return tuple(
+        dict.fromkeys(
+            task_id
+            for task_id in (promoted_task_id, linked_task_id)
+            if task_id is not None
+        )
+    )
+
+
+def _execution_task_ids(task: PersonalTask) -> tuple[UUID, ...]:
+    return _execution_task_ids_for(task.promoted_task_id, task.linked_task_id)
+
+
+async def _get_execution_task_states(
+    db: AsyncSession,
+    execution_task_ids: tuple[UUID, ...],
+    *,
+    for_update: bool = False,
+) -> list[tuple[Task, User | None]]:
+    if not execution_task_ids:
+        return []
+    statement = (
+        select(Task, User)
+        .outerjoin(User, Task.assignee_id == User.id)
+        .where(Task.id.in_(execution_task_ids))
+    )
+    if for_update:
+        statement = statement.with_for_update(of=Task)
+    result = await db.execute(statement)
+    states_by_id = {
+        execution_task.id: (execution_task, assignee)
+        for execution_task, assignee in result.all()
+    }
+    return [
+        states_by_id[task_id]
+        for task_id in execution_task_ids
+        if task_id in states_by_id
+    ]
+
+
+async def _get_execution_task_state(
     db: AsyncSession,
     task: PersonalTask,
     *,
     for_update: bool = False,
 ) -> tuple[Task | None, User | None]:
-    if task.promoted_task_id is None:
-        return None, None
-    statement = (
-        select(Task, User)
-        .outerjoin(User, Task.assignee_id == User.id)
-        .where(Task.id == task.promoted_task_id)
+    states = await _get_execution_task_states(
+        db,
+        _execution_task_ids(task),
+        for_update=for_update,
     )
-    if for_update:
-        statement = statement.with_for_update(of=Task)
-    result = await db.execute(statement)
-    row = result.one_or_none()
-    return row if row is not None else (None, None)
+    return states[0] if states else (None, None)
 
 
 def _serialize(
     task: PersonalTask,
-    promoted_task: Task | None = None,
+    execution_task: Task | None = None,
     assignee: User | None = None,
 ) -> PersonalTaskRead:
     serialized = PersonalTaskRead.model_validate(task)
-    if promoted_task is None:
+    if execution_task is None:
         return serialized
+    task_state = PersonalTaskPromotedTaskRead(
+        id=execution_task.id,
+        task_number=execution_task.task_number,
+        status=execution_task.status,
+        assignee_id=execution_task.assignee_id,
+        assignee_name=assignee.full_name if assignee else None,
+        started_at=execution_task.started_at,
+        due_date=execution_task.due_date,
+    )
+    update: dict[str, PersonalTaskPromotedTaskRead] = {"execution_task": task_state}
+    if task.promoted_task_id == execution_task.id:
+        update["promoted_task"] = task_state
     return serialized.model_copy(
-        update={
-            "promoted_task": PersonalTaskPromotedTaskRead(
-                id=promoted_task.id,
-                task_number=promoted_task.task_number,
-                status=promoted_task.status,
-                assignee_id=promoted_task.assignee_id,
-                assignee_name=assignee.full_name if assignee else None,
-                started_at=promoted_task.started_at,
-                due_date=promoted_task.due_date,
-            )
-        }
+        update=update
     )
 
 
@@ -294,13 +338,7 @@ async def list_personal_tasks(
     db: AsyncSession = Depends(get_db),
 ):
     """List current user's personal issue-lite tasks."""
-    query = (
-        select(PersonalTask, Task, User)
-        .select_from(PersonalTask)
-        .outerjoin(Task, PersonalTask.promoted_task_id == Task.id)
-        .outerjoin(User, Task.assignee_id == User.id)
-        .where(PersonalTask.owner_id == user.id)
-    )
+    query = select(PersonalTask).where(PersonalTask.owner_id == user.id)
     if status and status != "all":
         if status == "active":
             query = query.where(PersonalTask.status.in_(ACTIVE_STATUSES))
@@ -332,9 +370,26 @@ async def list_personal_tasks(
         PersonalTask.created_at.desc(),
     ).limit(limit)
     result = await db.execute(query)
+    tasks = list(result.scalars().all())
+    execution_ids = {
+        execution_id
+        for task in tasks
+        if (execution_id := _execution_task_id(task)) is not None
+    }
+    execution_states: dict[UUID, tuple[Task, User | None]] = {}
+    if execution_ids:
+        state_result = await db.execute(
+            select(Task, User)
+            .outerjoin(User, Task.assignee_id == User.id)
+            .where(Task.id.in_(execution_ids))
+        )
+        execution_states = {
+            execution_task.id: (execution_task, assignee)
+            for execution_task, assignee in state_result.all()
+        }
     return [
-        _serialize(task, promoted_task, assignee)
-        for task, promoted_task, assignee in result.all()
+        _serialize(task, *execution_states.get(_execution_task_id(task), (None, None)))
+        for task in tasks
     ]
 
 
@@ -474,8 +529,8 @@ async def get_personal_task(
 ):
     """Read a personal task with the current state of its promoted queue task."""
     task = await _get_owned_task_or_404(db, task_id, user.id)
-    promoted_task, assignee = await _get_promoted_task_state(db, task)
-    return _serialize(task, promoted_task, assignee)
+    execution_task, assignee = await _get_execution_task_state(db, task)
+    return _serialize(task, execution_task, assignee)
 
 
 @router.patch("/{task_id}", response_model=PersonalTaskRead)
@@ -491,7 +546,6 @@ async def update_personal_task(
     old_waiting_for = task.waiting_for
     old_blocked_reason = task.blocked_reason
     update_data = body.model_dump(exclude_unset=True)
-    allow_parallel_execution = bool(update_data.pop("allow_parallel_execution", False))
     required_fields = {"title", "status", "priority", "category", "tags", "start_at"}
     invalid_null_fields = sorted(field for field in required_fields if field in update_data and update_data[field] is None)
     if invalid_null_fields:
@@ -501,26 +555,61 @@ async def update_personal_task(
         )
     if "linked_task_id" in update_data:
         await _ensure_linked_task_exists(db, body.linked_task_id)
+        if (
+            task.promoted_task_id is not None
+            and body.linked_task_id is not None
+            and body.linked_task_id != task.promoted_task_id
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Опубликованная личная задача уже связана со своей Q-задачей. "
+                    "Очистите ручную связь или укажите ту же Q-задачу."
+                ),
+            )
     if "source_quick_note_id" in update_data:
         await _get_owned_note_or_404(db, body.source_quick_note_id, user.id)
     target_status = update_data.get("status", task.status)
     waiting_for = update_data.get("waiting_for", task.waiting_for)
     blocked_reason = update_data.get("blocked_reason", task.blocked_reason)
+    effective_linked_task_id = update_data.get("linked_task_id", task.linked_task_id)
+    execution_task_ids = _execution_task_ids_for(
+        task.promoted_task_id,
+        effective_linked_task_id,
+    )
     _ensure_status_context(target_status, waiting_for, blocked_reason)
-    if target_status == "in_progress" and target_status != old_status and task.promoted_task_id:
-        promoted_task, _ = await _get_promoted_task_state(db, task, for_update=True)
-        worked_by_another_executor = bool(
-            promoted_task
-            and promoted_task.assignee_id
-            and promoted_task.assignee_id != task.owner_id
-            and promoted_task.status in {TaskStatus.in_progress, TaskStatus.review}
-        )
-        if worked_by_another_executor and not allow_parallel_execution:
+    if target_status == "in_progress" and target_status != old_status and execution_task_ids:
+        if len(execution_task_ids) > 1:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "Связанная задача в глобальной очереди уже выполняется другим сотрудником. "
-                    "Подтвердите параллельную работу, чтобы избежать дублирования."
+                    "С личной задачей связаны две разные Q-задачи. "
+                    "Устраните неоднозначную связь до начала работы."
+                ),
+            )
+        execution_states = await _get_execution_task_states(
+            db,
+            execution_task_ids,
+            for_update=True,
+        )
+        conflict = next(
+            (
+                state
+                for state in execution_states
+                if state[0].assignee_id != task.owner_id
+                and state[0].status in {TaskStatus.in_progress, TaskStatus.review}
+            ),
+            None,
+        )
+        if conflict:
+            execution_task, assignee = conflict
+            assignee_label = assignee.full_name if assignee else "исполнитель не указан"
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Связанная задача Q #{execution_task.task_number} уже выполняется: {assignee_label}. "
+                    "Откройте Q-задачу и согласуйте отдельную часть работы; "
+                    "параллельный старт той же работы запрещен."
                 ),
             )
     if "status" in update_data and update_data["status"] != old_status:
@@ -556,7 +645,6 @@ async def update_personal_task(
                 "previous_waiting_for": old_waiting_for,
                 "previous_blocked_reason": old_blocked_reason,
                 "blocked_reason": task.blocked_reason,
-                "parallel_execution_confirmed": allow_parallel_execution,
             },
         )
     elif changed_fields:

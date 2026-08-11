@@ -47,15 +47,12 @@ export function useProtectedModal<T extends HTMLElement>(active = true): RefObje
         return
       }
 
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
+      const currentIndex = focusable.indexOf(document.activeElement as HTMLElement)
+      const nextIndex = event.shiftKey
+        ? (currentIndex <= 0 ? focusable.length - 1 : currentIndex - 1)
+        : (currentIndex < 0 || currentIndex === focusable.length - 1 ? 0 : currentIndex + 1)
+      event.preventDefault()
+      focusable[nextIndex].focus()
     }
 
     document.addEventListener('keydown', handleKeyDown)

@@ -38,7 +38,7 @@ async function assertNoHorizontalOverflow(page: Page) {
 async function installApiMock(
   page: Page,
   authAvailable = true,
-  responses: Record<string, unknown> = {},
+  responses: Record<string, unknown | ((route: Route) => Promise<void>)> = {},
 ) {
   let available = authAvailable
   await page.addInitScript(() => localStorage.setItem('dpms_token', 'mobile-smoke-token'))
@@ -54,10 +54,15 @@ async function installApiMock(
       return
     }
     if (Object.prototype.hasOwnProperty.call(responses, pathname)) {
+      const response = responses[pathname]
+      if (typeof response === 'function') {
+        await response(route)
+        return
+      }
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(responses[pathname]),
+        body: JSON.stringify(response),
       })
       return
     }
@@ -103,8 +108,152 @@ const personalTask = {
   promoted_task_id: null,
   promoted_at: null,
   promoted_task: null,
+  execution_task: null,
   created_at: '2026-08-10T09:00:00Z',
   updated_at: '2026-08-10T09:00:00Z',
+}
+
+const acceptanceTaskId = '88888888-8888-4888-8888-888888888888'
+const acceptanceCriterionId = '99999999-9999-4999-8999-999999999999'
+const delegatedPersonalTaskId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+const delegatedQueueTaskId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+const delegatedExecutorId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+
+const acceptanceTask = {
+  id: acceptanceTaskId,
+  task_number: 2042,
+  title: 'Проверить защиту черновика приемки',
+  description: 'Сценарий безопасной сдачи результата по критериям.',
+  task_type: 'docs',
+  complexity: 'S',
+  estimated_q: 3,
+  priority: 'medium',
+  status: 'in_progress',
+  min_league: 'C',
+  assignee_id: testUser.id,
+  estimator_id: testUser.id,
+  acceptance_owner_id: testUser.id,
+  acceptance_mode: 'criteria',
+  acceptance_state: 'none',
+  acceptance_revision: 1,
+  acceptance_total_count: 1,
+  acceptance_required_count: 1,
+  acceptance_accepted_count: 0,
+  acceptance_required_accepted_count: 0,
+  acceptance_submitted_count: 0,
+  acceptance_returned_count: 0,
+  validator_id: null,
+  estimation_details: null,
+  result_url: null,
+  result_comment: null,
+  brief_rating: null,
+  brief_feedback: null,
+  rejection_comment: null,
+  started_at: '2026-08-11T08:00:00Z',
+  completed_at: null,
+  validated_at: null,
+  due_date: '2026-08-15T18:00:00Z',
+  sla_hours: null,
+  is_overdue: false,
+  parent_task_id: null,
+  deadline_zone: 'green',
+  tags: ['ux-safety'],
+  rejection_count: 0,
+  created_at: '2026-08-11T08:00:00Z',
+  updated_at: '2026-08-11T08:00:00Z',
+  focus_started_at: null,
+  active_seconds: 0,
+  active_hours: 0,
+  is_focused: false,
+}
+
+const acceptancePlan = {
+  task_id: acceptanceTaskId,
+  mode: 'criteria',
+  state: 'none',
+  revision: 1,
+  owner_id: testUser.id,
+  owner_name: testUser.full_name,
+  locked: true,
+  can_manage_plan: false,
+  can_submit: true,
+  can_review: false,
+  criteria: [
+    {
+      id: acceptanceCriterionId,
+      task_id: acceptanceTaskId,
+      position: 1,
+      title: 'Приложен проверяемый результат',
+      description: null,
+      kind: 'required',
+      status: 'pending',
+      evidence_comment: null,
+      evidence_url: null,
+      reviewer_comment: null,
+      submitted_at: null,
+      reviewed_at: null,
+      baseline_revision: 1,
+      return_count: 0,
+      decision_change_count: 0,
+      events: [],
+    },
+  ],
+}
+
+const delegatedQueueTask = {
+  ...acceptanceTask,
+  id: delegatedQueueTaskId,
+  task_number: 3042,
+  title: 'Исполнить делегированный результат',
+  acceptance_mode: 'full',
+  acceptance_total_count: 0,
+  acceptance_required_count: 0,
+  assignee_id: delegatedExecutorId,
+}
+
+const delegatedPersonalTask = {
+  ...personalTask,
+  id: delegatedPersonalTaskId,
+  task_number: 1059,
+  task_key: 'PT-1059',
+  title: 'Контролировать делегированный результат',
+  status: 'planned',
+  linked_task_id: delegatedQueueTaskId,
+  promoted_task_id: delegatedQueueTaskId,
+  promoted_at: '2026-08-11T09:00:00Z',
+  promoted_task: {
+    id: delegatedQueueTaskId,
+    task_number: 3042,
+    status: 'in_progress',
+    assignee_id: delegatedExecutorId,
+    assignee_name: 'Другой исполнитель',
+    started_at: '2026-08-11T09:00:00Z',
+    due_date: '2026-08-15T18:00:00Z',
+  },
+  execution_task: {
+    id: delegatedQueueTaskId,
+    task_number: 3042,
+    status: 'in_progress',
+    assignee_id: delegatedExecutorId,
+    assignee_name: 'Другой исполнитель',
+    started_at: '2026-08-11T09:00:00Z',
+    due_date: '2026-08-15T18:00:00Z',
+  },
+}
+
+function acceptanceResponses() {
+  return {
+    '/api/tasks': [acceptanceTask],
+    '/api/users': [testUser],
+    [`/api/users/${testUser.id}/run-rate`]: null,
+    [`/api/users/${testUser.id}/progress`]: null,
+    '/api/deadline-trackers': [],
+    '/api/shop/approvals': [],
+    [`/api/tasks/${acceptanceTaskId}/attachments`]: [],
+    [`/api/tasks/${acceptanceTaskId}/review-events`]: [],
+    [`/api/tasks/${acceptanceTaskId}/acceptance`]: acceptancePlan,
+    [`/api/tasks/${acceptanceTaskId}`]: acceptanceTask,
+  }
 }
 
 const personalTaskArtifact = {
@@ -325,6 +474,220 @@ test('personal task materials remain usable and protected on mobile', async ({ p
 
   await dialog.getByRole('button', { name: 'Отмена' }).click()
   await expect(dialog).toHaveCount(0)
+})
+
+test('delegated Q execution has no parallel-start override', async ({ page }) => {
+  const personalTaskPatches: unknown[] = []
+  page.on('request', (request) => {
+    if (
+      request.method() === 'PATCH'
+      && new URL(request.url()).pathname === `/api/personal-tasks/${delegatedPersonalTaskId}`
+    ) {
+      personalTaskPatches.push(request.postDataJSON())
+    }
+  })
+  await installApiMock(page, true, {
+    '/api/personal-tasks': [delegatedPersonalTask],
+    '/api/personal-tasks/deadlines': [],
+    '/api/deadline-trackers': [],
+    [`/api/personal-tasks/${delegatedPersonalTaskId}`]: delegatedPersonalTask,
+    [`/api/personal-tasks/${delegatedPersonalTaskId}/events`]: [],
+    [`/api/personal-tasks/${delegatedPersonalTaskId}/checkpoints`]: [],
+    [`/api/personal-tasks/${delegatedPersonalTaskId}/artifacts`]: [],
+    '/api/queue': [],
+    '/api/tasks': [delegatedQueueTask],
+    [`/api/tasks/${delegatedQueueTaskId}`]: delegatedQueueTask,
+    [`/api/tasks/${delegatedQueueTaskId}/attachments`]: [],
+    [`/api/tasks/${delegatedQueueTaskId}/review-events`]: [],
+    '/api/users': [testUser],
+  })
+
+  await page.goto('/personal-tasks')
+  await page.getByRole('button', { name: 'Начать работу над задачей' }).click()
+
+  await expect(page.getByText('Связанная Q-задача уже находится в активном исполнении.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Все равно начать' })).toHaveCount(0)
+  const openQueueButton = page.getByRole('button', { name: 'Открыть Q #3042' })
+  await expect(openQueueButton).toBeVisible()
+  await assertNoHorizontalOverflow(page)
+  expect(personalTaskPatches).toEqual([])
+
+  await openQueueButton.click()
+  await expect(page).toHaveURL(new RegExp(`/queue\\?task=${delegatedQueueTaskId}`))
+})
+
+test('acceptance draft survives navigation and requires explicit discard', async ({ page }) => {
+  await installApiMock(page, true, acceptanceResponses())
+
+  await page.goto('/my-tasks')
+  const restoredTaskTrigger = page.getByRole('button', { name: acceptanceTask.title }).first()
+  await restoredTaskTrigger.click()
+  const criterion = page.getByRole('checkbox', { name: `Выбрать критерий: ${acceptancePlan.criteria[0].title}` })
+  await criterion.check()
+  const comment = page.getByLabel(`Комментарий к результату: ${acceptancePlan.criteria[0].title}`)
+  await comment.fill('Проверяемый результат приложен к задаче')
+  await expect.poll(() => page.evaluate(
+    (taskId) => window.sessionStorage.getItem(`dpms:acceptance-draft:${taskId}`),
+    acceptanceTaskId,
+  )).not.toBeNull()
+
+  await page.goto('/my-tasks?draft_roundtrip=1')
+  await page.getByRole('button', { name: acceptanceTask.title }).first().click()
+  const restoredCriterion = page.getByRole('checkbox', { name: `Выбрать критерий: ${acceptancePlan.criteria[0].title}` })
+  await expect(restoredCriterion).toBeChecked()
+  const restoredComment = page.getByLabel(`Комментарий к результату: ${acceptancePlan.criteria[0].title}`)
+  await expect(restoredComment).toHaveValue('Проверяемый результат приложен к задаче')
+  await assertNoHorizontalOverflow(page)
+
+  await page.keyboard.press('Escape')
+  const discardDialog = page.getByRole('alertdialog', { name: 'Есть несохраненные данные приемки' })
+  await expect(discardDialog).toBeVisible()
+  const continueButton = discardDialog.getByRole('button', { name: 'Продолжить редактирование' })
+  const discardButton = discardDialog.getByRole('button', { name: 'Удалить черновик и закрыть' })
+  await expect(continueButton).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(discardButton).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(continueButton).toBeFocused()
+  await continueButton.click()
+  await expect(restoredComment).toBeFocused()
+  await expect(restoredComment).toHaveValue('Проверяемый результат приложен к задаче')
+
+  await page.getByRole('button', { name: 'Закрыть' }).first().click()
+  await expect(discardDialog).toBeVisible()
+  await discardDialog.getByRole('button', { name: 'Удалить черновик и закрыть' }).click()
+  await expect(page.getByRole('heading', { name: acceptanceTask.title })).toHaveCount(0)
+  await expect(restoredTaskTrigger).toBeFocused()
+  await expect.poll(() => page.evaluate(
+    (taskId) => window.sessionStorage.getItem(`dpms:acceptance-draft:${taskId}`),
+    acceptanceTaskId,
+  )).toBeNull()
+})
+
+test('acceptance loading failure is visible and retryable', async ({ page }) => {
+  let attempts = 0
+  await installApiMock(page, true, {
+    ...acceptanceResponses(),
+    [`/api/tasks/${acceptanceTaskId}/acceptance`]: async (route: Route) => {
+      attempts += 1
+      if (attempts === 1) {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'Временная ошибка загрузки приемки' }),
+        })
+        return
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(acceptancePlan),
+      })
+    },
+  })
+
+  await page.goto('/my-tasks')
+  await page.getByRole('button', { name: acceptanceTask.title }).first().click()
+  await expect(page.getByText('Критерии приемки не загрузились')).toBeVisible()
+  await expect(page.getByText('Временная ошибка загрузки приемки')).toBeVisible()
+  await page.getByRole('button', { name: 'Повторить загрузку' }).click()
+  await expect(page.getByText(acceptancePlan.criteria[0].title, { exact: true })).toBeVisible()
+  await assertNoHorizontalOverflow(page)
+  expect(attempts).toBe(2)
+})
+
+test('acceptance revision change preserves the previous draft', async ({ page }) => {
+  await installApiMock(page, true, acceptanceResponses())
+  await page.addInitScript(
+    ({ taskId, criterionId, criterionTitle, savedAt }) => {
+      window.sessionStorage.setItem(`dpms:acceptance-draft:${taskId}`, JSON.stringify({
+        savedAt,
+        acceptanceRevision: 0,
+        selected: [criterionId],
+        evidence: {
+          [criterionId]: { comment: 'Черновик для предыдущей версии', url: '' },
+        },
+        reviewComments: {},
+        revisionCriterionId: null,
+        revisionComments: {},
+        criterionTitles: { [criterionId]: criterionTitle },
+      }))
+    },
+    {
+      taskId: acceptanceTaskId,
+      criterionId: acceptanceCriterionId,
+      criterionTitle: acceptancePlan.criteria[0].title,
+      savedAt: Date.now(),
+    },
+  )
+
+  await page.goto('/my-tasks')
+  await page.getByRole('button', { name: acceptanceTask.title }).first().click()
+  await expect(page.getByText('Критерии изменились после создания черновика')).toBeVisible()
+  await expect(page.getByLabel(`Комментарий к результату: ${acceptancePlan.criteria[0].title}`)).toHaveValue(
+    'Черновик для предыдущей версии',
+  )
+  await expect(page.getByRole('button', { name: 'Отправить выбранные' })).toBeDisabled()
+  await assertNoHorizontalOverflow(page)
+
+  await page.keyboard.press('Escape')
+  const discardDialog = page.getByRole('alertdialog', { name: 'Есть несохраненные данные приемки' })
+  await expect(discardDialog).toBeVisible()
+  await discardDialog.getByRole('button', { name: 'Удалить черновик и закрыть' }).click()
+})
+
+test('acceptance stale refresh blocks duplicate submit and remains retryable', async ({ page }) => {
+  let loadAttempts = 0
+  let submitAttempts = 0
+  await installApiMock(page, true, {
+    ...acceptanceResponses(),
+    [`/api/tasks/${acceptanceTaskId}/acceptance`]: async (route: Route) => {
+      loadAttempts += 1
+      if (loadAttempts === 2) {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'Не удалось обновить состояние после записи' }),
+        })
+        return
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(acceptancePlan),
+      })
+    },
+    [`/api/tasks/${acceptanceTaskId}/acceptance/submit`]: async (route: Route) => {
+      submitAttempts += 1
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
+    },
+  })
+
+  await page.goto('/my-tasks')
+  await page.getByRole('button', { name: acceptanceTask.title }).first().click()
+  await page.getByRole('checkbox', { name: `Выбрать критерий: ${acceptancePlan.criteria[0].title}` }).check()
+  await page.getByLabel(`Комментарий к результату: ${acceptancePlan.criteria[0].title}`).fill('Готово к проверке')
+  const submitButton = page.getByRole('button', { name: 'Отправить выбранные' })
+  await submitButton.evaluate((element) => {
+    element.click()
+    element.click()
+  })
+
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('alertdialog', { name: 'Есть несохраненные данные приемки' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: acceptanceTask.title })).toBeVisible()
+
+  await expect(page.getByText('Не удалось обновить приемку')).toBeVisible()
+  await expect(page.getByText(/Показаны данные от/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Отправить выбранные' })).toBeDisabled()
+  expect(submitAttempts).toBe(1)
+
+  await page.getByRole('button', { name: 'Повторить', exact: true }).click()
+  await expect(page.getByText('Не удалось обновить приемку')).toHaveCount(0)
+  expect(loadAttempts).toBe(3)
+  expect(submitAttempts).toBe(1)
+  await assertNoHorizontalOverflow(page)
 })
 
 test('project portfolio exposes lifecycle and escalation status before opening a project', async ({ page }) => {

@@ -262,6 +262,7 @@ export interface PersonalTask {
   promoted_task_id: string | null
   promoted_at: string | null
   promoted_task: PersonalTaskPromotedTask | null
+  execution_task: PersonalTaskPromotedTask | null
   created_at: string
   updated_at: string
 }
@@ -322,7 +323,6 @@ export interface PersonalTaskUpdate {
   effort?: number | null
   linked_task_id?: string | null
   source_quick_note_id?: string | null
-  allow_parallel_execution?: boolean
 }
 
 export interface PersonalTaskPromoteRequest {

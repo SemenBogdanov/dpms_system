@@ -1,12 +1,14 @@
-import { useEffect, useState, type FC } from 'react'
+import { useCallback, useEffect, useRef, useState, type FC } from 'react'
 import { api } from '@/api/client'
 import type { Task, User, CatalogItem, TaskAttachment, TaskReviewEvent } from '@/api/types'
 import { DeadlineBadge } from './DeadlineBadge'
 import { PriorityBadge } from './PriorityBadge'
-import { CalendarClock, Copy, FileText, X } from 'lucide-react'
+import { AlertTriangle, CalendarClock, Copy, FileText, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { WorkEntityBacklinks } from './WorkEntityBacklinks'
 import { TaskAcceptancePanel } from './TaskAcceptancePanel'
+import { preventBackdropDismiss, useProtectedModal } from '@/hooks/useProtectedModal'
+import { clearTaskAcceptanceDraft } from '@/lib/acceptanceDraft'
 
 interface TaskDetailModalProps {
   task: Task | null
@@ -80,6 +82,117 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
   const [attachmentsLoading, setAttachmentsLoading] = useState(false)
   const [reviewEvents, setReviewEvents] = useState<TaskReviewEvent[]>([])
   const [reviewEventsLoading, setReviewEventsLoading] = useState(false)
+  const [acceptanceDraftDirty, setAcceptanceDraftDirty] = useState(false)
+  const [acceptanceMutationBusy, setAcceptanceMutationBusy] = useState(false)
+  const [discardDialogOpen, setDiscardDialogOpen] = useState(false)
+  const lastDraftFocusRef = useRef<HTMLElement | null>(null)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
+  const pendingPointerTriggerRef = useRef<{ element: HTMLElement; capturedAt: number } | null>(null)
+
+  useEffect(() => {
+    if (taskId) return
+    const rememberPointerTrigger = (event: PointerEvent) => {
+      if (!(event.target instanceof Element)) return
+      const trigger = event.target.closest<HTMLElement>('button, a[href], [role="button"]')
+      if (trigger) {
+        pendingPointerTriggerRef.current = {
+          element: trigger,
+          capturedAt: performance.now(),
+        }
+      }
+    }
+    document.addEventListener('pointerdown', rememberPointerTrigger, true)
+    return () => document.removeEventListener('pointerdown', rememberPointerTrigger, true)
+  }, [taskId])
+
+  useEffect(() => {
+    if (!taskId) return
+    const activeElement = document.activeElement as HTMLElement | null
+    if (activeElement && activeElement !== document.body) {
+      returnFocusRef.current = activeElement
+      return
+    }
+    const pendingTrigger = pendingPointerTriggerRef.current
+    returnFocusRef.current = pendingTrigger && performance.now() - pendingTrigger.capturedAt < 1000
+      ? pendingTrigger.element
+      : null
+  }, [taskId])
+
+  const panelRef = useProtectedModal<HTMLDivElement>(Boolean(task) && !discardDialogOpen)
+  const discardPanelRef = useProtectedModal<HTMLDivElement>(Boolean(task) && discardDialogOpen)
+
+  const closeAndRestoreFocus = useCallback(() => {
+    const returnTarget = returnFocusRef.current
+    onClose()
+    window.requestAnimationFrame(() => {
+      if (returnTarget?.isConnected) returnTarget.focus()
+    })
+  }, [onClose])
+
+  useEffect(() => {
+    setAcceptanceDraftDirty(false)
+    setAcceptanceMutationBusy(false)
+    setDiscardDialogOpen(false)
+    lastDraftFocusRef.current = null
+  }, [taskId])
+
+  const requestClose = useCallback(() => {
+    const panelMutationBusy = Boolean(
+      panelRef.current?.querySelector('[data-acceptance-busy="true"]'),
+    )
+    if (acceptanceMutationBusy || panelMutationBusy) {
+      toast.error('Дождитесь завершения операции приемки')
+      return
+    }
+    const visibleDraft = Array.from(
+      panelRef.current?.querySelectorAll<HTMLElement>('[data-acceptance-draft="true"]') ?? [],
+    ).some((element) => {
+      if (element instanceof HTMLInputElement) {
+        return element.type === 'checkbox' ? element.checked : Boolean(element.value.trim())
+      }
+      return element instanceof HTMLTextAreaElement && Boolean(element.value.trim())
+    })
+    if (acceptanceDraftDirty || visibleDraft) {
+      setDiscardDialogOpen(true)
+      return
+    }
+    closeAndRestoreFocus()
+  }, [acceptanceDraftDirty, acceptanceMutationBusy, closeAndRestoreFocus, panelRef])
+
+  const continueEditing = () => {
+    setDiscardDialogOpen(false)
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const draftFields = Array.from(
+          panelRef.current?.querySelectorAll<HTMLElement>('[data-acceptance-draft="true"]') ?? [],
+        )
+        const populatedTextField = draftFields.find((element) => {
+          if (element instanceof HTMLInputElement) {
+            return element.type !== 'checkbox' && Boolean(element.value.trim())
+          }
+          if (element instanceof HTMLTextAreaElement) return Boolean(element.value.trim())
+          return false
+        })
+        const selectedControl = draftFields.find(
+          (element) => element instanceof HTMLInputElement && element.type === 'checkbox' && element.checked,
+        )
+        ;(lastDraftFocusRef.current || populatedTextField || selectedControl || draftFields[0])?.focus()
+      })
+    })
+  }
+
+  const discardAndClose = () => {
+    if (!taskId) return
+    clearTaskAcceptanceDraft(taskId)
+    setAcceptanceDraftDirty(false)
+    setDiscardDialogOpen(false)
+    closeAndRestoreFocus()
+  }
+
+  const handleAcceptanceDraftState = useCallback((state: { dirty: boolean; busy: boolean }) => {
+    setAcceptanceDraftDirty(state.dirty)
+    setAcceptanceMutationBusy(state.busy)
+  }, [])
 
   useEffect(() => {
     if (!taskId) {
@@ -205,14 +318,23 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="task-detail-title"
+      onPointerDown={preventBackdropDismiss}
       onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose()
-        e.stopPropagation()
+        if (e.key === 'Escape') {
+          requestClose()
+          e.stopPropagation()
+        }
       }}
     >
       <div
+        ref={panelRef}
+        tabIndex={-1}
         className={`relative w-full rounded-xl bg-white shadow-2xl ${task.acceptance_mode === 'criteria' ? 'max-w-3xl' : 'max-w-lg'}`}
         onClick={(e) => e.stopPropagation()}
+        onFocusCapture={(event) => {
+          const target = event.target as HTMLElement
+          if (target.dataset.acceptanceDraft === 'true') lastDraftFocusRef.current = target
+        }}
       >
         <div className="flex items-start justify-between border-b border-slate-200 p-4">
           <h2 id="task-detail-title" className="text-lg font-semibold text-slate-900 pr-8">
@@ -229,7 +351,8 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
           </h2>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
+            disabled={acceptanceMutationBusy}
             className="absolute right-4 top-4 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
             aria-label="Закрыть"
           >
@@ -333,7 +456,11 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
           <WorkEntityBacklinks targetType="task" targetId={task.id} />
 
           {task.acceptance_mode === 'criteria' && (
-            <TaskAcceptancePanel task={task} onUpdated={onAcceptanceUpdated} />
+            <TaskAcceptancePanel
+              task={task}
+              onUpdated={onAcceptanceUpdated}
+              onDraftStateChange={handleAcceptanceDraftState}
+            />
           )}
 
           {(attachmentsLoading || attachments.length > 0) && (
@@ -548,7 +675,8 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
             )}
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
+              disabled={acceptanceMutationBusy}
               className="rounded-md bg-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-300"
             >
               Закрыть
@@ -556,6 +684,60 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
           </div>
         </div>
       </div>
+
+      {discardDialogOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/60 p-4"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="discard-acceptance-title"
+          aria-describedby="discard-acceptance-description"
+          onPointerDown={preventBackdropDismiss}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              continueEditing()
+              event.stopPropagation()
+            }
+          }}
+        >
+          <div
+            ref={discardPanelRef}
+            tabIndex={-1}
+            className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-2xl"
+          >
+            <div className="flex items-start gap-3">
+              <span className="rounded-full bg-amber-100 p-2 text-amber-700">
+                <AlertTriangle className="h-5 w-5" />
+              </span>
+              <div>
+                <h2 id="discard-acceptance-title" className="font-semibold text-slate-950">
+                  Есть несохраненные данные приемки
+                </h2>
+                <p id="discard-acceptance-description" className="mt-1 text-sm text-slate-600">
+                  Черновик сохранен в этой вкладке на 8 часов. Продолжите редактирование или явно удалите его перед закрытием.
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                autoFocus
+                onClick={continueEditing}
+                className="min-h-11 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 sm:order-2"
+              >
+                Продолжить редактирование
+              </button>
+              <button
+                type="button"
+                onClick={discardAndClose}
+                className="min-h-11 rounded-md border border-rose-200 px-4 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 sm:order-1"
+              >
+                Удалить черновик и закрыть
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

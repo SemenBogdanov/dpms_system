@@ -10,6 +10,7 @@
     "smoke:navigation": "node scripts/check-navigation.mjs",
     "smoke:mobile-readiness": "node scripts/check-mobile-readiness.mjs",
     "test:mobile": "npm run build && playwright test --config playwright.mobile.config.ts",
+    "test:ux-safety": "npm run build && playwright test --config playwright.ux-safety.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {

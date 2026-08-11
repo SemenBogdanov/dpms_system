@@ -24,7 +24,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
 import type {
@@ -117,6 +117,7 @@ type StatusDialog = {
   task: PersonalTask
   status: 'waiting' | 'blocked' | 'in_progress'
   duplicateWarning?: boolean
+  conflictMessage?: string
 }
 
 const statusLabel: Record<PersonalTaskStatus, string> = {
@@ -402,6 +403,7 @@ function timelineTicks(start: number, end: number, due: number | null) {
 }
 
 export function PersonalTasksPage() {
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const requestedTaskId = searchParams.get('task')
   const [tasks, setTasks] = useState<PersonalTask[]>([])
@@ -644,13 +646,12 @@ export function PersonalTasksPage() {
       toast.success(`Статус: ${statusLabel[status]}`)
       return true
     } catch (e) {
-      if (
-        status === 'in_progress'
-        && e instanceof Error
-        && e.message.includes('уже выполняется другим сотрудником')
-      ) {
+      if (status === 'in_progress' && e instanceof Error && (
+        e.message.includes('Связанная задача Q')
+        || e.message.includes('связаны две разные Q-задачи')
+      )) {
         setStatusContext(emptyStatusContext)
-        setStatusDialog({ task, status, duplicateWarning: true })
+        setStatusDialog({ task, status, duplicateWarning: true, conflictMessage: e.message })
         return false
       }
       toast.error(e instanceof Error ? e.message : 'Ошибка статуса')
@@ -661,13 +662,19 @@ export function PersonalTasksPage() {
   }
 
   const isWorkedByAnotherExecutor = (task: PersonalTask) => {
-    const globalTask = task.promoted_task
+    const globalTask = task.execution_task || task.promoted_task
     return Boolean(
-      globalTask?.assignee_id
+      globalTask
       && globalTask.assignee_id !== task.owner_id
       && ['in_progress', 'review'].includes(globalTask.status),
     )
   }
+
+  const hasAmbiguousExecutionLinks = (task: PersonalTask) => Boolean(
+    task.promoted_task_id
+    && task.linked_task_id
+    && task.promoted_task_id !== task.linked_task_id,
+  )
 
   const openStatusTransition = async (task: PersonalTask, status: PersonalTaskStatus) => {
     if (status === 'waiting' || status === 'blocked') {
@@ -679,7 +686,7 @@ export function PersonalTasksPage() {
       setStatusDialog({ task, status })
       return
     }
-    if (status === 'in_progress' && task.promoted_task_id) {
+    if (status === 'in_progress' && (task.promoted_task_id || task.linked_task_id)) {
       try {
         const freshTask = await api.get<PersonalTask>(`/api/personal-tasks/${task.id}`)
         setTasks((current) => current.map((item) => (item.id === freshTask.id ? freshTask : item)))
@@ -700,15 +707,14 @@ export function PersonalTasksPage() {
   const submitStatusTransition = async () => {
     if (!statusDialog) return
     const { task, status, duplicateWarning } = statusDialog
+    if (duplicateWarning) return
     const reason = statusContext.reason.trim()
     if (!duplicateWarning && !reason) {
       toast.error(status === 'waiting' ? 'Укажите, что или кого ждем' : 'Укажите причину блокировки')
       return
     }
     setStatusBusy(true)
-    const changes: PersonalTaskUpdate = duplicateWarning
-      ? { allow_parallel_execution: true }
-      : status === 'waiting'
+    const changes: PersonalTaskUpdate = status === 'waiting'
         ? {
             waiting_for: reason,
             blocked_reason: null,
@@ -750,7 +756,7 @@ export function PersonalTasksPage() {
   }
 
   const openQueueAction = (task: PersonalTask) => {
-    if (task.promoted_task_id) {
+    if (task.promoted_task_id || task.linked_task_id) {
       setQueueDetailsTask(task)
       return
     }
@@ -1291,12 +1297,12 @@ export function PersonalTasksPage() {
                       <span className="rounded-md border border-slate-200 px-2 py-1 text-xs text-slate-500">
                         {categoryLabel[task.category]}
                       </span>
-                      {task.promoted_task_id && (
+                      {(task.promoted_task_id || task.linked_task_id) && (
                         <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-200">
-                          Q{task.promoted_task ? ` #${task.promoted_task.task_number}` : ''}
+                          Q{task.execution_task ? ` #${task.execution_task.task_number}` : ''}
                           {' · '}
-                          {task.promoted_task ? globalTaskStatusLabel[task.promoted_task.status] : 'Опубликована'}
-                          {task.promoted_task?.assignee_name ? ` · ${task.promoted_task.assignee_name}` : ''}
+                          {task.execution_task ? globalTaskStatusLabel[task.execution_task.status] : 'Связана'}
+                          {task.execution_task?.assignee_name ? ` · ${task.execution_task.assignee_name}` : ''}
                         </span>
                       )}
                     </div>
@@ -1418,9 +1424,9 @@ export function PersonalTasksPage() {
                             <CalendarClock className="h-4 w-4" aria-hidden="true" />
                           </ActionButton>
                           <ActionButton
-                            label={task.promoted_task_id ? 'Открыть состояние задачи в глобальной очереди' : 'Вывести задачу в глобальную очередь Q'}
+                            label={(task.promoted_task_id || task.linked_task_id) ? 'Открыть состояние задачи в глобальной очереди' : 'Вывести задачу в глобальную очередь Q'}
                             onClick={() => openQueueAction(task)}
-                            active={Boolean(task.promoted_task_id)}
+                            active={Boolean(task.promoted_task_id || task.linked_task_id)}
                             tone="queue"
                           >
                             <QueueGlyph className="h-4 w-4" />
@@ -1744,16 +1750,21 @@ export function PersonalTasksPage() {
             {statusDialog.duplicateWarning ? (
               <div className="mt-4 space-y-3">
                 <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100">
-                  <p className="font-semibold">Глобальную задачу уже выполняет другой сотрудник.</p>
-                  <p className="mt-1">
-                    {statusDialog.task.promoted_task?.assignee_name || 'Исполнитель назначен'}
-                    {' · '}
-                    {statusDialog.task.promoted_task ? globalTaskStatusLabel[statusDialog.task.promoted_task.status] : 'В работе'}.
-                    Продолжение личной версии может привести к дублированию результата.
+                  <p className="font-semibold">
+                    {hasAmbiguousExecutionLinks(statusDialog.task)
+                      ? 'У личной задачи две разные Q-связи.'
+                      : 'Связанная Q-задача уже находится в активном исполнении.'}
                   </p>
+                  {!hasAmbiguousExecutionLinks(statusDialog.task) && (
+                    <p className="mt-1">
+                      {(statusDialog.task.execution_task || statusDialog.task.promoted_task)?.assignee_name || 'Исполнитель не указан'}
+                      {' · '}
+                      {statusDialog.task.execution_task ? globalTaskStatusLabel[statusDialog.task.execution_task.status] : 'В работе'}.
+                    </p>
+                  )}
                 </div>
                 <p className="text-sm text-slate-600 dark:text-slate-300">
-                  Система не блокирует владельца личной задачи: продолжайте только если ваша часть работы отличается или согласована с исполнителем.
+                  {statusDialog.conflictMessage || 'Та же работа не может выполняться параллельно. Откройте Q-задачу и согласуйте отдельную часть с собственными границами и результатом.'}
                 </p>
               </div>
             ) : (
@@ -1816,27 +1827,55 @@ export function PersonalTasksPage() {
               >
                 Отмена
               </button>
-              <button
-                type="button"
-                onClick={() => void submitStatusTransition()}
-                disabled={statusBusy}
-                className={cn(
-                  'rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50',
-                  statusDialog.duplicateWarning
-                    ? 'bg-amber-500 text-amber-950 hover:bg-amber-400'
-                    : statusDialog.status === 'waiting'
+              {statusDialog.duplicateWarning ? (
+                <>
+                  {hasAmbiguousExecutionLinks(statusDialog.task) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const task = statusDialog.task
+                        setStatusDialog(null)
+                        editTask(task)
+                      }}
+                      className="rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-50 dark:border-amber-700 dark:bg-slate-900 dark:text-amber-100 dark:hover:bg-slate-800"
+                    >
+                      Исправить связь
+                    </button>
+                  )}
+                  {(statusDialog.task.execution_task || statusDialog.task.promoted_task) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const executionTask = statusDialog.task.execution_task || statusDialog.task.promoted_task
+                        if (!executionTask) return
+                        setStatusDialog(null)
+                        navigate(`/queue?task=${executionTask.id}`)
+                      }}
+                      className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                    >
+                      Открыть Q #{(statusDialog.task.execution_task || statusDialog.task.promoted_task)?.task_number}
+                    </button>
+                  )}
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void submitStatusTransition()}
+                  disabled={statusBusy}
+                  className={cn(
+                    'rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50',
+                    statusDialog.status === 'waiting'
                       ? 'bg-amber-400 text-amber-950 hover:bg-amber-300'
                       : 'bg-rose-600 text-white hover:bg-rose-500',
-                )}
-              >
-                {statusBusy
-                  ? 'Сохраняем...'
-                  : statusDialog.duplicateWarning
-                    ? 'Все равно начать'
+                  )}
+                >
+                  {statusBusy
+                    ? 'Сохраняем...'
                     : statusDialog.status === 'waiting'
                       ? 'Перевести в ожидание'
                       : 'Зафиксировать блокировку'}
-              </button>
+                </button>
+              )}
             </div>
           </div>
         </ProtectedModal>
@@ -1849,7 +1888,7 @@ export function PersonalTasksPage() {
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-blue-600 dark:text-blue-300">Глобальная очередь Q</p>
                 <h2 className="mt-1 text-lg font-semibold text-slate-950 dark:text-slate-100">
-                  {queueDetailsTask.promoted_task ? `Q #${queueDetailsTask.promoted_task.task_number}` : 'Задача опубликована'}
+                  {queueDetailsTask.execution_task ? `Q #${queueDetailsTask.execution_task.task_number}` : 'Задача связана'}
                 </h2>
                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Источник: {queueDetailsTask.task_key} · {queueDetailsTask.title}</p>
               </div>
@@ -1867,13 +1906,13 @@ export function PersonalTasksPage() {
               <div>
                 <dt className="text-xs text-slate-400">Состояние</dt>
                 <dd className="mt-1 font-medium text-slate-900 dark:text-slate-100">
-                  {queueDetailsTask.promoted_task ? globalTaskStatusLabel[queueDetailsTask.promoted_task.status] : 'Синхронизация состояния'}
+                  {queueDetailsTask.execution_task ? globalTaskStatusLabel[queueDetailsTask.execution_task.status] : 'Синхронизация состояния'}
                 </dd>
               </div>
               <div>
                 <dt className="text-xs text-slate-400">Исполнитель</dt>
                 <dd className="mt-1 font-medium text-slate-900 dark:text-slate-100">
-                  {queueDetailsTask.promoted_task?.assignee_name || 'Не назначен — задача свободна'}
+                  {queueDetailsTask.execution_task?.assignee_name || 'Не назначен — задача свободна'}
                 </dd>
               </div>
             </dl>
@@ -1884,13 +1923,27 @@ export function PersonalTasksPage() {
                 : 'border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-700 dark:bg-blue-950/30 dark:text-blue-100',
             )}>
               {isWorkedByAnotherExecutor(queueDetailsTask)
-                ? 'Другой исполнитель уже работает над глобальной задачей. Личная задача остается доступной, но перед параллельной работой нужно сверить границы результата.'
+                ? 'Другой исполнитель уже работает над Q-задачей. Личная задача остается контуром контроля, но повторно выполнять тот же результат нельзя. Отдельную часть оформите новой именованной задачей или операцией.'
                 : 'Личная задача остается вашим контуром контроля. Когда глобальную задачу возьмут в работу, здесь появятся исполнитель и актуальный статус.'}
             </div>
-            <div className="mt-5 flex justify-end">
-              <button type="button" onClick={() => setQueueDetailsTask(null)} className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90">
-                Понятно
+            <div className="mt-5 flex flex-wrap justify-end gap-2">
+              <button type="button" onClick={() => setQueueDetailsTask(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
+                Закрыть
               </button>
+              {queueDetailsTask.execution_task && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const taskId = queueDetailsTask.execution_task?.id
+                    if (!taskId) return
+                    setQueueDetailsTask(null)
+                    navigate(`/queue?task=${taskId}`)
+                  }}
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+                >
+                  Открыть Q #{queueDetailsTask.execution_task.task_number}
+                </button>
+              )}
             </div>
           </div>
         </ProtectedModal>
