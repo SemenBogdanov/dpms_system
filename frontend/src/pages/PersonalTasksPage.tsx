@@ -9,7 +9,6 @@ import {
   Flag,
   History,
   Inbox,
-  Link2,
   ListStart,
   MessageSquare,
   Milestone,
@@ -77,9 +76,16 @@ const emptyForm = {
   blockedReason: '',
   impact: '',
   effort: '',
-  linkedTaskId: '',
   sourceQuickNoteId: '',
 }
+
+const publishablePersonalTaskStatuses = new Set<PersonalTaskStatus>([
+  'inbox',
+  'planned',
+  'next',
+  'waiting',
+  'blocked',
+])
 
 const emptyEventForm = {
   eventType: 'meeting' as PersonalTaskEventType,
@@ -573,7 +579,6 @@ export function PersonalTasksPage() {
       blockedReason: task.blocked_reason || '',
       impact: task.impact ? String(task.impact) : '',
       effort: task.effort ? String(task.effort) : '',
-      linkedTaskId: task.linked_task_id || '',
       sourceQuickNoteId: task.source_quick_note_id || '',
     })
     scrollToTaskForm()
@@ -599,7 +604,6 @@ export function PersonalTasksPage() {
     blocked_reason: form.blockedReason || null,
     impact: form.impact ? Number(form.impact) : null,
     effort: form.effort ? Number(form.effort) : null,
-    linked_task_id: form.linkedTaskId || null,
     source_quick_note_id: form.sourceQuickNoteId || null,
   })
 
@@ -676,6 +680,26 @@ export function PersonalTasksPage() {
     && task.promoted_task_id !== task.linked_task_id,
   )
 
+  const hasActiveQueueHandoff = (task: PersonalTask) => {
+    if (hasAmbiguousExecutionLinks(task)) return true
+    const globalTask = task.execution_task || task.promoted_task
+    if (globalTask) return globalTask.status !== 'cancelled'
+    return Boolean(task.promoted_task_id || task.linked_task_id)
+  }
+
+  const queueActionLabel = (task: PersonalTask) => {
+    if (task.promoted_task_id || task.linked_task_id) {
+      return 'Открыть состояние задачи в глобальной очереди'
+    }
+    if (task.status === 'in_progress') {
+      return 'Сначала остановите локальное выполнение, затем опубликуйте задачу в Q'
+    }
+    if (!publishablePersonalTaskStatuses.has(task.status)) {
+      return 'Завершенную или архивную задачу нельзя опубликовать в Q'
+    }
+    return 'Вывести задачу в глобальную очередь Q'
+  }
+
   const openStatusTransition = async (task: PersonalTask, status: PersonalTaskStatus) => {
     if (status === 'waiting' || status === 'blocked') {
       setStatusContext({
@@ -690,7 +714,7 @@ export function PersonalTasksPage() {
       try {
         const freshTask = await api.get<PersonalTask>(`/api/personal-tasks/${task.id}`)
         setTasks((current) => current.map((item) => (item.id === freshTask.id ? freshTask : item)))
-        if (isWorkedByAnotherExecutor(freshTask)) {
+        if (hasActiveQueueHandoff(freshTask)) {
           setStatusContext(emptyStatusContext)
           setStatusDialog({ task: freshTask, status, duplicateWarning: true })
           return
@@ -758,6 +782,14 @@ export function PersonalTasksPage() {
   const openQueueAction = (task: PersonalTask) => {
     if (task.promoted_task_id || task.linked_task_id) {
       setQueueDetailsTask(task)
+      return
+    }
+    if (task.status === 'in_progress') {
+      toast.error('Сначала остановите локальное выполнение и переведите задачу в план, ожидание или блокировку')
+      return
+    }
+    if (!publishablePersonalTaskStatuses.has(task.status)) {
+      toast.error('Завершенную или архивную личную задачу нельзя публиковать в Q')
       return
     }
     openPromote(task)
@@ -1210,12 +1242,6 @@ export function PersonalTasksPage() {
                   <option key={note.id} value={note.id}>{note.title}</option>
                 ))}
               </select>
-              <input
-                value={form.linkedTaskId}
-                onChange={(e) => setForm((prev) => ({ ...prev, linkedTaskId: e.target.value }))}
-                placeholder="UUID связанной DPMS-задачи"
-                className="rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-slate-400"
-              />
             </div>
           </div>
         </details>
@@ -1424,7 +1450,7 @@ export function PersonalTasksPage() {
                             <CalendarClock className="h-4 w-4" aria-hidden="true" />
                           </ActionButton>
                           <ActionButton
-                            label={(task.promoted_task_id || task.linked_task_id) ? 'Открыть состояние задачи в глобальной очереди' : 'Вывести задачу в глобальную очередь Q'}
+                            label={queueActionLabel(task)}
                             onClick={() => openQueueAction(task)}
                             active={Boolean(task.promoted_task_id || task.linked_task_id)}
                             tone="queue"
@@ -1486,12 +1512,6 @@ export function PersonalTasksPage() {
                         <Detail title="Причина блока" text={task.blocked_reason} />
                         <p className="text-xs text-slate-500">Следующий шаг: {formatDate(task.next_step_at)}</p>
                         <p className="text-xs text-slate-500">Impact/Effort: {task.impact || '-'} / {task.effort || '-'}</p>
-                        {task.linked_task_id && (
-                          <p className="inline-flex items-center gap-1 text-xs text-slate-500">
-                            <Link2 className="h-3 w-3" />
-                            Связь DPMS: {task.linked_task_id}
-                          </p>
-                        )}
                       </div>
                     </div>
 
@@ -1753,7 +1773,11 @@ export function PersonalTasksPage() {
                   <p className="font-semibold">
                     {hasAmbiguousExecutionLinks(statusDialog.task)
                       ? 'У личной задачи две разные Q-связи.'
-                      : 'Связанная Q-задача уже находится в активном исполнении.'}
+                      : (statusDialog.task.execution_task || statusDialog.task.promoted_task)?.status === 'done'
+                        ? 'Результат уже выполнен через Q-задачу.'
+                        : (statusDialog.task.execution_task || statusDialog.task.promoted_task)?.status === 'in_queue'
+                          ? 'Личная задача уже опубликована в Q-очереди.'
+                          : 'Выполнение этой работы уже передано в Q-задачу.'}
                   </p>
                   {!hasAmbiguousExecutionLinks(statusDialog.task) && (
                     <p className="mt-1">
@@ -1764,7 +1788,7 @@ export function PersonalTasksPage() {
                   )}
                 </div>
                 <p className="text-sm text-slate-600 dark:text-slate-300">
-                  {statusDialog.conflictMessage || 'Та же работа не может выполняться параллельно. Откройте Q-задачу и согласуйте отдельную часть с собственными границами и результатом.'}
+                  {statusDialog.conflictMessage || 'После публикации личная задача остается контуром контроля. Выполняйте результат через Q-задачу; отдельную часть оформите новой именованной задачей или операцией.'}
                 </p>
               </div>
             ) : (
@@ -1830,17 +1854,9 @@ export function PersonalTasksPage() {
               {statusDialog.duplicateWarning ? (
                 <>
                   {hasAmbiguousExecutionLinks(statusDialog.task) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const task = statusDialog.task
-                        setStatusDialog(null)
-                        editTask(task)
-                      }}
-                      className="rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-50 dark:border-amber-700 dark:bg-slate-900 dark:text-amber-100 dark:hover:bg-slate-800"
-                    >
-                      Исправить связь
-                    </button>
+                    <p className="self-center text-xs text-amber-700 dark:text-amber-300">
+                      Связь требует исправления администратором.
+                    </p>
                   )}
                   {(statusDialog.task.execution_task || statusDialog.task.promoted_task) && (
                     <button
@@ -1922,9 +1938,11 @@ export function PersonalTasksPage() {
                 ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100'
                 : 'border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-700 dark:bg-blue-950/30 dark:text-blue-100',
             )}>
-              {isWorkedByAnotherExecutor(queueDetailsTask)
-                ? 'Другой исполнитель уже работает над Q-задачей. Личная задача остается контуром контроля, но повторно выполнять тот же результат нельзя. Отдельную часть оформите новой именованной задачей или операцией.'
-                : 'Личная задача остается вашим контуром контроля. Когда глобальную задачу возьмут в работу, здесь появятся исполнитель и актуальный статус.'}
+              {(queueDetailsTask.execution_task || queueDetailsTask.promoted_task)?.status === 'cancelled'
+                ? 'Публикация в Q отменена. Личную задачу можно снова взять в локальную работу.'
+                : isWorkedByAnotherExecutor(queueDetailsTask)
+                  ? 'Другой исполнитель уже работает над Q-задачей. Личная задача остается контуром контроля, но повторно выполнять тот же результат нельзя. Отдельную часть оформите новой именованной задачей или операцией.'
+                  : 'Личная задача остается вашим контуром контроля, а выполнение идет только через Q-задачу. При необходимости вы можете взять свободную Q-задачу сами.'}
             </div>
             <div className="mt-5 flex flex-wrap justify-end gap-2">
               <button type="button" onClick={() => setQueueDetailsTask(null)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
@@ -1956,7 +1974,7 @@ export function PersonalTasksPage() {
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Вывод в глобальную очередь</p>
                 <h2 className="mt-1 text-lg font-semibold text-slate-950">{promoting.task_key} · {promoting.title}</h2>
-                <p className="mt-1 text-sm text-slate-500">После подтверждения будет создана обычная DPMS-задача со статусом в очереди.</p>
+                <p className="mt-1 text-sm text-slate-500">После подтверждения будет создана Q-задача. Личная задача останется контуром контроля, а выполнение будет идти через глобальную очередь.</p>
               </div>
               <button type="button" onClick={() => setPromoting(null)} aria-label="Закрыть" title="Закрыть" className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
                 <X className="h-4 w-4" />

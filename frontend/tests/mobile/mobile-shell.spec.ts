@@ -505,7 +505,8 @@ test('delegated Q execution has no parallel-start override', async ({ page }) =>
   await page.goto('/personal-tasks')
   await page.getByRole('button', { name: 'Начать работу над задачей' }).click()
 
-  await expect(page.getByText('Связанная Q-задача уже находится в активном исполнении.')).toBeVisible()
+  await expect(page.getByText('Выполнение этой работы уже передано в Q-задачу.')).toBeVisible()
+  await expect(page.getByText('Другой исполнитель · В работе.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Все равно начать' })).toHaveCount(0)
   const openQueueButton = page.getByRole('button', { name: 'Открыть Q #3042' })
   await expect(openQueueButton).toBeVisible()
@@ -514,6 +515,85 @@ test('delegated Q execution has no parallel-start override', async ({ page }) =>
 
   await openQueueButton.click()
   await expect(page).toHaveURL(new RegExp(`/queue\\?task=${delegatedQueueTaskId}`))
+})
+
+test('delegated Q execution handoff blocks local start while waiting in_queue', async ({ page }) => {
+  const queuedPersonalTaskId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+  const queuedQueueTaskId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+  const queuedQueueTaskNumber = 5077
+  const queuedPersonalTask = {
+    ...personalTask,
+    id: queuedPersonalTaskId,
+    task_number: queuedQueueTaskNumber,
+    task_key: `PT-${queuedQueueTaskNumber}`,
+    title: 'Ожидает вывода результата через глобальную очередь',
+    status: 'planned',
+    linked_task_id: queuedQueueTaskId,
+    promoted_task_id: queuedQueueTaskId,
+    promoted_at: '2026-08-11T09:00:00Z',
+    promoted_task: {
+      id: queuedQueueTaskId,
+      task_number: queuedQueueTaskNumber,
+      status: 'in_queue',
+      assignee_id: null,
+      assignee_name: null,
+      started_at: null,
+      due_date: '2026-08-15T18:00:00Z',
+    },
+    execution_task: {
+      id: queuedQueueTaskId,
+      task_number: queuedQueueTaskNumber,
+      status: 'in_queue',
+      assignee_id: null,
+      assignee_name: null,
+      started_at: null,
+      due_date: '2026-08-15T18:00:00Z',
+    },
+  }
+  const queuedQueueTask = {
+    ...delegatedQueueTask,
+    id: queuedQueueTaskId,
+    task_number: queuedQueueTaskNumber,
+    title: 'Ожидает исполнителя в очереди',
+    status: 'in_queue',
+    assignee_id: null,
+  }
+
+  const personalTaskPatches: unknown[] = []
+  page.on('request', (request) => {
+    if (
+      request.method() === 'PATCH'
+      && new URL(request.url()).pathname === `/api/personal-tasks/${queuedPersonalTaskId}`
+    ) {
+      personalTaskPatches.push(request.postDataJSON())
+    }
+  })
+  await installApiMock(page, true, {
+    '/api/personal-tasks': [queuedPersonalTask],
+    '/api/personal-tasks/deadlines': [],
+    '/api/deadline-trackers': [],
+    [`/api/personal-tasks/${queuedPersonalTaskId}`]: queuedPersonalTask,
+    [`/api/personal-tasks/${queuedPersonalTaskId}/events`]: [],
+    [`/api/personal-tasks/${queuedPersonalTaskId}/checkpoints`]: [],
+    [`/api/personal-tasks/${queuedPersonalTaskId}/artifacts`]: [],
+    '/api/queue': [],
+    '/api/tasks': [queuedQueueTask],
+    [`/api/tasks/${queuedQueueTaskId}`]: queuedQueueTask,
+    [`/api/tasks/${queuedQueueTaskId}/attachments`]: [],
+    [`/api/tasks/${queuedQueueTaskId}/review-events`]: [],
+    '/api/users': [testUser],
+  })
+
+  await page.goto('/personal-tasks')
+  await page.getByRole('button', { name: 'Начать работу над задачей' }).click()
+
+  await expect(page.getByText('Личная задача уже опубликована в Q-очереди.')).toBeVisible()
+  await expect(page.getByText('Исполнитель не указан · В глобальной очереди.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Все равно начать' })).toHaveCount(0)
+  const openQueueButton = page.getByRole('button', { name: `Открыть Q #${queuedQueueTaskNumber}` })
+  await expect(openQueueButton).toBeVisible()
+  await assertNoHorizontalOverflow(page)
+  expect(personalTaskPatches).toEqual([])
 })
 
 test('acceptance draft survives navigation and requires explicit discard', async ({ page }) => {

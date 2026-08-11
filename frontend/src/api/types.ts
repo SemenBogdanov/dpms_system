@@ -297,7 +297,6 @@ export interface PersonalTaskCreate {
   blocked_reason?: string | null
   impact?: number | null
   effort?: number | null
-  linked_task_id?: string | null
   source_quick_note_id?: string | null
 }
 
@@ -321,7 +320,6 @@ export interface PersonalTaskUpdate {
   blocked_reason?: string | null
   impact?: number | null
   effort?: number | null
-  linked_task_id?: string | null
   source_quick_note_id?: string | null
 }
 

@@ -53,6 +53,8 @@ router = APIRouter()
 
 ACTIVE_STATUSES = {"inbox", "planned", "next", "in_progress", "waiting", "blocked"}
 VALID_STATUSES = ACTIVE_STATUSES | {"done", "archived"}
+PUBLISHABLE_PERSONAL_TASK_STATUSES = ACTIVE_STATUSES - {"in_progress"}
+ACTIVE_QUEUE_HANDOFF_STATUSES = set(TaskStatus) - {TaskStatus.cancelled}
 
 
 async def _get_owned_task_or_404(
@@ -123,14 +125,6 @@ def _artifact_read(
         can_edit=task.status != "archived",
         versions=[PersonalTaskArtifactVersionRead.model_validate(item) for item in versions],
     )
-
-
-async def _ensure_linked_task_exists(db: AsyncSession, task_id: UUID | None) -> None:
-    if task_id is None:
-        return
-    result = await db.execute(select(Task.id).where(Task.id == task_id))
-    if result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="Связанная DPMS-задача не найдена")
 
 
 async def _get_owned_note_or_404(db: AsyncSession, note_id: UUID | None, owner_id: UUID) -> QuickNote | None:
@@ -241,6 +235,34 @@ def _ensure_status_context(
         raise HTTPException(status_code=400, detail="Укажите, что или кого ждем")
     if status == "blocked" and not blocked_reason:
         raise HTTPException(status_code=400, detail="Укажите причину блокировки")
+
+
+def _queue_handoff_conflict_detail(
+    execution_task: Task | None,
+    assignee: User | None,
+) -> str:
+    if execution_task is None:
+        return (
+            "Связанная задача Q недоступна для проверки. "
+            "Локальный старт заблокирован, чтобы не создать двойное выполнение."
+        )
+    task_label = f"Q #{execution_task.task_number}"
+    if execution_task.status in {TaskStatus.new, TaskStatus.estimated, TaskStatus.in_queue}:
+        return (
+            f"Связанная задача {task_label} опубликована в глобальной очереди и ожидает исполнения. "
+            "Выполняйте работу через Q-задачу; повторный локальный старт запрещен."
+        )
+    if execution_task.status == TaskStatus.done:
+        return (
+            f"Связанная задача {task_label} уже выполнена через глобальную очередь. "
+            "Повторный локальный старт запрещен."
+        )
+    assignee_label = assignee.full_name if assignee else "исполнитель не указан"
+    return (
+        f"Связанная задача {task_label} уже выполняется: {assignee_label}. "
+        "Откройте Q-задачу и согласуйте отдельную часть работы; "
+        "параллельный старт той же работы запрещен."
+    )
 
 
 def _task_start_at(task: PersonalTask) -> datetime:
@@ -402,7 +424,14 @@ async def create_personal_task(
     """Create a private task owned by current user."""
     _ensure_valid_task_dates(body.start_at, body.due_at)
     _ensure_status_context(body.status, body.waiting_for, body.blocked_reason)
-    await _ensure_linked_task_exists(db, body.linked_task_id)
+    if body.linked_task_id is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Ручная связь личной задачи с Q-задачей недоступна. "
+                "Опубликуйте личную задачу в глобальную очередь."
+            ),
+        )
     note = await _get_owned_note_or_404(db, body.source_quick_note_id, user.id)
     task = PersonalTask(
         owner_id=user.id,
@@ -425,7 +454,7 @@ async def create_personal_task(
         blocked_reason=body.blocked_reason,
         impact=body.impact,
         effort=body.effort,
-        linked_task_id=body.linked_task_id,
+        linked_task_id=None,
         source_quick_note_id=body.source_quick_note_id,
     )
     db.add(task)
@@ -554,28 +583,24 @@ async def update_personal_task(
             detail=f"Обязательные поля нельзя очистить: {', '.join(invalid_null_fields)}",
         )
     if "linked_task_id" in update_data:
-        await _ensure_linked_task_exists(db, body.linked_task_id)
-        if (
-            task.promoted_task_id is not None
-            and body.linked_task_id is not None
-            and body.linked_task_id != task.promoted_task_id
-        ):
+        if body.linked_task_id != task.linked_task_id:
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "Опубликованная личная задача уже связана со своей Q-задачей. "
-                    "Очистите ручную связь или укажите ту же Q-задачу."
+                    "Ручное изменение связи личной задачи с Q-задачей недоступно. "
+                    "Связь создается системой при публикации в глобальную очередь."
                 ),
             )
+        # Cached clients may still echo the existing read-only relation.
+        update_data.pop("linked_task_id")
     if "source_quick_note_id" in update_data:
         await _get_owned_note_or_404(db, body.source_quick_note_id, user.id)
     target_status = update_data.get("status", task.status)
     waiting_for = update_data.get("waiting_for", task.waiting_for)
     blocked_reason = update_data.get("blocked_reason", task.blocked_reason)
-    effective_linked_task_id = update_data.get("linked_task_id", task.linked_task_id)
     execution_task_ids = _execution_task_ids_for(
         task.promoted_task_id,
-        effective_linked_task_id,
+        task.linked_task_id,
     )
     _ensure_status_context(target_status, waiting_for, blocked_reason)
     if target_status == "in_progress" and target_status != old_status and execution_task_ids:
@@ -596,21 +621,15 @@ async def update_personal_task(
             (
                 state
                 for state in execution_states
-                if state[0].assignee_id != task.owner_id
-                and state[0].status in {TaskStatus.in_progress, TaskStatus.review}
+                if state[0].status in ACTIVE_QUEUE_HANDOFF_STATUSES
             ),
             None,
         )
-        if conflict:
-            execution_task, assignee = conflict
-            assignee_label = assignee.full_name if assignee else "исполнитель не указан"
+        if conflict or not execution_states:
+            execution_task, assignee = conflict if conflict else (None, None)
             raise HTTPException(
                 status_code=409,
-                detail=(
-                    f"Связанная задача Q #{execution_task.task_number} уже выполняется: {assignee_label}. "
-                    "Откройте Q-задачу и согласуйте отдельную часть работы; "
-                    "параллельный старт той же работы запрещен."
-                ),
+                detail=_queue_handoff_conflict_detail(execution_task, assignee),
             )
     if "status" in update_data and update_data["status"] != old_status:
         if target_status == "waiting":
@@ -1129,6 +1148,24 @@ async def promote_personal_task(
         existing = result.scalar_one_or_none()
         if existing:
             return existing
+
+    if personal_task.linked_task_id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Личная задача уже имеет прежнюю Q-связь. "
+                "Устраните эту связь до новой публикации."
+            ),
+        )
+    if personal_task.status not in PUBLISHABLE_PERSONAL_TASK_STATUSES:
+        if personal_task.status == "in_progress":
+            detail = (
+                "Нельзя публиковать в Q личную задачу, которую создатель уже выполняет. "
+                "Сначала остановите локальное выполнение и переведите задачу в план, ожидание или блокировку."
+            )
+        else:
+            detail = "Завершенную или архивную личную задачу нельзя публиковать в глобальную очередь."
+        raise HTTPException(status_code=409, detail=detail)
 
     ensure_critical_priority_allowed(user, body.priority)
     if body.task_type.value == "proactive" and body.priority.value in ("high", "critical"):
