@@ -2247,3 +2247,39 @@ export interface CreateTaskFromCalcRequest {
   items: CalcItemInput[]
   tags?: string[]
 }
+
+export type PersonalTaskArtifactType = 'document' | 'link' | 'result'
+export type PersonalTaskArtifactStatus = 'active' | 'archived'
+export type PersonalTaskArtifactVersionSourceKind = 'file' | 'link'
+
+export interface PersonalTaskArtifactVersion {
+  id: string
+  artifact_id: string
+  version_number: number
+  source_kind: PersonalTaskArtifactVersionSourceKind
+  url: string | null
+  original_filename: string | null
+  content_type: string | null
+  size_bytes: number | null
+  sha256: string | null
+  change_note: string | null
+  created_by_id: string | null
+  created_at: string
+}
+
+export interface PersonalTaskArtifact {
+  id: string
+  task_id: string
+  artifact_type: PersonalTaskArtifactType
+  title: string
+  description: string | null
+  status: PersonalTaskArtifactStatus
+  current_version: number
+  created_by_id: string | null
+  updated_by_id: string | null
+  archived_at: string | null
+  created_at: string
+  updated_at: string
+  can_edit: boolean
+  versions: PersonalTaskArtifactVersion[]
+}

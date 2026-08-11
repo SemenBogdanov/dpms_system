@@ -23,9 +23,18 @@ PersonalTaskEventType = Literal[
     "checkpoint_updated",
     "checkpoint_done",
     "promoted",
+    "artifact_created",
+    "artifact_version_added",
+    "artifact_updated",
+    "artifact_archived",
+    "artifact_restored",
+    "artifact_deleted",
 ]
 PersonalTaskManualEventType = Literal["meeting", "follow_up", "note"]
 PersonalTaskCheckpointStatus = Literal["planned", "in_progress", "waiting", "blocked", "done"]
+PersonalTaskArtifactType = Literal["document", "link", "result"]
+PersonalTaskArtifactStatus = Literal["active", "archived"]
+PersonalTaskArtifactSourceKind = Literal["file", "link"]
 
 
 def _clean_optional(value: str | None) -> str | None:
@@ -285,6 +294,69 @@ class PersonalTaskCheckpointRead(BaseModel):
     sort_order: int
     created_at: datetime
     updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PersonalTaskArtifactUpdate(BaseModel):
+    """Edit artifact metadata or move it into/out of the archive."""
+
+    title: str | None = Field(None, min_length=1, max_length=200)
+    description: str | None = None
+    status: PersonalTaskArtifactStatus | None = None
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def clean_artifact_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Название материала не может быть пустым")
+        return cleaned
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def clean_artifact_description(cls, value: str | None) -> str | None:
+        return _clean_optional(value)
+
+
+class PersonalTaskArtifactVersionRead(BaseModel):
+    """One immutable artifact payload revision."""
+
+    id: UUID
+    artifact_id: UUID
+    version_number: int
+    source_kind: PersonalTaskArtifactSourceKind
+    url: str | None = None
+    original_filename: str | None = None
+    content_type: str | None = None
+    size_bytes: int | None = None
+    sha256: str | None = None
+    change_note: str | None = None
+    created_by_id: UUID | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PersonalTaskArtifactRead(BaseModel):
+    """Artifact metadata together with immutable versions."""
+
+    id: UUID
+    task_id: UUID
+    artifact_type: PersonalTaskArtifactType
+    title: str
+    description: str | None = None
+    status: PersonalTaskArtifactStatus
+    current_version: int
+    created_by_id: UUID | None = None
+    updated_by_id: UUID | None = None
+    archived_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    can_edit: bool
+    versions: list[PersonalTaskArtifactVersionRead] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 

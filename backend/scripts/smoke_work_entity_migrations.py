@@ -269,7 +269,7 @@ async def verify_head_schema(database_url: URL) -> None:
                     text("SELECT version_num FROM alembic_version")
                 )
             ).scalar_one()
-            assert revision == "053_execution_contracts"
+            assert revision == "054_personal_task_artifacts"
             admin_audit_index = (
                 await connection.execute(
                     text(
@@ -297,7 +297,9 @@ async def verify_head_schema(database_url: URL) -> None:
                                 'work_entity_milestones',
                                 'work_entity_schedule_dependencies',
                                 'work_entity_artifacts',
-                                'work_entity_execution_contracts'
+                                'work_entity_execution_contracts',
+                                'personal_task_artifacts',
+                                'personal_task_artifact_versions'
                               )
                             """
                         )
@@ -311,6 +313,8 @@ async def verify_head_schema(database_url: URL) -> None:
                 "work_entity_schedule_dependencies",
                 "work_entity_artifacts",
                 "work_entity_execution_contracts",
+                "personal_task_artifacts",
+                "personal_task_artifact_versions",
             }
             user_columns = set(
                 (
@@ -486,6 +490,32 @@ async def verify_head_schema(database_url: URL) -> None:
             assert acceptance_article.title == "Приемка задач по критериям"
             assert "не означает пропорциональную оплату" in acceptance_article.body
             assert "не более двух раз" in acceptance_article.body
+            artifact_article = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT title, body
+                        FROM knowledge_articles
+                        WHERE slug = 'dokumenty-i-artefakty-lichnoj-zadachi'
+                        """
+                    )
+                )
+            ).one()
+            assert artifact_article.title == "Документы и артефакты личной задачи"
+            assert "версия остается доступной" in artifact_article.body
+            event_type_constraint = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT pg_get_constraintdef(oid)
+                        FROM pg_constraint
+                        WHERE conname = 'ck_personal_task_events_type'
+                        """
+                    )
+                )
+            ).scalar_one()
+            assert "artifact_created" in event_type_constraint
+            assert "artifact_deleted" in event_type_constraint
     finally:
         await engine.dispose()
 
@@ -1115,11 +1145,56 @@ def run() -> None:
             )
         )
 
+        asyncio.run(
+            run_alembic(
+                temporary_url,
+                "downgrade",
+                "053_execution_contracts",
+            )
+        )
+        artifact_article_id = asyncio.run(
+            seed_conflicting_article(
+                temporary_url,
+                "dokumenty-i-artefakty-lichnoj-zadachi",
+            )
+        )
+        asyncio.run(run_alembic(temporary_url, "upgrade", "head"))
+        asyncio.run(
+            verify_conflicting_article(
+                temporary_url,
+                artifact_article_id,
+                "dokumenty-i-artefakty-lichnoj-zadachi",
+            )
+        )
+        asyncio.run(
+            run_alembic(
+                temporary_url,
+                "downgrade",
+                "053_execution_contracts",
+            )
+        )
+        asyncio.run(
+            verify_conflicting_article(
+                temporary_url,
+                artifact_article_id,
+                "dokumenty-i-artefakty-lichnoj-zadachi",
+            )
+        )
+        asyncio.run(run_alembic(temporary_url, "upgrade", "head"))
+        asyncio.run(
+            verify_conflicting_article(
+                temporary_url,
+                artifact_article_id,
+                "dokumenty-i-artefakty-lichnoj-zadachi",
+            )
+        )
+
         print(
             "Work entity migration smoke OK: fresh head, DB constraints, "
             "044 schema restoration, legacy lifecycle normalization, and "
             "task/milestone/dependency/artifact conversion; knowledge article "
-            "conflicts survive acceptance and execution-contract upgrade/downgrade"
+            "conflicts survive acceptance, execution-contract, and personal-task "
+            "artifact upgrade/downgrade"
         )
     finally:
         if created:

@@ -33,6 +33,10 @@ from app.models.quick_note import QuickNote
 from app.models.quick_note_attachment import QuickNoteAttachment
 from app.models.quick_note_share import QuickNoteComment, QuickNoteShare
 from app.models.personal_task import PersonalTask, PersonalTaskCheckpoint, PersonalTaskEvent
+from app.models.personal_task_artifact import (
+    PersonalTaskArtifact,
+    PersonalTaskArtifactVersion,
+)
 from app.models.deadline_tracker import DeadlineTracker
 from app.models.execution_contract import WorkEntityExecutionContract
 from app.models.work_entity import (
@@ -86,6 +90,8 @@ __all__ = [
     "PersonalTask",
     "PersonalTaskEvent",
     "PersonalTaskCheckpoint",
+    "PersonalTaskArtifact",
+    "PersonalTaskArtifactVersion",
     "DeadlineTracker",
     "WorkEntityExecutionContract",
     "WorkEntity",

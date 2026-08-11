@@ -3,13 +3,20 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_, select
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_user, get_db, require_task_workspace_access
 from app.models.deadline_tracker import DeadlineTracker
 from app.models.personal_task import PersonalTask, PersonalTaskCheckpoint, PersonalTaskEvent
+from app.models.personal_task_artifact import (
+    PersonalTaskArtifact,
+    PersonalTaskArtifactVersion,
+    utc_now,
+)
 from app.models.quick_note import QuickNote
 from app.models.task import Task, TaskStatus
 from app.models.user import User
@@ -23,11 +30,23 @@ from app.schemas.personal_task import (
     PersonalTaskEventRead,
     PersonalTaskPromoteRequest,
     PersonalTaskPromotedTaskRead,
+    PersonalTaskArtifactRead,
+    PersonalTaskArtifactUpdate,
+    PersonalTaskArtifactVersionRead,
     PersonalTaskRead,
     PersonalTaskUpdate,
 )
 from app.schemas.task import TaskRead
 from app.services.activity import record_activity_event
+from app.services.attachments import stored_attachment_path
+from app.services.personal_task_artifacts import (
+    add_artifact_version,
+    clean_optional,
+    clean_title,
+    create_artifact,
+    ensure_task_accepts_artifact_changes,
+    remove_version_file,
+)
 from app.services.task_policy import ensure_critical_priority_allowed
 
 router = APIRouter()
@@ -54,6 +73,56 @@ async def _get_owned_task_or_404(
     if not task:
         raise HTTPException(status_code=404, detail="Личная задача не найдена")
     return task
+
+
+async def _get_artifact_or_404(
+    db: AsyncSession,
+    task_id: UUID,
+    artifact_id: UUID,
+    *,
+    for_update: bool = False,
+) -> PersonalTaskArtifact:
+    statement = (
+        select(PersonalTaskArtifact)
+        .options(selectinload(PersonalTaskArtifact.versions))
+        .where(
+            PersonalTaskArtifact.id == artifact_id,
+            PersonalTaskArtifact.task_id == task_id,
+        )
+    )
+    if for_update:
+        statement = statement.with_for_update()
+    artifact = (await db.execute(statement)).scalar_one_or_none()
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Материал не найден")
+    return artifact
+
+
+def _artifact_read(
+    task: PersonalTask,
+    artifact: PersonalTaskArtifact,
+) -> PersonalTaskArtifactRead:
+    versions = sorted(
+        artifact.versions,
+        key=lambda item: item.version_number,
+        reverse=True,
+    )
+    return PersonalTaskArtifactRead(
+        id=artifact.id,
+        task_id=artifact.task_id,
+        artifact_type=artifact.artifact_type,
+        title=artifact.title,
+        description=artifact.description,
+        status=artifact.status,
+        current_version=artifact.current_version,
+        created_by_id=artifact.created_by_id,
+        updated_by_id=artifact.updated_by_id,
+        archived_at=artifact.archived_at,
+        created_at=artifact.created_at,
+        updated_at=artifact.updated_at,
+        can_edit=task.status != "archived",
+        versions=[PersonalTaskArtifactVersionRead.model_validate(item) for item in versions],
+    )
 
 
 async def _ensure_linked_task_exists(db: AsyncSession, task_id: UUID | None) -> None:
@@ -695,6 +764,269 @@ async def delete_personal_task_checkpoint(
     return {"deleted": True, "checkpoint_id": str(checkpoint_id)}
 
 
+@router.get("/{task_id}/artifacts", response_model=list[PersonalTaskArtifactRead])
+async def list_personal_task_artifacts(
+    task_id: UUID,
+    include_archived: bool = Query(True),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List versioned materials inherited from an owned personal task."""
+    task = await _get_owned_task_or_404(db, task_id, user.id)
+    statement = (
+        select(PersonalTaskArtifact)
+        .options(selectinload(PersonalTaskArtifact.versions))
+        .where(PersonalTaskArtifact.task_id == task.id)
+    )
+    if not include_archived:
+        statement = statement.where(PersonalTaskArtifact.status == "active")
+    statement = statement.order_by(
+        (PersonalTaskArtifact.status == "archived").asc(),
+        PersonalTaskArtifact.updated_at.desc(),
+        PersonalTaskArtifact.id.desc(),
+    )
+    artifacts = list((await db.execute(statement)).scalars().all())
+    return [_artifact_read(task, artifact) for artifact in artifacts]
+
+
+@router.post(
+    "/{task_id}/artifacts",
+    response_model=PersonalTaskArtifactRead,
+    status_code=201,
+)
+async def create_personal_task_artifact(
+    task_id: UUID,
+    artifact_type: str = Form(...),
+    title: str = Form(...),
+    description: str | None = Form(None),
+    change_note: str | None = Form(None),
+    url: str | None = Form(None),
+    file: UploadFile | None = File(None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a document, link, or result with immutable version one."""
+    task = await _get_owned_task_or_404(db, task_id, user.id, for_update=True)
+    artifact, version = await create_artifact(
+        db,
+        task=task,
+        user=user,
+        artifact_type=artifact_type,
+        title=title,
+        description=description,
+        change_note=change_note,
+        upload=file,
+        url=url,
+    )
+    try:
+        _add_event(
+            db,
+            task,
+            user,
+            "artifact_created",
+            title=f"Добавлен материал: {artifact.title}",
+            metadata_json={
+                "artifact_id": str(artifact.id),
+                "artifact_type": artifact.artifact_type,
+                "version": version.version_number,
+                "source_kind": version.source_kind,
+                "size_bytes": version.size_bytes,
+                "sha256": version.sha256,
+            },
+        )
+        task.updated_at = utc_now()
+        await db.flush()
+        await db.commit()
+    except Exception:
+        remove_version_file(version)
+        raise
+    return _artifact_read(task, artifact)
+
+
+@router.post(
+    "/{task_id}/artifacts/{artifact_id}/versions",
+    response_model=PersonalTaskArtifactRead,
+    status_code=201,
+)
+async def create_personal_task_artifact_version(
+    task_id: UUID,
+    artifact_id: UUID,
+    change_note: str | None = Form(None),
+    url: str | None = Form(None),
+    file: UploadFile | None = File(None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Append a new immutable file or link revision."""
+    task = await _get_owned_task_or_404(db, task_id, user.id, for_update=True)
+    artifact = await _get_artifact_or_404(db, task.id, artifact_id, for_update=True)
+    version = await add_artifact_version(
+        db,
+        task=task,
+        artifact=artifact,
+        user=user,
+        change_note=change_note,
+        upload=file,
+        url=url,
+    )
+    try:
+        _add_event(
+            db,
+            task,
+            user,
+            "artifact_version_added",
+            title=f"Новая версия v{version.version_number}: {artifact.title}",
+            metadata_json={
+                "artifact_id": str(artifact.id),
+                "artifact_type": artifact.artifact_type,
+                "version": version.version_number,
+                "source_kind": version.source_kind,
+                "size_bytes": version.size_bytes,
+                "sha256": version.sha256,
+            },
+        )
+        task.updated_at = utc_now()
+        await db.flush()
+        await db.commit()
+    except Exception:
+        remove_version_file(version)
+        raise
+    return _artifact_read(task, artifact)
+
+
+@router.patch(
+    "/{task_id}/artifacts/{artifact_id}",
+    response_model=PersonalTaskArtifactRead,
+)
+async def update_personal_task_artifact(
+    task_id: UUID,
+    artifact_id: UUID,
+    body: PersonalTaskArtifactUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit metadata or explicitly archive/restore one material."""
+    task = await _get_owned_task_or_404(db, task_id, user.id, for_update=True)
+    ensure_task_accepts_artifact_changes(task)
+    artifact = await _get_artifact_or_404(db, task.id, artifact_id, for_update=True)
+    changes = body.model_dump(exclude_unset=True)
+    if "title" in changes:
+        if changes["title"] is None:
+            raise HTTPException(status_code=422, detail="Название материала нельзя очистить")
+        changes["title"] = clean_title(changes["title"])
+    if "description" in changes:
+        changes["description"] = clean_optional(changes["description"])
+    if "status" in changes and changes["status"] is None:
+        raise HTTPException(status_code=422, detail="Статус материала нельзя очистить")
+
+    before = {field: getattr(artifact, field) for field in changes}
+    actual_changes = {
+        field: value for field, value in changes.items() if before[field] != value
+    }
+    if not actual_changes:
+        return _artifact_read(task, artifact)
+    for field, value in actual_changes.items():
+        setattr(artifact, field, value)
+    if "status" in actual_changes:
+        artifact.archived_at = utc_now() if artifact.status == "archived" else None
+    artifact.updated_by_id = user.id
+    artifact.updated_at = utc_now()
+    task.updated_at = utc_now()
+
+    event_type = "artifact_updated"
+    if before.get("status") != artifact.status:
+        event_type = "artifact_archived" if artifact.status == "archived" else "artifact_restored"
+    _add_event(
+        db,
+        task,
+        user,
+        event_type,
+        title=(
+            f"Материал архивирован: {artifact.title}"
+            if event_type == "artifact_archived"
+            else f"Материал восстановлен: {artifact.title}"
+            if event_type == "artifact_restored"
+            else f"Материал обновлен: {artifact.title}"
+        ),
+        metadata_json={
+            "artifact_id": str(artifact.id),
+            "artifact_type": artifact.artifact_type,
+            "fields": sorted(actual_changes),
+        },
+    )
+    await db.flush()
+    return _artifact_read(task, artifact)
+
+
+@router.get("/{task_id}/artifacts/{artifact_id}/versions/{version_id}/content")
+async def download_personal_task_artifact_version(
+    task_id: UUID,
+    artifact_id: UUID,
+    version_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a file revision after owner access and path containment checks."""
+    task = await _get_owned_task_or_404(db, task_id, user.id)
+    artifact = await _get_artifact_or_404(db, task.id, artifact_id)
+    version = next((item for item in artifact.versions if item.id == version_id), None)
+    if version is None:
+        raise HTTPException(status_code=404, detail="Версия материала не найдена")
+    if version.source_kind != "file" or not version.stored_filename:
+        raise HTTPException(status_code=409, detail="Эта версия является ссылкой")
+    file_path = stored_attachment_path(version.stored_filename)
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Файл материала не найден")
+    return FileResponse(
+        str(file_path),
+        media_type=version.content_type or "application/octet-stream",
+        filename=version.original_filename or "artifact",
+        content_disposition_type="attachment",
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox",
+        },
+    )
+
+
+@router.delete("/{task_id}/artifacts/{artifact_id}")
+async def delete_personal_task_artifact(
+    task_id: UUID,
+    artifact_id: UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently delete only an archived material from an archived task."""
+    task = await _get_owned_task_or_404(db, task_id, user.id, for_update=True)
+    artifact = await _get_artifact_or_404(db, task.id, artifact_id, for_update=True)
+    if task.status != "archived" or artifact.status != "archived":
+        raise HTTPException(
+            status_code=409,
+            detail="Для удаления сначала архивируйте материал и личную задачу",
+        )
+    versions = list(artifact.versions)
+    _add_event(
+        db,
+        task,
+        user,
+        "artifact_deleted",
+        title=f"Материал удален: {artifact.title}",
+        metadata_json={
+            "artifact_id": str(artifact.id),
+            "artifact_type": artifact.artifact_type,
+            "versions_count": len(versions),
+        },
+    )
+    task.updated_at = utc_now()
+    await db.delete(artifact)
+    await db.flush()
+    await db.commit()
+    for version in versions:
+        remove_version_file(version)
+    return {"deleted": True, "artifact_id": str(artifact_id)}
+
+
 @router.post("/{task_id}/promote", response_model=TaskRead)
 async def promote_personal_task(
     task_id: UUID,
@@ -780,6 +1112,21 @@ async def delete_personal_task(
         raise HTTPException(
             status_code=409,
             detail="Сначала перенесите задачу в архив",
+        )
+    artifacts_count = int(
+        await db.scalar(
+            select(func.count(PersonalTaskArtifact.id)).where(
+                PersonalTaskArtifact.task_id == task.id
+            )
+        )
+        or 0
+    )
+    if artifacts_count:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "В задаче остались материалы. Архивируйте и удалите их перед удалением задачи."
+            ),
         )
     await db.delete(task)
     await db.flush()

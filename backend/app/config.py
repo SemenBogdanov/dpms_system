@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "/app/uploads"
     MAX_TASK_ATTACHMENT_BYTES: int = 10 * 1024 * 1024
     MAX_TASK_ATTACHMENTS: int = 5
+    MAX_PERSONAL_TASK_ARTIFACTS: int = 20
+    MAX_PERSONAL_TASK_ARTIFACT_VERSIONS: int = 20
 
 
 settings = Settings()

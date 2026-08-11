@@ -1,6 +1,8 @@
-"""Task attachment storage and validation."""
+"""Shared attachment storage and signature-based validation."""
+from io import BytesIO
 from pathlib import Path
 import uuid
+from zipfile import BadZipFile, ZipFile
 
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import func, select
@@ -20,10 +22,24 @@ _IMAGE_EXTENSIONS = {
     "image/gif": ".gif",
     "image/webp": ".webp",
 }
-_DOCUMENT_EXTENSIONS = {
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".xls": "application/vnd.ms-excel",
+_OOXML_EXTENSIONS = {
+    ".docx": (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "word/",
+    ),
+    ".xlsx": (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "xl/",
+    ),
+    ".pptx": (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "ppt/",
+    ),
+}
+_TEXT_EXTENSIONS = {
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".csv": "text/csv",
 }
 _ATTACHABLE_STATUSES = {TaskStatus.new, TaskStatus.estimated, TaskStatus.in_queue}
 
@@ -40,25 +56,79 @@ def _detect_image_type(data: bytes) -> str | None:
     return None
 
 
+def _valid_ooxml_package(data: bytes, required_prefix: str) -> bool:
+    try:
+        with ZipFile(BytesIO(data)) as archive:
+            entries = archive.infolist()
+    except (BadZipFile, OSError, ValueError):
+        return False
+    if not entries or len(entries) > 4096:
+        return False
+    if any(entry.flag_bits & 0x1 for entry in entries):
+        return False
+    if sum(entry.file_size for entry in entries) > 256 * 1024 * 1024:
+        return False
+    names = [entry.filename for entry in entries]
+    return "[Content_Types].xml" in names and any(
+        name.startswith(required_prefix) for name in names
+    )
+
+
 def _detect_document_type(filename: str, data: bytes) -> tuple[str, str] | None:
     suffix = Path(filename).suffix.lower()
-    if suffix not in _DOCUMENT_EXTENSIONS:
-        return None
-    if suffix in {".docx", ".xlsx"} and not data.startswith(b"PK\x03\x04"):
-        return None
-    if suffix == ".xls" and not data.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
-        return None
-    return _DOCUMENT_EXTENSIONS[suffix], suffix
+    if suffix == ".pdf":
+        return ("application/pdf", suffix) if data.startswith(b"%PDF-") else None
+    if suffix == ".xls":
+        ole_signature = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+        return ("application/vnd.ms-excel", suffix) if data.startswith(ole_signature) else None
+    if suffix in _OOXML_EXTENSIONS:
+        content_type, required_prefix = _OOXML_EXTENSIONS[suffix]
+        return (content_type, suffix) if _valid_ooxml_package(data, required_prefix) else None
+    if suffix in _TEXT_EXTENSIONS:
+        if b"\x00" in data:
+            return None
+        try:
+            data.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return None
+        return _TEXT_EXTENSIONS[suffix], suffix
+    return None
 
 
 def _uploads_root() -> Path:
     return Path(settings.UPLOAD_DIR).expanduser().resolve()
 
 
-def attachment_path(attachment: TaskAttachment | QuickNoteAttachment) -> Path:
-    return _uploads_root() / attachment.stored_filename
+def stored_attachment_path(stored_filename: str) -> Path:
+    """Resolve one generated storage key and reject paths outside UPLOAD_DIR."""
+    root = _uploads_root()
+    candidate = (root / stored_filename).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="Attachment file not found") from error
+    return candidate
 
-async def _read_attachment_upload(upload: UploadFile) -> tuple[str, str, str, bytes]:
+
+def attachment_path(attachment: TaskAttachment | QuickNoteAttachment) -> Path:
+    return stored_attachment_path(attachment.stored_filename)
+
+
+def write_attachment_bytes(stored_filename: str, data: bytes) -> Path:
+    file_path = stored_attachment_path(stored_filename)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = file_path.with_name(
+        f".{file_path.name}.{uuid.uuid4().hex}.tmp"
+    )
+    try:
+        temporary_path.write_bytes(data)
+        temporary_path.replace(file_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return file_path
+
+
+async def read_attachment_upload(upload: UploadFile) -> tuple[str, str, str, bytes]:
     data = await upload.read(settings.MAX_TASK_ATTACHMENT_BYTES + 1)
     if not data:
         raise HTTPException(status_code=400, detail="Файл пустой")
@@ -76,7 +146,10 @@ async def _read_attachment_upload(upload: UploadFile) -> tuple[str, str, str, by
     if content_type is None or extension is None:
         raise HTTPException(
             status_code=400,
-            detail="Поддерживаются PNG, JPG, WEBP, GIF, DOCX, XLS и XLSX",
+            detail=(
+                "Поддерживаются PNG, JPG, WEBP, GIF, PDF, DOCX, XLS, XLSX, "
+                "PPTX, TXT, MD и CSV"
+            ),
         )
     return original_filename, content_type, extension, data
 
@@ -107,12 +180,10 @@ async def save_task_attachment(
             detail=f"К задаче можно прикрепить не более {settings.MAX_TASK_ATTACHMENTS} файлов",
         )
 
-    original_filename, content_type, extension, data = await _read_attachment_upload(upload)
+    original_filename, content_type, extension, data = await read_attachment_upload(upload)
 
     stored_filename = f"{task.id}/{uuid.uuid4()}{extension}"
-    file_path = _uploads_root() / stored_filename
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_bytes(data)
+    file_path = write_attachment_bytes(stored_filename, data)
 
     attachment = TaskAttachment(
         task_id=task.id,
@@ -148,11 +219,9 @@ async def save_quick_note_attachment(
             detail=f"К заметке можно прикрепить не более {settings.MAX_TASK_ATTACHMENTS} файлов",
         )
 
-    original_filename, content_type, extension, data = await _read_attachment_upload(upload)
+    original_filename, content_type, extension, data = await read_attachment_upload(upload)
     stored_filename = f"quick-notes/{note.id}/{uuid.uuid4()}{extension}"
-    file_path = _uploads_root() / stored_filename
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_bytes(data)
+    file_path = write_attachment_bytes(stored_filename, data)
 
     attachment = QuickNoteAttachment(
         note_id=note.id,

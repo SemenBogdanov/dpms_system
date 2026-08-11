@@ -52,6 +52,7 @@ import type {
 } from '@/api/types'
 import { cn } from '@/lib/utils'
 import { WorkEntityBacklinks } from '@/components/WorkEntityBacklinks'
+import { PersonalTaskArtifactsPanel } from '@/components/PersonalTaskArtifactsPanel'
 import { preventBackdropDismiss, useProtectedModal } from '@/hooks/useProtectedModal'
 
 type TaskFilter = PersonalTaskStatus | 'active' | 'all'
@@ -1693,6 +1694,8 @@ export function PersonalTasksPage() {
                         )}
                       </section>
                     </div>
+
+                    <PersonalTaskArtifactsPanel task={task} onChanged={() => void loadTaskDetails(task.id)} />
 
                     {task.tags.length > 0 && (
                       <div className="flex flex-wrap gap-2">

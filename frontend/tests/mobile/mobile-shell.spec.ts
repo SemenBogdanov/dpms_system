@@ -72,6 +72,72 @@ async function installApiMock(
 }
 
 const portfolioProjectId = '22222222-2222-4222-8222-222222222222'
+const personalTaskId = '55555555-5555-4555-8555-555555555555'
+
+const personalTask = {
+  id: personalTaskId,
+  task_number: 1058,
+  task_key: 'PT-1058',
+  owner_id: testUser.id,
+  title: 'Подготовить комплект материалов',
+  description: 'Собрать документы и итоговый результат.',
+  notes: null,
+  status: 'in_progress',
+  priority: 'high',
+  category: 'work',
+  project: 'Демонстрация ID 58',
+  context: null,
+  responsible: 'Мобильный тест',
+  tags: ['demo'],
+  acceptance_criteria: 'Комплект доступен в задаче и имеет историю версий.',
+  next_step: 'Добавить итоговую презентацию',
+  next_step_at: '2026-08-12T09:00:00Z',
+  start_at: '2026-08-10T09:00:00Z',
+  due_at: '2026-08-14T18:00:00Z',
+  waiting_for: null,
+  blocked_reason: null,
+  impact: 4,
+  effort: 2,
+  linked_task_id: null,
+  source_quick_note_id: null,
+  promoted_task_id: null,
+  promoted_at: null,
+  promoted_task: null,
+  created_at: '2026-08-10T09:00:00Z',
+  updated_at: '2026-08-10T09:00:00Z',
+}
+
+const personalTaskArtifact = {
+  id: '66666666-6666-4666-8666-666666666666',
+  task_id: personalTaskId,
+  artifact_type: 'document',
+  title: 'Паспорт проекта',
+  description: 'Согласованная рабочая версия',
+  status: 'active',
+  current_version: 1,
+  created_by_id: testUser.id,
+  updated_by_id: testUser.id,
+  archived_at: null,
+  created_at: '2026-08-10T10:00:00Z',
+  updated_at: '2026-08-10T10:00:00Z',
+  can_edit: true,
+  versions: [
+    {
+      id: '77777777-7777-4777-8777-777777777777',
+      artifact_id: '66666666-6666-4666-8666-666666666666',
+      version_number: 1,
+      source_kind: 'file',
+      url: null,
+      original_filename: 'passport.pdf',
+      content_type: 'application/pdf',
+      size_bytes: 8192,
+      sha256: 'a'.repeat(64),
+      change_note: 'Первая версия',
+      created_by_id: testUser.id,
+      created_at: '2026-08-10T10:00:00Z',
+    },
+  ],
+}
 
 function portfolioEntity(overrides: Record<string, unknown>) {
   return {
@@ -223,6 +289,42 @@ test('core mobile routes load through lazy chunks while the shell stays visible'
   await expect(page.getByRole('heading', { name: 'Трекер сроков' })).toBeVisible()
   await assertNoHorizontalOverflow(page)
   expect(pageErrors).toEqual([])
+})
+
+test('personal task materials remain usable and protected on mobile', async ({ page }) => {
+  await installApiMock(page, true, {
+    '/api/personal-tasks': [personalTask],
+    '/api/personal-tasks/deadlines': [],
+    '/api/deadline-trackers': [],
+    [`/api/personal-tasks/${personalTaskId}/events`]: [],
+    [`/api/personal-tasks/${personalTaskId}/checkpoints`]: [],
+    [`/api/personal-tasks/${personalTaskId}/artifacts`]: [personalTaskArtifact],
+  })
+
+  await page.goto('/personal-tasks')
+  await page.getByRole('button', { name: personalTask.title }).click()
+  const materialsHeading = page.getByRole('heading', { name: 'Материалы' })
+  await expect(materialsHeading).toBeVisible()
+  await expect(page.getByText('Паспорт проекта', { exact: true })).toBeVisible()
+  await assertNoHorizontalOverflow(page)
+
+  await page.getByRole('button', { name: 'Добавить материал' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.getByRole('heading', { name: 'Новый материал' })).toBeVisible()
+  await dialog.getByLabel('Тип').selectOption('result')
+  await dialog.getByRole('button', { name: 'Ссылка' }).click()
+  await dialog.getByLabel('Название').fill('Ссылка на итоговый результат')
+  const urlInput = dialog.getByRole('textbox', { name: 'URL' })
+  await urlInput.fill('https://example.com/result')
+
+  await dialog.click({ position: { x: 2, y: 2 } })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByLabel('Название')).toHaveValue('Ссылка на итоговый результат')
+  await expect(urlInput).toHaveValue('https://example.com/result')
+  await assertNoHorizontalOverflow(page)
+
+  await dialog.getByRole('button', { name: 'Отмена' }).click()
+  await expect(dialog).toHaveCount(0)
 })
 
 test('project portfolio exposes lifecycle and escalation status before opening a project', async ({ page }) => {
