@@ -23,12 +23,14 @@ type WorkEntityBacklinksProps = {
   targetType: Exclude<WorkEntityTargetType, 'entity'>
   targetId: string
   className?: string
+  canManage?: boolean
 }
 
 export function WorkEntityBacklinks({
   targetType,
   targetId,
   className,
+  canManage = true,
 }: WorkEntityBacklinksProps) {
   const [links, setLinks] = useState<WorkEntityReverseLink[]>([])
   const [entities, setEntities] = useState<WorkEntity[]>([])
@@ -125,16 +127,18 @@ export function WorkEntityBacklinks({
             </span>
           )}
         </div>
-        <button
-          type="button"
-          onClick={() => setEditing((value) => !value)}
-          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:border-primary/40 hover:text-primary disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
-          title={editing ? 'Закрыть добавление связи' : 'Добавить в проект или цель'}
-          aria-label={editing ? 'Закрыть добавление связи' : 'Добавить в проект или цель'}
-          disabled={loading}
-        >
-          {editing ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-        </button>
+        {canManage && (
+          <button
+            type="button"
+            onClick={() => setEditing((value) => !value)}
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:border-primary/40 hover:text-primary disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+            title={editing ? 'Закрыть добавление связи' : 'Добавить в проект или цель'}
+            aria-label={editing ? 'Закрыть добавление связи' : 'Добавить в проект или цель'}
+            disabled={loading}
+          >
+            {editing ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -157,7 +161,7 @@ export function WorkEntityBacklinks({
                 <Link2 className="h-3.5 w-3.5 shrink-0 text-slate-400" />
                 <span className="truncate">{link.entity_title}</span>
               </Link>
-              {(link.access_role === 'owner' || link.access_role === 'editor') && (
+              {canManage && (link.access_role === 'owner' || link.access_role === 'editor') && (
                 <button
                   type="button"
                   onClick={() => void removeLink(link)}
@@ -176,7 +180,7 @@ export function WorkEntityBacklinks({
         <p className="py-1 text-xs text-slate-500 dark:text-slate-400">Объект пока не связан с проектами или целями.</p>
       )}
 
-      {editing && (
+      {canManage && editing && (
         <div className="mt-3 grid gap-2 border-t border-slate-200 pt-3 sm:grid-cols-[minmax(0,1fr)_150px_auto] dark:border-slate-700">
           <label className="min-w-0">
             <span className="sr-only">Проект или цель</span>

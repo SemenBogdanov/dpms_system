@@ -38,11 +38,18 @@ import type {
 } from '@/api/types'
 import { cn } from '@/lib/utils'
 import { WorkEntityBacklinks } from '@/components/WorkEntityBacklinks'
+import { useProtectedModal, preventBackdropDismiss } from '@/hooks/useProtectedModal'
+import {
+  useQuickNoteLive,
+  type LiveStatus,
+  type QuickNoteLiveEvent,
+} from '@/lib/quickNoteLive'
 
 type NoteFilter = QuickNoteStatus | 'all'
 type NoteTab = 'mine' | 'shared'
 type ViewMode = 'preview' | 'list'
 type DetailState = { note: QuickNote; share?: QuickNoteShare } | null
+type LiveConflict = { message: string } | null
 
 const emptyForm = {
   title: '',
@@ -50,11 +57,28 @@ const emptyForm = {
   context: '',
   tagsText: '',
 }
+type NoteForm = typeof emptyForm
 
 const statusLabel: Record<QuickNoteStatus, string> = {
   draft: 'Черновик',
   processed: 'Разобрано',
   archived: 'Архив',
+}
+
+const liveStatusLabel: Record<LiveStatus, string> = {
+  idle: '',
+  connecting: 'Синхронизация…',
+  live: 'В эфире',
+  reconnecting: 'Переподключение…',
+  offline: 'Нет связи',
+}
+
+const liveStatusDot: Record<LiveStatus, string> = {
+  idle: 'bg-transparent',
+  connecting: 'bg-amber-400',
+  live: 'bg-emerald-500',
+  reconnecting: 'bg-amber-400',
+  offline: 'bg-red-500',
 }
 
 const filterOptions: Array<{ value: NoteFilter; label: string }> = [
@@ -126,6 +150,18 @@ function isSharedQuickNote(value: QuickNote | SharedQuickNote): value is SharedQ
   return Boolean((value as SharedQuickNote).share && (value as SharedQuickNote).note)
 }
 
+function formDirtyFor(form: NoteForm, editing: QuickNote | null): boolean {
+  if (!editing) {
+    return Boolean(form.title.trim() || form.body.trim() || form.context.trim() || form.tagsText.trim())
+  }
+  return (
+    form.title !== editing.title ||
+    form.body !== editing.body ||
+    form.context !== (editing.context ?? '') ||
+    form.tagsText !== tagsToText(editing.tags)
+  )
+}
+
 export function QuickNotesPage() {
   const navigate = useNavigate()
   const { noteId } = useParams<{ noteId: string }>()
@@ -154,7 +190,11 @@ export function QuickNotesPage() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [detail, setDetail] = useState<DetailState>(null)
   const [editing, setEditing] = useState<QuickNote | null>(null)
-  const [form, setForm] = useState(emptyForm)
+  const [form, setForm] = useState<NoteForm>(emptyForm)
+  const [remoteUpdated, setRemoteUpdated] = useState(false)
+  const [conflict, setConflict] = useState<LiveConflict>(null)
+
+  const notePanelRef = useProtectedModal<HTMLDivElement>(noteModalOpen)
 
   const loadNotes = useCallback(async () => {
     setLoading(true)
@@ -192,11 +232,44 @@ export function QuickNotesPage() {
     }
   }, [])
 
+  const silentReloadList = useCallback(async () => {
+    try {
+      const params: Record<string, string> = {}
+      if (filter !== 'all') params.status = filter
+      if (search.trim()) params.search = search.trim()
+      const data = await api.get<QuickNote[]>('/api/quick-notes', params)
+      setNotes(data)
+    } catch {
+      /* silent realtime resync */
+    }
+  }, [filter, search])
+
+  const silentReloadShared = useCallback(async () => {
+    try {
+      const data = await api.get<SharedQuickNote[]>('/api/quick-notes/shared')
+      setSharedNotes(data)
+    } catch {
+      /* silent realtime resync */
+    }
+  }, [])
+
   const loadNoteDetail = useCallback(async (id: string) => {
     setDetailLoading(true)
     try {
       const data = await api.get<QuickNote | SharedQuickNote>(`/api/quick-notes/${id}`)
-      setDetail(isSharedQuickNote(data) ? { note: data.note, share: data.share } : { note: data })
+      setDetail((current) => {
+        const next = isSharedQuickNote(data)
+          ? { note: data.note, share: data.share }
+          : { note: data }
+        if (
+          current
+          && current.note.id === next.note.id
+          && current.note.revision > next.note.revision
+        ) {
+          return current
+        }
+        return next
+      })
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка загрузки заметки')
       navigate('/quick-notes', { replace: true })
@@ -204,6 +277,33 @@ export function QuickNotesPage() {
       setDetailLoading(false)
     }
   }, [navigate])
+
+  const silentSyncSlices = useCallback(async (id: string) => {
+    try {
+      const data = await api.get<QuickNote | SharedQuickNote>(`/api/quick-notes/${id}`)
+      setDetail(isSharedQuickNote(data) ? { note: data.note, share: data.share } : { note: data })
+    } catch {
+      /* silent realtime resync */
+    }
+    try {
+      const data = await api.get<QuickNoteComment[]>(`/api/quick-notes/${id}/comments`)
+      setCommentsByNote((current) => ({ ...current, [id]: data }))
+    } catch {
+      /* silent realtime resync */
+    }
+    try {
+      const data = await api.get<QuickNoteAttachment[]>(`/api/quick-notes/${id}/attachments`)
+      setAttachmentsByNote((current) => ({ ...current, [id]: data }))
+    } catch {
+      /* silent realtime resync */
+    }
+    try {
+      const data = await api.get<QuickNoteShare[]>(`/api/quick-notes/${id}/shares`)
+      setSharesByNote((current) => ({ ...current, [id]: data }))
+    } catch {
+      /* silent realtime resync */
+    }
+  }, [])
 
   const loadNoteShares = useCallback(async (noteId: string) => {
     try {
@@ -243,6 +343,8 @@ export function QuickNotesPage() {
 
   useEffect(() => {
     if (noteId) {
+      setRemoteUpdated(false)
+      setConflict(null)
       void loadNoteDetail(noteId)
     } else {
       setDetail(null)
@@ -251,12 +353,53 @@ export function QuickNotesPage() {
     }
   }, [loadNoteDetail, noteId])
 
+  const detailNoteId = detail?.note.id
+  const detailIsShared = Boolean(detail?.share)
+
   useEffect(() => {
-    if (!detail) return
-    void loadComments(detail.note.id)
-    void loadAttachments(detail.note.id)
-    if (!detail.share) void loadNoteShares(detail.note.id)
-  }, [detail, loadAttachments, loadComments, loadNoteShares])
+    if (!detailNoteId) return
+    void loadComments(detailNoteId)
+    void loadAttachments(detailNoteId)
+    if (!detailIsShared) void loadNoteShares(detailNoteId)
+  }, [detailIsShared, detailNoteId, loadAttachments, loadComments, loadNoteShares])
+
+  const { status: liveStatus, activeUsers } = useQuickNoteLive(noteId, {
+    onReady: () => {
+      if (noteId) {
+        void silentSyncSlices(noteId)
+        void silentReloadList()
+        void silentReloadShared()
+      }
+    },
+    onResync: (event: QuickNoteLiveEvent) => {
+      if (
+        event.type === 'note.updated'
+        && noteModalOpen
+        && editing
+        && !busy
+        && formDirtyFor(form, editing)
+      ) {
+        setRemoteUpdated(true)
+      }
+      if (event.note_id) {
+        void silentSyncSlices(event.note_id)
+        void silentReloadList()
+        void silentReloadShared()
+      }
+    },
+    onDeleted: () => {
+      toast('Заметка удалена')
+      navigate('/quick-notes', { replace: true })
+    },
+    onRevoked: () => {
+      if (detail?.share) {
+        toast.error('Доступ к заметке закрыт')
+        navigate('/quick-notes', { replace: true })
+      } else {
+        void silentSyncSlices(noteId ?? '')
+      }
+    },
+  })
 
   const acceptedContacts = useMemo(
     () => contacts.filter((contact) => contact.status === 'accepted'),
@@ -272,9 +415,13 @@ export function QuickNotesPage() {
     }
   }, [activeTab, notes, sharedNotes])
 
+  const isFormDirty = useCallback(() => formDirtyFor(form, editing), [form, editing])
+
   const openCreate = () => {
     setEditing(null)
     setForm(emptyForm)
+    setRemoteUpdated(false)
+    setConflict(null)
     setNoteModalOpen(true)
   }
 
@@ -286,13 +433,37 @@ export function QuickNotesPage() {
       context: note.context ?? '',
       tagsText: tagsToText(note.tags),
     })
+    setRemoteUpdated(false)
+    setConflict(null)
     setNoteModalOpen(true)
   }
 
-  const closeNoteModal = () => {
+  const forceCloseNoteModal = () => {
     setNoteModalOpen(false)
     setEditing(null)
     setForm(emptyForm)
+    setRemoteUpdated(false)
+    setConflict(null)
+  }
+
+  const confirmDiscardOrClose = () => {
+    if (isFormDirty()) {
+      if (!window.confirm('Есть несохранённые изменения. Закрыть без сохранения?')) return
+    }
+    forceCloseNoteModal()
+  }
+
+  const loadFreshVersion = async () => {
+    if (!editing) return
+    if (!window.confirm('Загрузить актуальную версию? Несохранённые изменения будут заменены.')) return
+    try {
+      const data = await api.get<QuickNote | SharedQuickNote>(`/api/quick-notes/${editing.id}`)
+      const fresh = isSharedQuickNote(data) ? data.note : data
+      openEdit(fresh)
+      toast.success('Загружена актуальная версия')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка загрузки версии')
+    }
   }
 
   const handleSave = async () => {
@@ -308,9 +479,12 @@ export function QuickNotesPage() {
           body: form.body,
           context: form.context.trim() || null,
           tags: parseTags(form.tagsText),
+          base_revision: editing.revision,
         }
         const updated = await api.patch<QuickNote>(`/api/quick-notes/${editing.id}`, payload)
-        setDetail((current) => current && current.note.id === updated.id ? { ...current, note: updated } : current)
+        setDetail((current) => (current && current.note.id === updated.id ? { ...current, note: updated } : current))
+        setRemoteUpdated(false)
+        setConflict(null)
         toast.success('Заметка сохранена')
       } else {
         await api.post<QuickNote>('/api/quick-notes', {
@@ -321,10 +495,19 @@ export function QuickNotesPage() {
         } satisfies QuickNoteCreate)
         toast.success('Заметка создана')
       }
-      closeNoteModal()
+      forceCloseNoteModal()
       await loadNotes()
+      await silentReloadShared()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка сохранения')
+      const message = e instanceof Error ? e.message : 'Ошибка сохранения'
+      const isNetwork = e instanceof Error && e.name === 'ApiUnavailableError'
+      const looksConflict = /устарел|конфликт|conflict|409|версия/i.test(message)
+      if (looksConflict || (remoteUpdated && !isNetwork)) {
+        setConflict({ message: message || 'Версия заметки устарела. Загрузите актуальную версию.' })
+        toast.error('Версия устарела — заметка изменена с другого устройства')
+      } else {
+        toast.error(message)
+      }
     } finally {
       setBusy(false)
     }
@@ -332,11 +515,20 @@ export function QuickNotesPage() {
 
   const updateStatus = async (note: QuickNote, status: QuickNoteStatus) => {
     try {
-      const updated = await api.patch<QuickNote>(`/api/quick-notes/${note.id}`, { status })
-      setDetail((current) => current && current.note.id === updated.id ? { ...current, note: updated } : current)
+      const updated = await api.patch<QuickNote>(`/api/quick-notes/${note.id}`, {
+        status,
+        base_revision: note.revision,
+      })
+      setDetail((current) => (current && current.note.id === updated.id ? { ...current, note: updated } : current))
       await loadNotes()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка статуса')
+      const message = e instanceof Error ? e.message : 'Ошибка статуса'
+      if (/устарел|конфликт|conflict|409|версия/i.test(message)) {
+        toast.error('Версия устарела — обновите заметку')
+        if (noteId) void loadNoteDetail(noteId)
+      } else {
+        toast.error(message)
+      }
     }
   }
 
@@ -419,20 +611,17 @@ export function QuickNotesPage() {
       await loadNoteShares(noteId)
       toast.success('Доступ закрыт')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка закрытия доступа')
+      toast.error(e instanceof Error ? e.message : 'Ошибка отзыва доступа')
     }
   }
 
   const sendComment = async (noteId: string) => {
-    const body = commentDrafts[noteId]?.trim()
-    if (!body) {
-      toast.error('Введите текст комментария')
-      return
-    }
+    const draft = commentDrafts[noteId] ?? ''
     const replyTo = replyToByNote[noteId]
+    if (!draft.trim()) return
     try {
       await api.post<QuickNoteComment>(`/api/quick-notes/${noteId}/comments`, {
-        body,
+        body: draft.trim(),
         parent_id: replyTo?.id ?? null,
       })
       setCommentDrafts((current) => ({ ...current, [noteId]: '' }))
@@ -493,9 +682,6 @@ export function QuickNotesPage() {
             <MessageSquare className="h-4 w-4 text-primary" />
             Обсуждение
           </div>
-          <button type="button" onClick={() => void loadComments(noteId)} className="text-xs font-medium text-primary hover:underline">
-            обновить
-          </button>
         </div>
         <div className="mt-3 max-h-[46vh] space-y-2 overflow-auto pr-1">
           {comments.length === 0 ? (
@@ -544,7 +730,7 @@ export function QuickNotesPage() {
           value={draft}
           onChange={(event) => setCommentDrafts((current) => ({ ...current, [noteId]: event.target.value }))}
           rows={3}
-          className="mt-3 min-h-24 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+          className="mt-3 min-h-24 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-base outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
           placeholder="Комментарий к заметке"
         />
         <div className="mt-2 flex justify-end">
@@ -574,10 +760,8 @@ export function QuickNotesPage() {
             <Users className="h-4 w-4 text-primary" />
             Доступ
           </div>
-          <button type="button" onClick={() => void loadNoteShares(note.id)} className="text-xs font-medium text-primary hover:underline">
-            обновить
-          </button>
         </div>
+        <p className="mt-2 text-xs text-slate-500">Получатели могут читать заметку и оставлять комментарии.</p>
         {acceptedContacts.length === 0 ? (
           <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-500">
             Добавьте контакты в разделе <Link className="font-medium text-primary hover:underline" to="/contacts">Контакты</Link>.
@@ -751,6 +935,24 @@ export function QuickNotesPage() {
 
   const detailNote = detail?.note
   const detailIsOwner = Boolean(detail && !detail.share)
+  const showEditorWarning = remoteUpdated || conflict !== null
+
+  const renderLiveStatus = () => {
+    if (!noteId) return null
+    const label = liveStatusLabel[liveStatus]
+    if (!label) return null
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-600"
+        aria-label={`Статус: ${label}${activeUsers > 0 ? `, активных: ${activeUsers}` : ''}`}
+        role="status"
+      >
+        <span className={cn('inline-block h-2 w-2 rounded-full', liveStatusDot[liveStatus])} aria-hidden="true" />
+        {label}
+        {activeUsers > 0 && <span className="text-slate-400">· {activeUsers} онлайн</span>}
+      </span>
+    )
+  }
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
@@ -873,23 +1075,43 @@ export function QuickNotesPage() {
       )}
 
       {noteModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-xl border border-slate-200 bg-white p-4 shadow-2xl">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+          onPointerDown={preventBackdropDismiss}
+        >
+          <div ref={notePanelRef} tabIndex={-1} className="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-xl border border-slate-200 bg-white p-4 shadow-2xl outline-none">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-base font-semibold text-slate-900">
                 <FileText className="h-5 w-5 text-primary" />
                 {editing ? 'Редактирование заметки' : 'Новая заметка'}
               </div>
-              <button type="button" onClick={closeNoteModal} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50" aria-label="Закрыть окно заметки">
+              <button type="button" onClick={confirmDiscardOrClose} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50" aria-label="Закрыть окно заметки">
                 <X className="h-4 w-4" />
               </button>
             </div>
+            {showEditorWarning && (
+              <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800" role="alert">
+                <div className="font-medium">
+                  {conflict ? 'Версия устарела' : 'Заметка обновлена с другого устройства'}
+                </div>
+                <div className="mt-0.5 text-xs text-amber-700">
+                  {conflict?.message ?? 'В другой вкладке или на другом устройстве уже сохранена новая версия. Ваш текст сохранён локально.'}
+                </div>
+                <button
+                  type="button"
+                  onClick={loadFreshVersion}
+                  className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-700"
+                >
+                  Загрузить актуальную версию
+                </button>
+              </div>
+            )}
             <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_180px]">
               <input
                 type="text"
                 value={form.context}
                 onChange={(event) => setForm((current) => ({ ...current, context: event.target.value }))}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-base outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
                 placeholder="Контекст"
                 maxLength={160}
               />
@@ -897,7 +1119,7 @@ export function QuickNotesPage() {
                 type="text"
                 value={form.tagsText}
                 onChange={(event) => setForm((current) => ({ ...current, tagsText: event.target.value }))}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-base outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
                 placeholder="Теги"
               />
             </div>
@@ -905,7 +1127,7 @@ export function QuickNotesPage() {
               type="text"
               value={form.title}
               onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
-              className="mt-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+              className="mt-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-base outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
               placeholder="Заголовок"
               maxLength={160}
             />
@@ -917,7 +1139,7 @@ export function QuickNotesPage() {
               placeholder="Текст заметки"
             />
             <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-              <button type="button" onClick={closeNoteModal} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
+              <button type="button" onClick={confirmDiscardOrClose} className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50">
                 <X className="h-4 w-4" />
                 Отмена
               </button>
@@ -967,6 +1189,7 @@ export function QuickNotesPage() {
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                {renderLiveStatus()}
                 {detailIsOwner && (
                   <button type="button" onClick={() => setAccessModalOpen(true)} className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm font-medium text-slate-600 hover:bg-slate-50" aria-label="Настроить доступ к заметке">
                     <Share2 className="h-4 w-4" />
@@ -1012,7 +1235,11 @@ export function QuickNotesPage() {
                     </div>
                   )}
                 </div>
-                <WorkEntityBacklinks targetType="quick_note" targetId={detailNote.id} />
+                <WorkEntityBacklinks
+                  targetType="quick_note"
+                  targetId={detailNote.id}
+                  canManage={detailIsOwner}
+                />
               </div>
               {renderDiscussion(detailNote.id)}
             </div>

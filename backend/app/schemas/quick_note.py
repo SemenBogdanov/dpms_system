@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 QuickNoteStatus = Literal["draft", "processed", "archived"]
 QuickNoteShareStatus = Literal["active", "revoked"]
@@ -55,6 +55,11 @@ class QuickNoteCreate(BaseModel):
 class QuickNoteUpdate(BaseModel):
     """Patch current user's quick note."""
 
+    base_revision: int = Field(
+        ...,
+        ge=1,
+        description="Ревизия заметки, на основе которой вносится изменение",
+    )
     title: str | None = Field(None, max_length=160)
     body: str | None = Field(None, min_length=1)
     context: str | None = Field(None, max_length=160)
@@ -83,6 +88,13 @@ class QuickNoteUpdate(BaseModel):
             return None
         return _clean_tags(value)
 
+    @model_validator(mode="after")
+    def require_change(self):
+        mutable_fields = {"title", "body", "context", "status", "tags"}
+        if not (self.model_fields_set & mutable_fields):
+            raise ValueError("Укажите хотя бы одно изменение заметки")
+        return self
+
 
 class QuickNoteRead(BaseModel):
     """Read quick note."""
@@ -94,6 +106,7 @@ class QuickNoteRead(BaseModel):
     context: str | None = None
     status: QuickNoteStatus
     tags: list[str] = Field(default_factory=list)
+    revision: int
     created_at: datetime
     updated_at: datetime
 

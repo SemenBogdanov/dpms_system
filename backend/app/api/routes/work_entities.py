@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_task_workspace_access
 from app.api.routes.contacts import has_accepted_contact
+from app.models.quick_note import QuickNote
 from app.models.user import User
 from app.models.work_entity import (
     WorkEntity,
@@ -68,6 +69,30 @@ ENTITY_STATUS_TRANSITIONS: dict[str, set[str]] = {
     "done": {"archived"},
     "archived": set(),
 }
+
+
+async def _require_owned_quick_note_link_target(
+    db: AsyncSession,
+    target_type: WorkEntityTargetType,
+    target_id: UUID,
+    user_id: UUID,
+) -> None:
+    """Only a note creator may mutate project links for that note."""
+    if target_type != "quick_note":
+        return
+    owned_note_id = (
+        await db.execute(
+            select(QuickNote.id).where(
+                QuickNote.id == target_id,
+                QuickNote.owner_id == user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if owned_note_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Только создатель заметки может изменять её связи",
+        )
 
 
 async def _get_entity_or_404(
@@ -1495,6 +1520,12 @@ async def create_work_entity_link(
         raise HTTPException(status_code=400, detail="Нельзя связать сущность с самой собой")
     if not await target_is_accessible(db, body.target_type, body.target_id, user):
         raise HTTPException(status_code=404, detail="Связанный объект не найден или недоступен")
+    await _require_owned_quick_note_link_target(
+        db,
+        body.target_type,
+        body.target_id,
+        user.id,
+    )
     if body.target_type == "entity" and body.relation_type != "related":
         await lock_entity_graph(db)
     if (
@@ -1599,6 +1630,13 @@ async def update_work_entity_link(
     ).scalar_one_or_none()
     if not link:
         raise HTTPException(status_code=404, detail="Связь не найдена")
+    if link.quick_note_id is not None:
+        await _require_owned_quick_note_link_target(
+            db,
+            "quick_note",
+            link.quick_note_id,
+            user.id,
+        )
     requested_changes = body.model_dump(exclude_unset=True)
     changes = {
         field: value
@@ -1683,6 +1721,13 @@ async def delete_work_entity_link(
     ).scalar_one_or_none()
     if not link:
         raise HTTPException(status_code=404, detail="Связь не найдена")
+    if link.quick_note_id is not None:
+        await _require_owned_quick_note_link_target(
+            db,
+            "quick_note",
+            link.quick_note_id,
+            user.id,
+        )
     if link.target_entity_id is not None:
         await lock_entity_graph(db)
     serialized_link = (await serialize_links(db, [link], user))[0]

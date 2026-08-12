@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -13,6 +13,12 @@ class QuickNote(Base):
     """Private note owned by one DPMS user."""
 
     __tablename__ = "quick_notes"
+    __table_args__ = (
+        CheckConstraint(
+            "revision >= 1",
+            name="ck_quick_notes_revision_positive",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -36,3 +42,4 @@ class QuickNote(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
     )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

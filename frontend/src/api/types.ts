@@ -160,6 +160,7 @@ export interface QuickNote {
   context: string | null
   status: QuickNoteStatus
   tags: string[]
+  revision: number
   created_at: string
   updated_at: string
 }
@@ -172,6 +173,7 @@ export interface QuickNoteCreate {
 }
 
 export interface QuickNoteUpdate {
+  base_revision: number
   title?: string | null
   body?: string
   context?: string | null
