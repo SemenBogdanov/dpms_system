@@ -32,6 +32,7 @@ from app.schemas.messages import (
     MessageThreadRead,
 )
 from app.services.attention_realtime import AttentionConnection, attention_hub
+from app.services.email_outbox import enqueue_message_notification
 from app.services.messages import (
     get_attention_summary,
     list_attention_items,
@@ -549,6 +550,14 @@ async def create_thread(
     thread = (
         await db.execute(select(MessageThread).where(MessageThread.id == thread_id))
     ).scalar_one()
+    first_post = MessagePost(
+        id=uuid.uuid4(),
+        thread_id=thread.id,
+        author_id=current_user.id,
+        body=payload.body,
+        quick_note_id=payload.quick_note_id,
+        request_id=payload.request_id,
+    )
     db.add_all(
         [
             MessageThreadParticipant(
@@ -562,20 +571,22 @@ async def create_thread(
                 user_id=recipient.id,
                 unread_count=1,
             ),
-            MessagePost(
-                thread_id=thread.id,
-                author_id=current_user.id,
-                body=payload.body,
-                quick_note_id=payload.quick_note_id,
-                request_id=payload.request_id,
-            ),
+            first_post,
         ]
     )
+    await db.flush()
     activated = await _share_note_without_attention(
         db,
         note=note,
         owner_id=current_user.id,
         recipient_ids=[recipient.id],
+    )
+    await enqueue_message_notification(
+        db,
+        post_id=first_post.id,
+        thread_id=thread.id,
+        recipient=recipient,
+        sender_name=current_user.full_name,
     )
     await db.commit()
     await attention_hub.send_to_users(
@@ -696,6 +707,14 @@ async def create_post(
         owner_id=current_user.id,
         recipient_ids=[user.id for user in other_users],
     )
+    for recipient in other_users:
+        await enqueue_message_notification(
+            db,
+            post_id=post.id,
+            thread_id=thread_id,
+            recipient=recipient,
+            sender_name=current_user.full_name,
+        )
     await db.commit()
     await attention_hub.send_to_users(
         [user.id for _, user in participant_rows],

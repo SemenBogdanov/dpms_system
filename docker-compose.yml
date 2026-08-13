@@ -28,6 +28,19 @@ services:
     volumes:
       - ./uploads:/app/uploads
 
+  email-worker:
+    build: ./backend
+    command: ["python", "-m", "app.workers.email_outbox"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dpms_user:dpms_pass@db:5432/dpms
+      EMAIL_DELIVERY_MODE: console
+      PUBLIC_APP_URL: http://localhost:${DPMS_FRONTEND_PORT:-5173}
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
   frontend:
     build: ./frontend
     ports:

@@ -269,7 +269,7 @@ async def verify_head_schema(database_url: URL) -> None:
                     text("SELECT version_num FROM alembic_version")
                 )
             ).scalar_one()
-            assert revision == "056_messages_attention"
+            assert revision == "057_email_outbox"
             admin_audit_index = (
                 await connection.execute(
                     text(
@@ -304,7 +304,8 @@ async def verify_head_schema(database_url: URL) -> None:
                                 'user_attention_items',
                                 'message_threads',
                                 'message_thread_participants',
-                                'message_posts'
+                                'message_posts',
+                                'email_outbox'
                               )
                             """
                         )
@@ -325,6 +326,7 @@ async def verify_head_schema(database_url: URL) -> None:
                 "message_threads",
                 "message_thread_participants",
                 "message_posts",
+                "email_outbox",
             }
             quick_note_columns = set(
                 (
@@ -349,7 +351,8 @@ async def verify_head_schema(database_url: URL) -> None:
                             FROM knowledge_articles
                             WHERE slug IN (
                                 'sovmestnaya-rabota-i-realtime-v-zametkah',
-                                'soobshcheniya-obrashcheniya-i-vazhnoe'
+                                'soobshcheniya-obrashcheniya-i-vazhnoe',
+                                'email-uvedomleniya-o-soobshcheniyah'
                             )
                               AND status = 'published'
                             """
@@ -360,6 +363,7 @@ async def verify_head_schema(database_url: URL) -> None:
             assert collaboration_articles == {
                 "sovmestnaya-rabota-i-realtime-v-zametkah",
                 "soobshcheniya-obrashcheniya-i-vazhnoe",
+                "email-uvedomleniya-o-soobshcheniyah",
             }
             user_columns = set(
                 (

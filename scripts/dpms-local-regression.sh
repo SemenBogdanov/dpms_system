@@ -63,6 +63,7 @@ step "Python syntax"
 "${compose[@]}" exec -T backend python -m compileall -q app alembic scripts
 
 run_backend_smoke smoke_messages.py --allow-compose-db
+run_backend_smoke smoke_email_outbox.py
 run_backend_smoke smoke_auth_session.py
 run_backend_smoke smoke_admin_user_audit.py
 run_backend_smoke smoke_personal_task_execution_guard.py

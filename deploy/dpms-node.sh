@@ -241,7 +241,7 @@ validate_env_file() {
 }
 
 healthcheck() {
-  local backend https_health https_root frontend_assets
+  local backend https_health https_root frontend_assets email_worker
   log "== DPMS healthcheck =="
   log "time_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ -f "$DPMS_COMPOSE_FILE" ]]; then
@@ -255,11 +255,20 @@ healthcheck() {
   else
     frontend_assets=failed
   fi
+  if [[ -f "$DPMS_COMPOSE_FILE" ]] && \
+    docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
+      ps --status running --services 2>/dev/null | grep -Fxq 'email-worker'; then
+    email_worker=running
+  else
+    email_worker=missing
+  fi
   log "backend_health=$backend"
   log "https_health=$https_health"
   log "https_root=$https_root"
   log "frontend_assets=$frontend_assets"
-  if [[ "$backend" == 200 && "$https_health" == 200 && "$https_root" == 200 && "$frontend_assets" == ok ]]; then
+  log "email_worker=$email_worker"
+  if [[ "$backend" == 200 && "$https_health" == 200 && "$https_root" == 200 && \
+    "$frontend_assets" == ok && "$email_worker" == running ]]; then
     log "healthcheck_ok=1"
     return 0
   fi
@@ -703,7 +712,7 @@ promote_release() {
   install_nginx_config_from_release "$release_dir"
   install_tool_from_release "$release_dir"
   cd "$DPMS_LIVE_ROOT/deploy"
-  DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml up -d --no-build --force-recreate backend
+  DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml up -d --no-build --force-recreate backend email-worker
   nginx -t
   systemctl reload nginx
   wait_for_healthcheck
@@ -758,7 +767,7 @@ rollback_release() {
     cp "$backup_dir/current-release-before.txt" "$DPMS_LIVE_ROOT/current-release"
   fi
   cd "$DPMS_LIVE_ROOT/deploy"
-  DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml up -d --no-build --force-recreate backend
+  DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml up -d --no-build --force-recreate backend email-worker
   nginx -t
   systemctl reload nginx
   healthcheck

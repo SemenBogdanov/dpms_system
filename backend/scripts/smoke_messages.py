@@ -35,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.api.deps import get_current_user, get_db
 from app.database import AsyncSessionLocal, engine
 from app.models.contact import Contact
+from app.models.email_outbox import EmailOutbox
 from app.models.messages import (
     CommunicationEvent,
     MessagePost,
@@ -62,6 +63,7 @@ REQUIRED_TABLES = {
     "message_threads",
     "message_thread_participants",
     "message_posts",
+    "email_outbox",
 }
 
 
@@ -373,6 +375,9 @@ async def cleanup_fixtures(state: FixtureState) -> None:
             )
         await session.execute(delete(UserAttentionItem).where(attention_filter))
         await session.execute(
+            delete(EmailOutbox).where(EmailOutbox.recipient_user_id.in_(user_ids))
+        )
+        await session.execute(
             delete(MessagePost).where(
                 or_(
                     MessagePost.author_id.in_(user_ids),
@@ -449,6 +454,9 @@ async def cleanup_fixtures(state: FixtureState) -> None:
         ),
         "message posts": select(func.count(MessagePost.id)).where(
             MessagePost.author_id.in_(user_ids)
+        ),
+        "email outbox": select(func.count(EmailOutbox.id)).where(
+            EmailOutbox.recipient_user_id.in_(user_ids)
         ),
         "notifications": select(func.count(Notification.id)).where(
             Notification.user_id.in_(user_ids)
@@ -710,6 +718,34 @@ async def exercise_slice(
         == 1,
         "Thread idempotency key is not unique",
     )
+    async with session_factory() as session:
+        email_jobs = list(
+            (
+                await session.execute(
+                    select(EmailOutbox).where(
+                        EmailOutbox.message_post_id == uuid.UUID(first_post_id)
+                    )
+                )
+            ).scalars()
+        )
+    require(len(email_jobs) == 1, "Thread retry duplicated its email job")
+    require(
+        email_jobs[0].recipient_user_id == recipient.id
+        and email_jobs[0].deep_link_path == f"/messages/{thread_id}",
+        "First message email job points to the wrong recipient or thread",
+    )
+    email_projection = " ".join(
+        str(value)
+        for value in (
+            email_jobs[0].event_type,
+            email_jobs[0].template_key,
+            email_jobs[0].source_type,
+            email_jobs[0].sender_name,
+            email_jobs[0].deep_link_path,
+        )
+    )
+    require(thread_payload["body"] not in email_projection, "Email outbox leaked message body")
+    require(thread_payload["subject"] not in email_projection, "Email outbox leaked thread subject")
 
     recipient_threads = await api_json(
         client, "GET", "/api/messages/threads", recipient.id, 200
@@ -827,6 +863,15 @@ async def exercise_slice(
         == 1,
         "Reply idempotency key is not unique",
     )
+    require(
+        await count_rows(
+            session_factory,
+            EmailOutbox,
+            EmailOutbox.recipient_user_id.in_([sender.id, recipient.id]),
+        )
+        == 2,
+        "Reply retry did not preserve exactly one email job per post",
+    )
     sender_thread = await api_json(
         client, "GET", f"/api/messages/threads/{thread_id}", sender.id, 200
     )
@@ -838,6 +883,7 @@ async def exercise_slice(
         client, "POST", f"/api/messages/threads/{thread_id}/read", sender.id, 200
     )
     coverage.append("reply idempotency and sender unread transition")
+    coverage.append("transactional body-free email outbox per message recipient")
 
     first_comment = await api_json(
         client,

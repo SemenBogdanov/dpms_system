@@ -26,6 +26,26 @@ class Settings(BaseSettings):
     DPMS_SECRET_KEY: str = "dev-secret-key-change-me"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480  # 8 часов
 
+    # Provider-neutral email outbox. Production delivery stays disabled until
+    # the operator explicitly configures a provider in runtime environment.
+    PUBLIC_APP_URL: str = "http://localhost:5173"
+    EMAIL_DELIVERY_MODE: str = "disabled"
+    EMAIL_FROM_ADDRESS: str = "noreply@localhost.invalid"
+    EMAIL_FROM_NAME: str = "Простосделал.рф"
+    SMTP_HOST: str | None = None
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str | None = None
+    SMTP_PASSWORD: str | None = None
+    SMTP_STARTTLS: bool = True
+    SMTP_SSL: bool = False
+    SMTP_TIMEOUT_SECONDS: int = 20
+    EMAIL_WORKER_POLL_SECONDS: float = 5.0
+    EMAIL_WORKER_BATCH_SIZE: int = 20
+    EMAIL_WORKER_LEASE_SECONDS: int = 120
+    EMAIL_WORKER_MAX_ATTEMPTS: int = 5
+    EMAIL_MESSAGE_DELAY_SECONDS: int = 30
+    EMAIL_RETRY_MAX_SECONDS: int = 900
+
     # Attachments
     UPLOAD_DIR: str = "/app/uploads"
     MAX_TASK_ATTACHMENT_BYTES: int = 10 * 1024 * 1024
