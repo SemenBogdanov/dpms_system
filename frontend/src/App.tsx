@@ -80,6 +80,7 @@ const CompetenciesPage = lazyPage(() => import('@/pages/CompetenciesPage'), 'Com
 const SettingsPage = lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage')
 const WorkEntitiesPage = lazyPage(() => import('@/pages/WorkEntitiesPage'), 'WorkEntitiesPage')
 const ContactsPage = lazyPage(() => import('@/pages/ContactsPage'), 'ContactsPage')
+const MessagesPage = lazyPage(() => import('@/pages/MessagesPage'), 'MessagesPage')
 const QuickNotesPage = lazyPage(() => import('@/pages/QuickNotesPage'), 'QuickNotesPage')
 const PersonalTasksPage = lazyPage(() => import('@/pages/PersonalTasksPage'), 'PersonalTasksPage')
 const DeadlineTrackersPage = lazyPage(() => import('@/pages/DeadlineTrackersPage'), 'DeadlineTrackersPage')
@@ -186,6 +187,8 @@ function App() {
         <Route path="profile" element={<TaskWorkspaceRoute><ProfilePage /></TaskWorkspaceRoute>} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="contacts" element={<ContactsPage />} />
+        <Route path="messages" element={<MessagesPage />} />
+        <Route path="messages/:threadId" element={<MessagesPage />} />
         <Route path="quick-notes" element={<QuickNotesPage />} />
         <Route path="quick-notes/:noteId" element={<QuickNotesPage />} />
         <Route path="personal-tasks" element={<PersonalTasksPage />} />

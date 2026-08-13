@@ -26,6 +26,13 @@ from app.models.absence import GlobalHoliday, UserAbsence
 from app.models.transaction import QTransaction
 from app.models.shop import ShopItem, Purchase, PeriodSnapshot, PeriodClosure
 from app.models.notification import Notification
+from app.models.messages import (
+    CommunicationEvent,
+    MessagePost,
+    MessageThread,
+    MessageThreadParticipant,
+    UserAttentionItem,
+)
 from app.models.activity import ActivityEvent
 from app.models.feedback import FeedbackRequest
 from app.models.contact import Contact
@@ -80,6 +87,11 @@ __all__ = [
     "PeriodSnapshot",
     "PeriodClosure",
     "Notification",
+    "CommunicationEvent",
+    "UserAttentionItem",
+    "MessageThread",
+    "MessageThreadParticipant",
+    "MessagePost",
     "ActivityEvent",
     "FeedbackRequest",
     "Contact",

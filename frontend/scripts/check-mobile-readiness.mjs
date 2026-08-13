@@ -27,7 +27,7 @@ const checks = [
   ['API requests have a timeout', sources.api.includes('AbortController') && sources.api.includes('GET_TIMEOUT_MS')],
   ['idempotent reads retry once', sources.api.includes("requestMethod(options) === 'GET' ? 2 : 1")],
   ['route imports clear successful reload markers', sources.app.includes('sessionStorage.removeItem(reloadKey)')],
-  ['mobile core pages remain route-split', ['ContactsPage', 'QuickNotesPage', 'PersonalTasksPage', 'DeadlineTrackersPage'].every(
+  ['mobile core pages remain route-split', ['ContactsPage', 'QuickNotesPage', 'PersonalTasksPage', 'DeadlineTrackersPage', 'MessagesPage'].every(
     (page) => sources.app.includes(`lazyPage(() => import('@/pages/${page}')`)
   )],
   ['static boot watchdog exists', sources.index.includes('Не удалось загрузить систему') && sources.index.includes('dpms:ready')],
@@ -35,6 +35,7 @@ const checks = [
   ['iOS form zoom is prevented', sources.styles.includes('font-size: 16px !important')],
   ['missing JS returns a real 404', sources.nginx.includes('try_files $uri =404;')],
   ['fake stale module fallback is disabled', !sources.nginx.includes('/stale-module.js')],
+  ['messages WebSocket has production upgrade route', sources.nginx.includes('location = /api/messages/live') && sources.nginx.includes('proxy_set_header Upgrade $http_upgrade;')],
 ]
 
 const failed = checks.filter(([, passed]) => !passed)

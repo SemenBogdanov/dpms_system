@@ -39,6 +39,7 @@ import type {
 import { cn } from '@/lib/utils'
 import { WorkEntityBacklinks } from '@/components/WorkEntityBacklinks'
 import { useProtectedModal, preventBackdropDismiss } from '@/hooks/useProtectedModal'
+import { useAttention } from '@/contexts/attentionState'
 import {
   useQuickNoteLive,
   type LiveStatus,
@@ -165,6 +166,7 @@ function formDirtyFor(form: NoteForm, editing: QuickNote | null): boolean {
 export function QuickNotesPage() {
   const navigate = useNavigate()
   const { noteId } = useParams<{ noteId: string }>()
+  const { refresh: refreshAttention } = useAttention()
   const [notes, setNotes] = useState<QuickNote[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<NoteFilter>('all')
@@ -195,6 +197,18 @@ export function QuickNotesPage() {
   const [conflict, setConflict] = useState<LiveConflict>(null)
 
   const notePanelRef = useProtectedModal<HTMLDivElement>(noteModalOpen)
+
+  const markNoteAttentionRead = useCallback(async (id: string) => {
+    try {
+      await api.post<{ marked: number }>('/api/messages/attention/context/read', {
+        source_type: 'quick_note',
+        source_key: id,
+      })
+      await refreshAttention()
+    } catch {
+      // The note itself remains usable if the attention projection is offline.
+    }
+  }, [refreshAttention])
 
   const loadNotes = useCallback(async () => {
     setLoading(true)
@@ -358,14 +372,16 @@ export function QuickNotesPage() {
 
   useEffect(() => {
     if (!detailNoteId) return
+    void markNoteAttentionRead(detailNoteId)
     void loadComments(detailNoteId)
     void loadAttachments(detailNoteId)
     if (!detailIsShared) void loadNoteShares(detailNoteId)
-  }, [detailIsShared, detailNoteId, loadAttachments, loadComments, loadNoteShares])
+  }, [detailIsShared, detailNoteId, loadAttachments, loadComments, loadNoteShares, markNoteAttentionRead])
 
   const { status: liveStatus, activeUsers } = useQuickNoteLive(noteId, {
     onReady: () => {
       if (noteId) {
+        void markNoteAttentionRead(noteId)
         void silentSyncSlices(noteId)
         void silentReloadList()
         void silentReloadShared()
@@ -382,6 +398,9 @@ export function QuickNotesPage() {
         setRemoteUpdated(true)
       }
       if (event.note_id) {
+        if (event.type === 'comment.created' || event.type === 'access.changed') {
+          void markNoteAttentionRead(event.note_id)
+        }
         void silentSyncSlices(event.note_id)
         void silentReloadList()
         void silentReloadShared()

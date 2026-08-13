@@ -14,6 +14,11 @@ async def create_notification(
     title: str,
     message: str = "",
     link: str | None = None,
+    *,
+    actor_id: UUID | None = None,
+    source_type: str = "notification",
+    source_key: str | None = None,
+    dedupe_key: str | None = None,
 ) -> Notification:
     """Создать уведомление."""
     n = Notification(
@@ -26,6 +31,16 @@ async def create_notification(
     db.add(n)
     await db.flush()
     await db.refresh(n)
+    from app.services.messages import mirror_notification_to_attention
+
+    await mirror_notification_to_attention(
+        db,
+        notification=n,
+        actor_id=actor_id,
+        source_type=source_type,
+        source_key=source_key,
+        dedupe_key=dedupe_key,
+    )
     return n
 
 
@@ -64,6 +79,13 @@ async def mark_as_read(
     if n:
         n.is_read = True
         db.add(n)
+        from app.services.messages import mark_notification_attention_read
+
+        await mark_notification_attention_read(
+            db,
+            user_id=user_id,
+            notification_ids=[n.id],
+        )
 
 
 async def mark_all_as_read(db: AsyncSession, user_id: UUID) -> int:
@@ -78,6 +100,14 @@ async def mark_all_as_read(db: AsyncSession, user_id: UUID) -> int:
     for n in notifications:
         n.is_read = True
         db.add(n)
+    if notifications:
+        from app.services.messages import mark_notification_attention_read
+
+        await mark_notification_attention_read(
+            db,
+            user_id=user_id,
+            notification_ids=[notification.id for notification in notifications],
+        )
     return len(notifications)
 
 

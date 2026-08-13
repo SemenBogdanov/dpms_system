@@ -17,6 +17,7 @@ const expectedItems = [
   ['deadline-trackers', '/deadline-trackers', 'Трекер сроков', 'tasks'],
   ['quick-notes', '/quick-notes', 'Заметки', 'tasks'],
   ['contacts', '/contacts', 'Контакты', 'tasks'],
+  ['messages', '/messages', 'Сообщения', 'tasks'],
   ['dashboard', '/', 'Дашборд', 'management'],
   ['reports', '/reports', 'Отчёты', 'management'],
   ['calibration', '/calibration', 'Калибровка', 'management'],
@@ -67,8 +68,8 @@ for (const [label, sourceFragment] of accessGuardChecks) {
 
 const payloadVersionMatch = sidebarSource.match(/sidebarOrderPayload[\s\S]*?return\s*\{\s*version:\s*(\d+)/)
 const payloadVersion = payloadVersionMatch ? Number(payloadVersionMatch[1]) : 0
-if (payloadVersion < 4) {
-  errors.push(`sidebar menu payload version must be >= 4, got ${payloadVersion || 'unknown'}`)
+if (payloadVersion < 5) {
+  errors.push(`sidebar menu payload version must be >= 5, got ${payloadVersion || 'unknown'}`)
 }
 
 if (errors.length > 0) {

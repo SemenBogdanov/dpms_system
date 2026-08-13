@@ -4,9 +4,9 @@ import {
   ChevronDown,
   Clock3,
   LogOut,
+  Mail,
   Menu,
   Paperclip,
-  Settings,
   StickyNote,
   UserSquare2,
   X,
@@ -14,6 +14,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { LeagueBadge } from '@/components/LeagueBadge'
+import { useAttention } from '@/contexts/attentionState'
 import {
   applySidebarItemLabels,
   normalizeSidebarOrder,
@@ -27,6 +28,7 @@ import {
 
 export function Sidebar() {
   const { user, logout } = useAuth()
+  const { summary } = useAttention()
   const location = useLocation()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [desktopPinned, setDesktopPinned] = useState(() => {
@@ -77,6 +79,14 @@ export function Sidebar() {
         group: 'tasks',
       },
       {
+        id: 'messages',
+        to: '/messages',
+        label: 'Сообщения',
+        icon: Mail,
+        section: 'personal',
+        group: 'tasks',
+      },
+      {
         id: 'deadline-trackers',
         to: '/deadline-trackers',
         label: 'Сроки',
@@ -84,24 +94,12 @@ export function Sidebar() {
         section: 'personal',
         group: 'tasks',
       },
-      {
-        id: 'settings',
-        to: '/settings',
-        label: 'Настройки',
-        icon: Settings,
-        section: 'settings',
-        group: 'settings',
-      },
     ]
 
     return fallbackItems
       .map((fallback) => {
         const visible = visibleById.get(fallback.id)
-        return visible
-          ? { ...visible, label: fallback.label }
-          : fallback.id === 'settings'
-            ? fallback
-            : null
+        return visible ? { ...visible, label: fallback.label } : null
       })
       .filter((item): item is SidebarNavItem => Boolean(item))
       .slice(0, 4)
@@ -137,6 +135,23 @@ export function Sidebar() {
 
   const closeMobile = () => setMobileOpen(false)
 
+  const attentionDots = (compact = false) => {
+    if (summary.direct_count === 0 && summary.important_count === 0) return null
+    return (
+      <span
+        className={cn('inline-flex shrink-0 items-center', compact ? 'gap-0.5' : 'gap-1')}
+        aria-label={`Непросмотрено: обращений ${summary.direct_count}, важных событий ${summary.important_count}`}
+      >
+        {summary.direct_count > 0 && (
+          <span className="h-2 w-2 rounded-full bg-red-500 ring-2 ring-[hsl(var(--surface))]" title={`${summary.direct_count} новых обращений`} />
+        )}
+        {summary.important_count > 0 && (
+          <span className="h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-[hsl(var(--surface))]" title={`${summary.important_count} важных событий`} />
+        )}
+      </span>
+    )
+  }
+
   const renderNavLink = (item: SidebarNavItem, nested = false) => (
     <NavLink
       key={item.to}
@@ -145,7 +160,7 @@ export function Sidebar() {
       onClick={closeMobile}
       className={({ isActive }) =>
         cn(
-          'flex items-center gap-2.5 rounded-xl text-sm transition-all',
+          'flex items-center gap-2.5 rounded-xl text-sm transition-colors',
           nested ? 'px-3 py-1.5 text-[13px]' : 'px-3 py-2',
           isActive
             ? 'bg-accent-lighter text-accent-dark font-medium'
@@ -154,7 +169,8 @@ export function Sidebar() {
       }
     >
       <item.icon className="h-4 w-4 shrink-0" />
-      {item.label}
+      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+      {item.id === 'messages' && attentionDots()}
     </NavLink>
   )
 
@@ -177,7 +193,7 @@ export function Sidebar() {
           type="button"
           onClick={() => toggleGroup(button.id)}
           className={cn(
-            'flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-all',
+            'flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors',
             isActive
               ? 'bg-accent-lighter text-accent-dark font-medium'
               : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
@@ -186,6 +202,7 @@ export function Sidebar() {
         >
           <Icon className="h-4 w-4 shrink-0" />
           <span className="min-w-0 flex-1 text-left">{button.label}</span>
+          {items.some((item) => item.id === 'messages') && attentionDots()}
           <ChevronDown className={cn('h-4 w-4 shrink-0 transition-transform', isOpen && 'rotate-180')} />
         </button>
         {isOpen && (
@@ -220,7 +237,14 @@ export function Sidebar() {
                       : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                   )}
                 >
-                  <Icon className="h-5 w-5 shrink-0" />
+                  <span className="relative inline-flex">
+                    <Icon className="h-5 w-5 shrink-0" />
+                    {item.id === 'messages' && (
+                      <span className="absolute -right-4 -top-1">
+                        {attentionDots(true)}
+                      </span>
+                    )}
+                  </span>
                   <span className="max-w-full truncate">{item.label}</span>
                 </NavLink>
               )

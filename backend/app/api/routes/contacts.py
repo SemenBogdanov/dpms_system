@@ -4,6 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -11,6 +12,8 @@ from app.api.deps import get_current_user, get_db
 from app.models.contact import Contact
 from app.models.user import User
 from app.schemas.contact import ContactCreate, ContactRead
+from app.services.attention_realtime import attention_hub
+from app.services.messages import emit_attention_event, resolve_attention_for_source
 
 router = APIRouter()
 
@@ -79,6 +82,8 @@ async def create_contact_request(
         raise HTTPException(status_code=404, detail="Пользователь с такой почтой не найден")
     if target.id == current_user.id:
         raise HTTPException(status_code=400, detail="Нельзя отправить заявку самому себе")
+    current_user_id = current_user.id
+    target_id = target.id
 
     existing = (
         await db.execute(
@@ -96,17 +101,92 @@ async def create_contact_request(
             existing.recipient_id = target.id
             existing.status = "pending"
             existing.updated_at = datetime.now(timezone.utc)
+            await emit_attention_event(
+                db,
+                target_user_ids=[target.id],
+                kind="direct",
+                event_type="contact.request.received",
+                source_type="contact",
+                source_key=str(existing.id),
+                title="Новая заявка в контакты",
+                body=f"{current_user.full_name} предлагает добавить контакт.",
+                link="/contacts",
+                actor_id=current_user.id,
+                dedupe_key=f"contact-request:{existing.id}",
+                idempotency_key=(
+                    f"contact-request:{existing.id}:{existing.updated_at.isoformat()}"
+                ),
+            )
             await db.commit()
             await db.refresh(existing)
+            await attention_hub.send_to_user(target.id, {"type": "attention.changed"})
             return contact_read(existing, current_user, target, current_user.id)
         requester = current_user if existing.requester_id == current_user.id else target
         recipient = target if existing.recipient_id == target.id else current_user
         return contact_read(existing, requester, recipient, current_user.id)
 
-    contact = Contact(requester_id=current_user.id, recipient_id=target.id, status="pending")
+    contact = Contact(
+        requester_id=current_user.id,
+        recipient_id=target.id,
+        status="pending",
+    )
     db.add(contact)
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        existing = (
+            await db.execute(
+                select(Contact).where(
+                    or_(
+                        and_(
+                            Contact.requester_id == current_user_id,
+                            Contact.recipient_id == target_id,
+                        ),
+                        and_(
+                            Contact.requester_id == target_id,
+                            Contact.recipient_id == current_user_id,
+                        ),
+                    )
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Заявка уже создается. Обновите список контактов",
+            )
+        users = list(
+            (
+                await db.execute(
+                    select(User).where(User.id.in_([current_user_id, target_id]))
+                )
+            ).scalars().all()
+        )
+        users_by_id = {user.id: user for user in users}
+        return contact_read(
+            existing,
+            users_by_id[existing.requester_id],
+            users_by_id[existing.recipient_id],
+            current_user_id,
+        )
+    await emit_attention_event(
+        db,
+        target_user_ids=[target.id],
+        kind="direct",
+        event_type="contact.request.received",
+        source_type="contact",
+        source_key=str(contact.id),
+        title="Новая заявка в контакты",
+        body=f"{current_user.full_name} предлагает добавить контакт.",
+        link="/contacts",
+        actor_id=current_user.id,
+        dedupe_key=f"contact-request:{contact.id}",
+        idempotency_key=f"contact-request:{contact.id}",
+    )
     await db.commit()
     await db.refresh(contact)
+    await attention_hub.send_to_user(target.id, {"type": "attention.changed"})
     return contact_read(contact, current_user, target, current_user.id)
 
 
@@ -123,15 +203,38 @@ async def accept_contact_request(
                 Contact.id == contact_id,
                 Contact.recipient_id == current_user.id,
                 Contact.status == "pending",
-            )
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if not contact:
         raise HTTPException(status_code=404, detail="Заявка не найдена")
     contact.status = "accepted"
     contact.updated_at = datetime.now(timezone.utc)
-    await db.commit()
+    await resolve_attention_for_source(
+        db,
+        user_id=current_user.id,
+        source_type="contact",
+        source_key=str(contact.id),
+    )
     requester = (await db.execute(select(User).where(User.id == contact.requester_id))).scalar_one()
+    await emit_attention_event(
+        db,
+        target_user_ids=[requester.id],
+        kind="direct",
+        event_type="contact.request.accepted",
+        source_type="contact",
+        source_key=str(contact.id),
+        title="Заявка в контакты принята",
+        body=f"{current_user.full_name} добавил вас в контакты.",
+        link="/contacts",
+        actor_id=current_user.id,
+        dedupe_key=f"contact-response:{contact.id}",
+        idempotency_key=f"contact-accepted:{contact.id}",
+    )
+    await db.commit()
+    await attention_hub.send_to_users(
+        [current_user.id, requester.id], {"type": "attention.changed"}
+    )
     return contact_read(contact, requester, current_user, current_user.id)
 
 
@@ -147,13 +250,38 @@ async def reject_contact_request(
             select(Contact).where(
                 Contact.id == contact_id,
                 Contact.recipient_id == current_user.id,
-            )
+                Contact.status == "pending",
+            ).with_for_update()
         )
     ).scalar_one_or_none()
     if not contact:
         raise HTTPException(status_code=404, detail="Заявка не найдена")
+    decision_at = datetime.now(timezone.utc)
     contact.status = "rejected"
-    contact.updated_at = datetime.now(timezone.utc)
-    await db.commit()
+    contact.updated_at = decision_at
+    await resolve_attention_for_source(
+        db,
+        user_id=current_user.id,
+        source_type="contact",
+        source_key=str(contact.id),
+    )
     requester = (await db.execute(select(User).where(User.id == contact.requester_id))).scalar_one()
+    await emit_attention_event(
+        db,
+        target_user_ids=[requester.id],
+        kind="direct",
+        event_type="contact.request.rejected",
+        source_type="contact",
+        source_key=str(contact.id),
+        title="Заявка в контакты отклонена",
+        body=f"{current_user.full_name} отклонил заявку в контакты.",
+        link="/contacts",
+        actor_id=current_user.id,
+        dedupe_key=f"contact-response:{contact.id}",
+        idempotency_key=f"contact-rejected:{contact.id}:{decision_at.isoformat()}",
+    )
+    await db.commit()
+    await attention_hub.send_to_users(
+        [current_user.id, requester.id], {"type": "attention.changed"}
+    )
     return contact_read(contact, requester, current_user, current_user.id)

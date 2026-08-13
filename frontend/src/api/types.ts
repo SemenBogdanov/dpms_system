@@ -1973,6 +1973,65 @@ export interface NotificationRead {
   created_at: string
 }
 
+export interface AttentionSummary {
+  direct_count: number
+  important_count: number
+}
+
+export type AttentionKind = 'direct' | 'important'
+
+export interface AttentionItem {
+  id: string
+  kind: AttentionKind
+  event_type: string
+  title: string
+  body: string
+  link: string | null
+  source_type: string
+  source_key: string
+  actor_id: string | null
+  actor_name: string | null
+  actor_email: string | null
+  is_read: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface MessageParticipant {
+  user_id: string
+  full_name: string
+  email: string
+}
+
+export interface MessagePost {
+  id: string
+  thread_id: string
+  author_id: string
+  author_name: string
+  author_email: string
+  body: string
+  quick_note_id: string | null
+  quick_note_title: string | null
+  quick_note_available: boolean
+  created_at: string
+}
+
+export interface MessageThread {
+  id: string
+  subject: string
+  created_by_id: string
+  participants: MessageParticipant[]
+  last_post_preview: string
+  last_post_at: string
+  unread_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface MessageThreadDetail extends MessageThread {
+  posts: MessagePost[]
+}
+
 export interface PerformerSummary {
   full_name: string
   league: string

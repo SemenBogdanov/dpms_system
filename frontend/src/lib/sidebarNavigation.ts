@@ -12,6 +12,7 @@ import {
   Library,
   ListChecks,
   ListTodo,
+  Mail,
   MessageSquare,
   Network,
   Scale,
@@ -95,6 +96,7 @@ export const sidebarNav: SidebarNavItem[] = [
   { id: 'deadline-trackers', to: '/deadline-trackers', label: 'Трекер сроков', icon: CalendarClock, section: 'personal', group: 'tasks' },
   { id: 'quick-notes', to: '/quick-notes', label: 'Заметки', icon: StickyNote, section: 'personal', group: 'tasks' },
   { id: 'contacts', to: '/contacts', label: 'Контакты', icon: Contact, section: 'personal', group: 'tasks' },
+  { id: 'messages', to: '/messages', label: 'Сообщения', icon: Mail, section: 'personal', group: 'tasks' },
   { id: 'dashboard', to: '/', label: 'Дашборд', icon: LayoutDashboard, section: 'task', group: 'management', roles: ['teamlead', 'admin'] },
   { id: 'reports', to: '/reports', label: 'Отчёты', icon: BarChart3, section: 'task', group: 'management', roles: ['teamlead', 'admin'] },
   { id: 'calibration', to: '/calibration', label: 'Калибровка', icon: Scale, section: 'task', group: 'management', roles: ['admin'] },
@@ -199,7 +201,7 @@ export function normalizeSidebarOrder(order?: SidebarOrderInput): SidebarOrder {
     return { ...group, id }
   })
   const version = typeof order?.version === 'number' ? order.version : 1
-  const shouldBackfillMissingDefaults = rawGroups.length > 0 && version < 4
+  const shouldBackfillMissingDefaults = rawGroups.length > 0 && version < 5
   const assignedItemIds = new Set(uniqueGroups.flatMap((group) => group.itemIds))
   let mergedGroups = shouldBackfillMissingDefaults
     ? uniqueGroups.map((group) => {
@@ -208,7 +210,9 @@ export function normalizeSidebarOrder(order?: SidebarOrderInput): SidebarOrder {
           ? defaults
           : version < 3
             ? defaults.filter((itemId) => itemId === 'knowledge' || itemId === 'work-entities')
-            : defaults.filter((itemId) => itemId === 'work-entities')
+            : version < 4
+              ? defaults.filter((itemId) => itemId === 'work-entities')
+              : defaults.filter((itemId) => itemId === 'messages')
         const missingDefaults = versionDefaults.filter((itemId) => !assignedItemIds.has(itemId))
         if (missingDefaults.length === 0) return group
         missingDefaults.forEach((itemId) => assignedItemIds.add(itemId))
@@ -216,10 +220,12 @@ export function normalizeSidebarOrder(order?: SidebarOrderInput): SidebarOrder {
       })
     : uniqueGroups
   const requiredBackfillItemIds = version < 3
-    ? ['knowledge', 'work-entities']
+    ? ['knowledge', 'work-entities', 'messages']
     : version < 4
-      ? ['work-entities']
-      : []
+      ? ['work-entities', 'messages']
+      : version < 5
+        ? ['messages']
+        : []
   for (const itemId of requiredBackfillItemIds) {
     if (assignedItemIds.has(itemId)) continue
     const navItem = navById.get(itemId)
@@ -256,7 +262,7 @@ export function sidebarOrderPayload(order: SidebarOrder) {
       .filter(([itemId, label]) => navById.has(itemId) && Boolean(label))
   )
   return {
-    version: 4,
+    version: 5,
     groups: normalized.groups.map((group) => ({
       id: group.id,
       label: group.label.trim() || 'Кнопка',

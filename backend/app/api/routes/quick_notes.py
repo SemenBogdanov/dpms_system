@@ -30,7 +30,13 @@ from app.schemas.quick_note import (
     SharedQuickNoteRead,
 )
 from app.services.attachments import attachment_path, save_quick_note_attachment
+from app.services.attention_realtime import attention_hub
+from app.services.messages import emit_attention_event, resolve_attention_for_source
 from app.services.quick_note_realtime import QuickNoteConnection, hub_registry
+from app.services.quick_note_shares import (
+    activate_quick_note_shares,
+    revoke_quick_note_share,
+)
 
 router = APIRouter()
 
@@ -265,35 +271,28 @@ async def share_note(
         if not await has_accepted_contact(db, current_user.id, recipient_id):
             raise HTTPException(status_code=403, detail="Поделиться можно только с принятым контактом")
 
-    existing = (
-        await db.execute(
-            select(QuickNoteShare).where(
-                QuickNoteShare.note_id == note.id,
-                QuickNoteShare.recipient_id.in_(recipient_ids),
-            )
-        )
-    ).scalars().all()
-    existing_by_recipient = {share.recipient_id: share for share in existing}
     now = datetime.now(timezone.utc)
-    newly_activated: list[UUID] = []
-    for recipient_id in recipient_ids:
-        share = existing_by_recipient.get(recipient_id)
-        if share:
-            was_revoked = share.status != "active"
-            share.status = "active"
-            share.updated_at = now
-            if was_revoked:
-                newly_activated.append(recipient_id)
-        else:
-            db.add(
-                QuickNoteShare(
-                    note_id=note.id,
-                    owner_id=current_user.id,
-                    recipient_id=recipient_id,
-                    status="active",
-                )
-            )
-            newly_activated.append(recipient_id)
+    newly_activated = await activate_quick_note_shares(
+        db,
+        note_id=note.id,
+        owner_id=current_user.id,
+        recipient_ids=recipient_ids,
+    )
+    if newly_activated:
+        await emit_attention_event(
+            db,
+            target_user_ids=newly_activated,
+            kind="direct",
+            event_type="quick_note.share.received",
+            source_type="quick_note",
+            source_key=str(note.id),
+            title=f"Открыт доступ к заметке «{note.title}»",
+            body=f"{current_user.full_name} поделился заметкой.",
+            link=f"/quick-notes/{note.id}",
+            actor_id=current_user.id,
+            dedupe_key=f"quick-note-share:{note.id}",
+            idempotency_key=f"quick-note-share:{note.id}:{now.isoformat()}",
+        )
     await db.commit()
     await _broadcast(
         note.id,
@@ -303,6 +302,10 @@ async def share_note(
             "recipients": [str(rid) for rid in newly_activated],
         },
     )
+    if newly_activated:
+        await attention_hub.send_to_users(
+            newly_activated, {"type": "attention.changed"}
+        )
     return await list_note_shares(note.id, current_user, db)
 
 
@@ -313,21 +316,21 @@ async def revoke_share(
     db: AsyncSession = Depends(get_db),
 ):
     """Revoke a share for an owned note."""
-    share = (
-        await db.execute(
-            select(QuickNoteShare).where(
-                QuickNoteShare.id == share_id,
-                QuickNoteShare.owner_id == current_user.id,
-            )
-        )
-    ).scalar_one_or_none()
-    if not share:
+    revoked = await revoke_quick_note_share(
+        db,
+        share_id=share_id,
+        owner_id=current_user.id,
+    )
+    if revoked is None:
         raise HTTPException(status_code=404, detail="Доступ не найден")
-    share.status = "revoked"
-    share.updated_at = datetime.now(timezone.utc)
+    note_id, revoked_id = revoked
+    await resolve_attention_for_source(
+        db,
+        user_id=revoked_id,
+        source_type="quick_note",
+        source_key=str(note_id),
+    )
     await db.commit()
-    revoked_id = share.recipient_id
-    note_id = share.note_id
     hub = await hub_registry.try_get(note_id)
     if hub is not None:
         await hub.send_to_user(
@@ -340,6 +343,7 @@ async def revoke_share(
             revoked_id,
         )
         await hub.disconnect_user(revoked_id)
+    await attention_hub.send_to_user(revoked_id, {"type": "attention.changed"})
     return {"revoked": True, "share_id": str(share_id)}
 
 
@@ -401,6 +405,31 @@ async def create_note_comment(
         body=payload.body,
     )
     db.add(comment)
+    await db.flush()
+    recipient_ids = list(
+        (
+            await db.execute(
+                select(QuickNoteShare.recipient_id).where(
+                    QuickNoteShare.note_id == note.id,
+                    QuickNoteShare.status == "active",
+                )
+            )
+        ).scalars().all()
+    )
+    await emit_attention_event(
+        db,
+        target_user_ids=[note.owner_id, *recipient_ids],
+        kind="direct",
+        event_type="quick_note.comment.received",
+        source_type="quick_note",
+        source_key=str(note.id),
+        title=f"Новое сообщение в заметке «{note.title}»",
+        body=f"{current_user.full_name}: {' '.join(payload.body.split())[:240]}",
+        link=f"/quick-notes/{note.id}",
+        actor_id=current_user.id,
+        dedupe_key=f"quick-note-discussion:{note.id}",
+        idempotency_key=f"quick-note-comment:{comment.id}",
+    )
     await db.commit()
     await db.refresh(comment)
     await _broadcast(
@@ -410,6 +439,14 @@ async def create_note_comment(
             "comment_id": str(comment.id),
             "actor_id": str(current_user.id),
         },
+    )
+    attention_targets = [
+        user_id
+        for user_id in dict.fromkeys([note.owner_id, *recipient_ids])
+        if user_id != current_user.id
+    ]
+    await attention_hub.send_to_users(
+        attention_targets, {"type": "attention.changed"}
     )
     return QuickNoteCommentRead(
         id=comment.id,
@@ -622,6 +659,19 @@ async def quick_note_live(websocket: WebSocket, note_id: UUID) -> None:
     hub = await hub_registry.get_or_create(note_id)
     connection = QuickNoteConnection(websocket=websocket, user_id=user.id)
     hub.add(user.id, connection)
+    try:
+        async with AsyncSessionLocal() as db:
+            still_has_access = await _user_has_note_access(db, note_id, user.id)
+    except Exception:
+        hub.remove(user.id, connection)
+        await websocket.close(code=1011)
+        await hub_registry.remove_if_empty(note_id)
+        return
+    if not still_has_access:
+        hub.remove(user.id, connection)
+        await websocket.close(code=1008)
+        await hub_registry.remove_if_empty(note_id)
+        return
     try:
         await connection.websocket.send_text(
             json.dumps(

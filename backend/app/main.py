@@ -9,7 +9,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
-from app.api.routes import absences, activity, admin, auth, calculator, catalog, client_events, competencies, contacts, dashboard, deadline_trackers, feedback, knowledge, notifications, personal_tasks, project_cockpit, queue, quick_notes, reports, shop, tasks, users, work_entities, work_entity_workspace
+from app.api.routes import absences, activity, admin, auth, calculator, catalog, client_events, competencies, contacts, dashboard, deadline_trackers, feedback, knowledge, messages, notifications, personal_tasks, project_cockpit, queue, quick_notes, reports, shop, tasks, users, work_entities, work_entity_workspace
 from app.database import AsyncSessionLocal
 from app.services.competencies import ensure_builtin_competencies
 
@@ -56,6 +56,7 @@ app.add_middleware(
 # Роуты
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
+app.include_router(messages.router, prefix="/api/messages", tags=["messages"])
 app.include_router(activity.router, prefix="/api/activity", tags=["activity"])
 app.include_router(client_events.router, prefix="/api/client-events", tags=["client-events"])
 app.include_router(contacts.router, prefix="/api/contacts", tags=["contacts"])

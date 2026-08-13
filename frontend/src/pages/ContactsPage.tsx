@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Check, Send, UserCheck, UserPlus, Users, X } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Check, Mail, Send, UserCheck, UserPlus, Users, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
 import type { Contact } from '@/api/types'
+import { useAttention } from '@/contexts/attentionState'
 
 function contactName(contact: Contact): string {
   return contact.direction === 'incoming' ? contact.requester_name : contact.recipient_name
@@ -22,6 +24,8 @@ function formatDate(value: string): string {
 }
 
 export function ContactsPage() {
+  const navigate = useNavigate()
+  const { refresh: refreshAttention } = useAttention()
   const [contacts, setContacts] = useState<Contact[]>([])
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(true)
@@ -32,12 +36,15 @@ export function ContactsPage() {
     try {
       const data = await api.get<Contact[]>('/api/contacts')
       setContacts(data)
+      void api.post<{ marked: number }>('/api/messages/attention/context/read', {
+        source_type: 'contact',
+      }).then(() => refreshAttention()).catch(() => {})
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка загрузки контактов')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [refreshAttention])
 
   useEffect(() => {
     loadContacts()
@@ -193,9 +200,19 @@ export function ContactsPage() {
                 </div>
               ) : (
                 acceptedContacts.map((contact) => (
-                  <div key={contact.id} className="rounded-lg bg-slate-50 px-3 py-2">
-                    <div className="truncate text-sm font-medium text-slate-800">{contactName(contact)}</div>
-                    <div className="truncate text-xs text-slate-500">{contactEmail(contact)}</div>
+                  <div key={contact.id} className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-slate-800">{contactName(contact)}</div>
+                      <div className="truncate text-xs text-slate-500">{contactEmail(contact)}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/messages?compose=${contact.direction === 'incoming' ? contact.requester_id : contact.recipient_id}`)}
+                      className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 hover:bg-slate-50 sm:min-h-9"
+                    >
+                      <Mail className="h-4 w-4" />
+                      Написать
+                    </button>
                   </div>
                 ))
               )}
