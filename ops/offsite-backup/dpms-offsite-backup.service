@@ -1,0 +1,15 @@
+[Unit]
+Description=DPMS encrypted offsite backup to removable storage
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/dpms-offsite-backup.sh --scheduled
+User=dpms-backup
+Group=dpms-backup
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only

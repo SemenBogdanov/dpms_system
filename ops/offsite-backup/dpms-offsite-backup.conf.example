@@ -1,0 +1,11 @@
+# Copy to /etc/dpms-offsite-backup.conf with mode 0600.
+# Values below are examples and contain no credentials.
+DPMS_BACKUP_SSH_TARGET=dpms-vps
+DPMS_BACKUP_REMOTE_EXPORTER=/opt/dpms-tools/dpms-export-backup.sh
+DPMS_BACKUP_USB_MOUNT=/mnt/dpms-backup
+DPMS_BACKUP_DEVICE_UUID=replace-with-filesystem-uuid
+# DPMS_BACKUP_DEVICE_LABEL=DPMS_BACKUP
+DPMS_BACKUP_AGE_RECIPIENT=age1replace_with_public_recipient
+DPMS_BACKUP_AGE_IDENTITY=/etc/dpms-backup/identity.txt
+DPMS_BACKUP_RETENTION=3
+DPMS_BACKUP_OUTPUT_SUBDIR=dpms-offsite

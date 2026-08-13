@@ -84,7 +84,7 @@ install_host_dependencies() {
 
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y ca-certificates curl gnupg git nginx rsync tar gzip lsof python3
+  apt-get install -y ca-certificates curl gnupg git nginx rsync tar gzip zstd lsof python3
 
   if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
     install -d -m 0755 /etc/apt/keyrings
@@ -614,6 +614,10 @@ install_tool_from_release() {
   local release_dir="$1"
   [[ -f "$release_dir/deploy/dpms-node.sh" ]] || die "release missing deploy/dpms-node.sh"
   install -m 0755 "$release_dir/deploy/dpms-node.sh" "$DPMS_TOOLS_DIR/dpms-node.sh"
+  [[ -f "$release_dir/deploy/dpms-export-backup.sh" ]] || die "release missing backup exporter"
+  [[ -f "$release_dir/deploy/dpms-backup-db-config.py" ]] || die "release missing backup DB helper"
+  install -m 0755 "$release_dir/deploy/dpms-export-backup.sh" "$DPMS_TOOLS_DIR/dpms-export-backup.sh"
+  install -m 0755 "$release_dir/deploy/dpms-backup-db-config.py" "$DPMS_TOOLS_DIR/dpms-backup-db-config.py"
 }
 
 backup_app_state() {
@@ -794,7 +798,8 @@ bootstrap() {
     && docker compose version >/dev/null 2>&1 \
     && command -v nginx >/dev/null 2>&1 \
     && command -v git >/dev/null 2>&1 \
-    && command -v rsync >/dev/null 2>&1; then
+    && command -v rsync >/dev/null 2>&1 \
+    && command -v zstd >/dev/null 2>&1; then
     log "host_dependencies=present"
   else
     install_host_dependencies

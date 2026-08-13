@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the DPMS 14-day offsite backup schedule daily
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+Persistent=true
+RandomizedDelaySec=30min
+Unit=dpms-offsite-backup.service
+
+[Install]
+WantedBy=timers.target
