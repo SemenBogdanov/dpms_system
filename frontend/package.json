@@ -13,7 +13,9 @@
     "test:ux-safety": "npm run build && playwright test --config playwright.ux-safety.config.ts",
     "preview": "vite preview",
     "test:realtime-notes": "npm run build && playwright test --config playwright.realtime-notes.config.ts",
-    "test:messages": "playwright test --config playwright.messages.config.ts"
+    "test:messages": "playwright test --config playwright.messages.config.ts",
+    "test:regression": "../scripts/dpms-local-regression.sh full",
+    "test:regression:quick": "../scripts/dpms-local-regression.sh quick"
   },
   "dependencies": {
     "@fontsource-variable/victor-mono": "^5.2.8",

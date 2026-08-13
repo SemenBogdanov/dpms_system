@@ -269,7 +269,7 @@ async def verify_head_schema(database_url: URL) -> None:
                     text("SELECT version_num FROM alembic_version")
                 )
             ).scalar_one()
-            assert revision == "054_personal_task_artifacts"
+            assert revision == "056_messages_attention"
             admin_audit_index = (
                 await connection.execute(
                     text(
@@ -299,7 +299,12 @@ async def verify_head_schema(database_url: URL) -> None:
                                 'work_entity_artifacts',
                                 'work_entity_execution_contracts',
                                 'personal_task_artifacts',
-                                'personal_task_artifact_versions'
+                                'personal_task_artifact_versions',
+                                'communication_events',
+                                'user_attention_items',
+                                'message_threads',
+                                'message_thread_participants',
+                                'message_posts'
                               )
                             """
                         )
@@ -315,6 +320,46 @@ async def verify_head_schema(database_url: URL) -> None:
                 "work_entity_execution_contracts",
                 "personal_task_artifacts",
                 "personal_task_artifact_versions",
+                "communication_events",
+                "user_attention_items",
+                "message_threads",
+                "message_thread_participants",
+                "message_posts",
+            }
+            quick_note_columns = set(
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT column_name
+                            FROM information_schema.columns
+                            WHERE table_name = 'quick_notes'
+                            """
+                        )
+                    )
+                ).scalars()
+            )
+            assert "revision" in quick_note_columns
+            collaboration_articles = set(
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT slug
+                            FROM knowledge_articles
+                            WHERE slug IN (
+                                'sovmestnaya-rabota-i-realtime-v-zametkah',
+                                'soobshcheniya-obrashcheniya-i-vazhnoe'
+                            )
+                              AND status = 'published'
+                            """
+                        )
+                    )
+                ).scalars()
+            )
+            assert collaboration_articles == {
+                "sovmestnaya-rabota-i-realtime-v-zametkah",
+                "soobshcheniya-obrashcheniya-i-vazhnoe",
             }
             user_columns = set(
                 (

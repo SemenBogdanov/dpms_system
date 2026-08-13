@@ -379,6 +379,7 @@ test('mobile drawer exposes every required section', async ({ page }) => {
     'Трекер сроков',
     'Заметки',
     'Контакты',
+    'Сообщения',
     'Дашборд',
     'Отчёты',
     'Калибровка',
