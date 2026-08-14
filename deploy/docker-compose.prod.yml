@@ -20,6 +20,8 @@ services:
     image: deploy-backend:latest
     command: ["python", "-m", "app.workers.email_outbox"]
     restart: always
+    healthcheck:
+      disable: true
     env_file:
       - ${DPMS_ENV_FILE:-/opt/dpms/deploy/.env.prod}
     depends_on:
