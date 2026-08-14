@@ -143,6 +143,7 @@ type MockState = {
   threadUnread: number
   createCalls: number
   createdPayload: Record<string, unknown> | null
+  remoteReplyBody: string | null
 }
 
 async function installWebSocketMock(page: Page) {
@@ -153,6 +154,8 @@ async function installWebSocketMock(page: Page) {
         this.url = url;
         this.readyState = 0;
         this.onopen = null; this.onmessage = null; this.onclose = null; this.onerror = null;
+        window.__dpmsMessageSockets = window.__dpmsMessageSockets || [];
+        window.__dpmsMessageSockets.push(this);
         window.setTimeout(() => { this.readyState = 1; if (this.onopen) this.onopen(); }, 0);
       }
       send(data) {
@@ -168,6 +171,13 @@ async function installWebSocketMock(page: Page) {
       }
       close() { this.readyState = 3; if (this.onclose) this.onclose({ code: 1000 }); }
     }
+    window.__emitDpmsMessageEvent = (event) => {
+      for (const socket of window.__dpmsMessageSockets || []) {
+        if (socket.readyState === MockWebSocket.OPEN && socket.onmessage) {
+          socket.onmessage({ data: JSON.stringify(event) });
+        }
+      }
+    };
     window.WebSocket = MockWebSocket;
   `)
 }
@@ -210,7 +220,24 @@ async function installApiMock(page: Page, state: MockState) {
       return respond([{ ...thread, unread_count: state.threadUnread }])
     }
     if (path === `/api/messages/threads/${threadId}` && method === 'GET') {
-      return respond({ ...threadDetail, unread_count: state.threadUnread })
+      const posts = state.remoteReplyBody
+        ? [
+            ...threadDetail.posts,
+            {
+              id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+              thread_id: threadId,
+              author_id: peerId,
+              author_name: participant.full_name,
+              author_email: participant.email,
+              body: state.remoteReplyBody,
+              quick_note_id: null,
+              quick_note_title: null,
+              quick_note_available: false,
+              created_at: '2026-08-13T09:25:00Z',
+            },
+          ]
+        : threadDetail.posts
+      return respond({ ...threadDetail, posts, unread_count: state.threadUnread })
     }
     if (path === `/api/messages/threads/${threadId}/read` && method === 'POST') {
       state.threadUnread = 0
@@ -245,6 +272,7 @@ test('desktop inbox, exact read and protected compose', async ({ page }, testInf
     threadUnread: 1,
     createCalls: 0,
     createdPayload: null,
+    remoteReplyBody: null,
   }
   await installApiMock(page, state)
   await page.goto('/messages')
@@ -301,6 +329,7 @@ test('mobile list, detail and back navigation', async ({ page }, testInfo) => {
     threadUnread: 1,
     createCalls: 0,
     createdPayload: null,
+    remoteReplyBody: null,
   }
   await installApiMock(page, state)
   await page.goto('/messages')
@@ -318,4 +347,30 @@ test('mobile list, detail and back navigation', async ({ page }, testInfo) => {
   await page.getByRole('link', { name: 'Назад к списку сообщений' }).click()
   await expect(page).toHaveURL(/\/messages$/)
   await expect(page.getByText('Согласование материалов').first()).toBeVisible()
+})
+
+test('open thread resyncs when a colleague replies', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-light-messages')
+  const state: MockState = {
+    directUnread: false,
+    importantUnread: false,
+    threadUnread: 0,
+    createCalls: 0,
+    createdPayload: null,
+    remoteReplyBody: null,
+  }
+  await installApiMock(page, state)
+  await page.goto(`/messages/${threadId}`)
+  await expect(page.getByText('Посмотрите, пожалуйста, итоговый вариант.').last()).toBeVisible()
+
+  const remoteReply = 'Ответ коллеги появился без перезагрузки страницы.'
+  state.remoteReplyBody = remoteReply
+  await page.evaluate((activeThreadId) => {
+    const emit = (window as Window & {
+      __emitDpmsMessageEvent?: (event: Record<string, string>) => void
+    }).__emitDpmsMessageEvent
+    emit?.({ type: 'thread.changed', thread_id: activeThreadId })
+  }, threadId)
+
+  await expect(page.getByText(remoteReply)).toBeVisible()
 })

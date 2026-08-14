@@ -62,7 +62,7 @@ async def run() -> None:
     original_delay = settings.EMAIL_MESSAGE_DELAY_SECONDS
     original_url = settings.PUBLIC_APP_URL
     try:
-        settings.EMAIL_MESSAGE_DELAY_SECONDS = 0
+        settings.EMAIL_MESSAGE_DELAY_SECONDS = 60 * 60
         settings.PUBLIC_APP_URL = "https://example.invalid"
         async with AsyncSessionLocal() as db:
             sender = User(
@@ -129,9 +129,18 @@ async def run() -> None:
                 thread_id=thread.id,
                 recipient=recipient,
                 sender_name=sender.full_name,
-                now=future,
+                now=future + timedelta(minutes=10),
+            )
+            second_replay_id = await enqueue_message_notification(
+                db,
+                post_id=second_post.id,
+                thread_id=thread.id,
+                recipient=recipient,
+                sender_name=sender.full_name,
+                now=future + timedelta(minutes=30),
             )
             assert first_id == replay_id and first_id != second_id
+            assert second_id == second_replay_id
             await db.execute(
                 update(EmailOutbox)
                 .where(EmailOutbox.id.in_([first_id, second_id]))
@@ -150,6 +159,8 @@ async def run() -> None:
                 ).scalars()
             )
             assert len(rows) == 2
+            expected_delivery_at = future + timedelta(minutes=70)
+            assert all(row.available_at == expected_delivery_at for row in rows)
             serialized = " ".join(
                 str(value)
                 for row in rows
@@ -167,7 +178,7 @@ async def run() -> None:
             assert all(row.deep_link_path == f"/messages/{thread_id}" for row in rows)
             assert len(group_claimed_emails(rows)) == 1
 
-        claim_time = future + timedelta(hours=1)
+        claim_time = future + timedelta(hours=2)
         session_one = AsyncSessionLocal()
         session_two = AsyncSessionLocal()
         try:
@@ -293,7 +304,8 @@ async def run() -> None:
 
         print(
             "Email outbox smoke OK: body-free enqueue, idempotency, SKIP LOCKED, "
-            "lease recovery, coalescing, sanitized logs, worker cycle, success/retry/failure"
+            "one-hour quiet window, lease recovery, coalescing, sanitized logs, "
+            "worker cycle, success/retry/failure"
         )
     finally:
         settings.EMAIL_MESSAGE_DELAY_SECONDS = original_delay

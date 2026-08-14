@@ -207,7 +207,7 @@ export function MessagesPage() {
     } else {
       setDetail(null)
     }
-  }, [loadOptions, loadThread, threadId])
+  }, [loadOptions, loadThread, revision, threadId])
 
   const composeRecipient = searchParams.get('compose')
   useEffect(() => {

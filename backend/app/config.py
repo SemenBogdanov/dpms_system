@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     EMAIL_WORKER_BATCH_SIZE: int = 20
     EMAIL_WORKER_LEASE_SECONDS: int = 120
     EMAIL_WORKER_MAX_ATTEMPTS: int = 5
-    EMAIL_MESSAGE_DELAY_SECONDS: int = 30
+    EMAIL_MESSAGE_DELAY_SECONDS: int = 60 * 60
     EMAIL_RETRY_MAX_SECONDS: int = 900
 
     # Attachments

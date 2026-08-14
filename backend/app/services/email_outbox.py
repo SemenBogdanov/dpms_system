@@ -37,9 +37,12 @@ async def enqueue_email_notification(
     message_post_id: uuid.UUID | None = None,
     available_at: datetime | None = None,
     max_attempts: int | None = None,
+    coalesce_pending_group: bool = False,
 ) -> uuid.UUID:
     """Insert one durable intent without committing or contacting a provider."""
     outbox_id = uuid.uuid4()
+    normalized_email = _normalized_email(recipient_email)
+    delivery_at = available_at or utc_now()
     statement = (
         insert(EmailOutbox)
         .values(
@@ -51,19 +54,30 @@ async def enqueue_email_notification(
             source_id=source_id,
             message_post_id=message_post_id,
             recipient_user_id=recipient_user_id,
-            recipient_email=_normalized_email(recipient_email),
+            recipient_email=normalized_email,
             sender_name=(sender_name or "").strip()[:255] or None,
             deep_link_path=deep_link_path,
             status="pending",
             attempt_count=0,
             max_attempts=max_attempts or settings.EMAIL_WORKER_MAX_ATTEMPTS,
-            available_at=available_at or utc_now(),
+            available_at=delivery_at,
         )
         .on_conflict_do_nothing(index_elements=[EmailOutbox.idempotency_key])
         .returning(EmailOutbox.id)
     )
     inserted_id = (await db.execute(statement)).scalar_one_or_none()
     if inserted_id is not None:
+        if coalesce_pending_group:
+            await db.execute(
+                update(EmailOutbox)
+                .where(
+                    EmailOutbox.status == "pending",
+                    EmailOutbox.recipient_email == normalized_email,
+                    EmailOutbox.template_key == template_key,
+                    EmailOutbox.deep_link_path == deep_link_path,
+                )
+                .values(available_at=delivery_at, updated_at=utc_now())
+            )
         return inserted_id
     existing_id = (
         await db.execute(
@@ -99,6 +113,7 @@ async def enqueue_message_notification(
         sender_name=sender_name,
         deep_link_path=f"/messages/{thread_id}",
         available_at=current + timedelta(seconds=max(settings.EMAIL_MESSAGE_DELAY_SECONDS, 0)),
+        coalesce_pending_group=True,
     )
 
 
