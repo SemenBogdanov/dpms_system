@@ -12,6 +12,7 @@ from datetime import datetime
 from email.message import EmailMessage
 from email.utils import formataddr
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from app.config import settings
 from app.database import AsyncSessionLocal
@@ -168,9 +169,14 @@ async def run_worker_once(
     provider: EmailProvider,
     *,
     now: datetime | None = None,
+    recipient_user_id: UUID | None = None,
 ) -> int:
     async with AsyncSessionLocal() as db:
-        jobs = await claim_email_batch(db, now=now)
+        jobs = await claim_email_batch(
+            db,
+            now=now,
+            recipient_user_id=recipient_user_id,
+        )
         await db.commit()
     if not jobs:
         return 0

@@ -123,18 +123,29 @@ async def claim_email_batch(
     now: datetime | None = None,
     batch_size: int | None = None,
     lease_seconds: int | None = None,
+    recipient_user_id: uuid.UUID | None = None,
 ) -> list[EmailOutbox]:
     """Atomically claim due jobs; callers commit before provider I/O."""
     current = now or utc_now()
     limit = max(1, min(batch_size or settings.EMAIL_WORKER_BATCH_SIZE, 100))
     lease_for = max(30, lease_seconds or settings.EMAIL_WORKER_LEASE_SECONDS)
 
+    recovery_filters = [
+        EmailOutbox.status == "processing",
+        EmailOutbox.lease_expires_at <= current,
+    ]
+    pending_filters = [
+        EmailOutbox.status == "pending",
+        EmailOutbox.available_at <= current,
+        EmailOutbox.attempt_count < EmailOutbox.max_attempts,
+    ]
+    if recipient_user_id is not None:
+        recovery_filters.append(EmailOutbox.recipient_user_id == recipient_user_id)
+        pending_filters.append(EmailOutbox.recipient_user_id == recipient_user_id)
+
     await db.execute(
         update(EmailOutbox)
-        .where(
-            EmailOutbox.status == "processing",
-            EmailOutbox.lease_expires_at <= current,
-        )
+        .where(*recovery_filters)
         .values(
             status="pending",
             lease_token=None,
@@ -149,11 +160,7 @@ async def claim_email_batch(
         (
             await db.execute(
                 select(EmailOutbox)
-                .where(
-                    EmailOutbox.status == "pending",
-                    EmailOutbox.available_at <= current,
-                    EmailOutbox.attempt_count < EmailOutbox.max_attempts,
-                )
+                .where(*pending_filters)
                 .order_by(EmailOutbox.available_at.asc(), EmailOutbox.created_at.asc())
                 .limit(limit)
                 .with_for_update(skip_locked=True)

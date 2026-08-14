@@ -183,10 +183,18 @@ async def run() -> None:
         session_two = AsyncSessionLocal()
         try:
             first_claim = await claim_email_batch(
-                session_one, now=claim_time, batch_size=1, lease_seconds=30
+                session_one,
+                now=claim_time,
+                batch_size=1,
+                lease_seconds=30,
+                recipient_user_id=user_ids[1],
             )
             second_claim = await claim_email_batch(
-                session_two, now=claim_time, batch_size=1, lease_seconds=30
+                session_two,
+                now=claim_time,
+                batch_size=1,
+                lease_seconds=30,
+                recipient_user_id=user_ids[1],
             )
             assert len(first_claim) == 1 and len(second_claim) == 1
             assert first_claim[0].id != second_claim[0].id
@@ -224,7 +232,12 @@ async def run() -> None:
             await db.commit()
         recovery_time = claim_time + timedelta(minutes=1)
         async with AsyncSessionLocal() as db:
-            recovered = await claim_email_batch(db, now=recovery_time, batch_size=1)
+            recovered = await claim_email_batch(
+                db,
+                now=recovery_time,
+                batch_size=1,
+                recipient_user_id=user_ids[1],
+            )
             await db.commit()
         assert len(recovered) == 1 and recovered[0].id == expired_job.id
         assert recovered[0].attempt_count == 2
@@ -243,7 +256,10 @@ async def run() -> None:
         terminal_time = recovery_time + timedelta(minutes=1)
         async with AsyncSessionLocal() as db:
             terminal_claim = await claim_email_batch(
-                db, now=terminal_time, batch_size=1
+                db,
+                now=terminal_time,
+                batch_size=1,
+                recipient_user_id=user_ids[1],
             )
             await db.commit()
         assert len(terminal_claim) == 1 and terminal_claim[0].attempt_count == 3
@@ -293,7 +309,11 @@ async def run() -> None:
                 max_attempts=1,
             )
             await db.commit()
-        assert await run_worker_once(ConsoleEmailProvider(), now=worker_time) == 1
+        assert await run_worker_once(
+            ConsoleEmailProvider(),
+            now=worker_time,
+            recipient_user_id=user_ids[1],
+        ) == 1
         async with AsyncSessionLocal() as db:
             worker_status = (
                 await db.execute(
