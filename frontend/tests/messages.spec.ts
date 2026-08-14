@@ -373,4 +373,7 @@ test('open thread resyncs when a colleague replies', async ({ page }, testInfo) 
   }, threadId)
 
   await expect(page.getByText(remoteReply)).toBeVisible()
+  const renderedPosts = page.locator('article')
+  await expect(renderedPosts.first()).toContainText(remoteReply)
+  await expect(renderedPosts.last()).toContainText('Посмотрите, пожалуйста, итоговый вариант.')
 })

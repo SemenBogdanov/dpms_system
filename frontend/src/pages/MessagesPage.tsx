@@ -129,6 +129,14 @@ export function MessagesPage() {
     [ownedNotes],
   )
 
+  const orderedPosts = useMemo(
+    () => [...(detail?.posts || [])].sort((left, right) => {
+      const createdAtOrder = right.created_at.localeCompare(left.created_at)
+      return createdAtOrder || right.id.localeCompare(left.id)
+    }),
+    [detail?.posts],
+  )
+
   const tab: MessagesTab = searchParams.get('tab') === 'important' ? 'important' : 'direct'
 
   const selectTab = (nextTab: MessagesTab) => {
@@ -441,7 +449,7 @@ export function MessagesPage() {
       </header>
 
       <div className="min-h-[280px] flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4 sm:p-5">
-        {detail.posts.map((post) => {
+        {orderedPosts.map((post) => {
           const mine = post.author_id === user?.id
           return (
             <article

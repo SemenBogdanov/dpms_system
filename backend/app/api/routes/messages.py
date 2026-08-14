@@ -171,7 +171,7 @@ async def _thread_detail(
             select(MessagePost, User)
             .join(User, User.id == MessagePost.author_id)
             .where(MessagePost.thread_id == thread.id)
-            .order_by(MessagePost.created_at.asc(), MessagePost.id.asc())
+            .order_by(MessagePost.created_at.desc(), MessagePost.id.desc())
         )
     ).all()
     if not post_rows:

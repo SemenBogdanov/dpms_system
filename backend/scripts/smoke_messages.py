@@ -879,10 +879,15 @@ async def exercise_slice(
         sender_thread["unread_count"] == 1 and len(sender_thread["posts"]) == 2,
         "Reply did not increment sender unread state exactly once",
     )
+    require(
+        str(sender_thread["posts"][0]["id"]) == str(reply["id"])
+        and str(sender_thread["posts"][1]["id"]) == first_post_id,
+        "Thread detail is not ordered from newest to oldest",
+    )
     await api_json(
         client, "POST", f"/api/messages/threads/{thread_id}/read", sender.id, 200
     )
-    coverage.append("reply idempotency and sender unread transition")
+    coverage.append("reply idempotency, newest-first order, and sender unread transition")
     coverage.append("transactional body-free email outbox per message recipient")
 
     first_comment = await api_json(
