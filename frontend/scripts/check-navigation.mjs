@@ -23,10 +23,15 @@ const expectedItems = [
   ['calibration', '/calibration', 'Калибровка', 'management'],
   ['absences', '/absences', 'Отсутствия', 'management'],
   ['work-entities', '/work-entities', 'Проекты и цели', 'management'],
+  ['audit', '/audit', 'Аудит', 'audit'],
   ['competencies', '/competencies', 'Развитие', 'development'],
   ['feedback', '/feedback', 'Обратная связь', 'feedback'],
   ['settings', '/settings', 'Настройки', 'settings'],
   ['admin-users', '/admin/users', 'Админ', 'admin'],
+]
+
+const expectedInternalRoutes = [
+  ['/admin/integrations', 'Админ: интеграции'],
 ]
 
 const routePaths = new Set()
@@ -40,6 +45,7 @@ const errors = []
 const accessGuardChecks = [
   ["task sections use task workspace access", "item.section === 'task' && !hasTaskWorkspaceAccess(user)"],
   ["feedback section uses feedback access", "item.section === 'feedback' && !hasFeedbackAccess(user)"],
+  ["audit section uses audit access", "item.section === 'audit' && !hasAuditAccess(user)"],
   ["development section uses development access", "item.section === 'development' && !hasDevelopmentAccess(user)"],
   ["personal tools remain available", "item.section === 'personal'"],
   ["settings remain available", "item.section === 'settings'"],
@@ -66,10 +72,16 @@ for (const [label, sourceFragment] of accessGuardChecks) {
   }
 }
 
+for (const [path, label] of expectedInternalRoutes) {
+  if (!routePaths.has(path)) {
+    errors.push(`internal route missing: ${label} -> ${path}`)
+  }
+}
+
 const payloadVersionMatch = sidebarSource.match(/sidebarOrderPayload[\s\S]*?return\s*\{\s*version:\s*(\d+)/)
 const payloadVersion = payloadVersionMatch ? Number(payloadVersionMatch[1]) : 0
-if (payloadVersion < 5) {
-  errors.push(`sidebar menu payload version must be >= 5, got ${payloadVersion || 'unknown'}`)
+if (payloadVersion < 6) {
+  errors.push(`sidebar menu payload version must be >= 6, got ${payloadVersion || 'unknown'}`)
 }
 
 if (errors.length > 0) {

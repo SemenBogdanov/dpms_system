@@ -6,6 +6,7 @@ import {
   Calculator,
   CalendarClock,
   CalendarDays,
+  ClipboardCheck,
   ClipboardList,
   Contact,
   LayoutDashboard,
@@ -22,10 +23,10 @@ import {
   Users,
 } from 'lucide-react'
 import type { User } from '@/api/types'
-import { hasDevelopmentAccess, hasFeedbackAccess, hasTaskWorkspaceAccess } from '@/lib/access'
+import { hasAuditAccess, hasDevelopmentAccess, hasFeedbackAccess, hasTaskWorkspaceAccess } from '@/lib/access'
 
-export type SidebarGroupKey = 'tasks' | 'management' | 'development' | 'feedback' | 'settings' | 'admin'
-export type SidebarSection = 'task' | 'feedback' | 'development' | 'personal' | 'settings' | 'admin'
+export type SidebarGroupKey = 'tasks' | 'management' | 'audit' | 'development' | 'feedback' | 'settings' | 'admin'
+export type SidebarSection = 'task' | 'feedback' | 'audit' | 'development' | 'personal' | 'settings' | 'admin'
 export type SidebarRole = 'executor' | 'teamlead' | 'admin'
 
 export type SidebarNavItem = {
@@ -79,6 +80,7 @@ export type SidebarOrderInput = {
 export const sidebarGroups: SidebarGroupDefinition[] = [
   { key: 'tasks', label: 'Задачи', icon: ListChecks, placement: 'main', expandable: true },
   { key: 'management', label: 'Управление', icon: LayoutDashboard, placement: 'main', expandable: true },
+  { key: 'audit', label: 'Аудит', icon: ClipboardCheck, placement: 'main' },
   { key: 'development', label: 'Развитие', icon: BookOpenCheck, placement: 'main' },
   { key: 'feedback', label: 'Обратная связь', icon: MessageSquare, placement: 'main' },
   { key: 'settings', label: 'Настройки', icon: Settings, placement: 'bottom' },
@@ -102,6 +104,7 @@ export const sidebarNav: SidebarNavItem[] = [
   { id: 'calibration', to: '/calibration', label: 'Калибровка', icon: Scale, section: 'task', group: 'management', roles: ['admin'] },
   { id: 'absences', to: '/absences', label: 'Отсутствия', icon: CalendarDays, section: 'task', group: 'management', roles: ['teamlead', 'admin'] },
   { id: 'work-entities', to: '/work-entities', label: 'Проекты и цели', icon: Network, section: 'task', group: 'management' },
+  { id: 'audit', to: '/audit', label: 'Аудит', icon: ClipboardCheck, section: 'audit', group: 'audit' },
   { id: 'competencies', to: '/competencies', label: 'Развитие', icon: BookOpenCheck, section: 'development', group: 'development' },
   { id: 'feedback', to: '/feedback', label: 'Обратная связь', icon: MessageSquare, section: 'feedback', group: 'feedback' },
   { id: 'settings', to: '/settings', label: 'Настройки', icon: Settings, section: 'settings', group: 'settings' },
@@ -119,6 +122,7 @@ export const defaultSidebarOrder: SidebarOrder = {
   items: {
     tasks: sidebarNav.filter((item) => item.group === 'tasks').map((item) => item.id),
     management: sidebarNav.filter((item) => item.group === 'management').map((item) => item.id),
+    audit: sidebarNav.filter((item) => item.group === 'audit').map((item) => item.id),
     development: sidebarNav.filter((item) => item.group === 'development').map((item) => item.id),
     feedback: sidebarNav.filter((item) => item.group === 'feedback').map((item) => item.id),
   },
@@ -195,13 +199,17 @@ export function normalizeSidebarOrder(order?: SidebarOrderInput): SidebarOrder {
 
   const groups = normalizedGroups.length ? normalizedGroups : defaultSidebarOrder.groups
   const usedIds = new Set<string>()
-  const uniqueGroups = groups.map((group, index) => {
+  let uniqueGroups = groups.map((group, index) => {
     const id = usedIds.has(group.id) ? `${group.id}-${index + 1}` : group.id
     usedIds.add(id)
     return { ...group, id }
   })
   const version = typeof order?.version === 'number' ? order.version : 1
-  const shouldBackfillMissingDefaults = rawGroups.length > 0 && version < 5
+  if (rawGroups.length > 0 && version < 6 && !uniqueGroups.some((group) => group.id === 'audit')) {
+    const auditGroup = defaultSidebarOrder.groups.find((group) => group.id === 'audit')
+    if (auditGroup) uniqueGroups = [...uniqueGroups, auditGroup]
+  }
+  const shouldBackfillMissingDefaults = rawGroups.length > 0 && version < 6
   const assignedItemIds = new Set(uniqueGroups.flatMap((group) => group.itemIds))
   let mergedGroups = shouldBackfillMissingDefaults
     ? uniqueGroups.map((group) => {
@@ -212,7 +220,9 @@ export function normalizeSidebarOrder(order?: SidebarOrderInput): SidebarOrder {
             ? defaults.filter((itemId) => itemId === 'knowledge' || itemId === 'work-entities')
             : version < 4
               ? defaults.filter((itemId) => itemId === 'work-entities')
-              : defaults.filter((itemId) => itemId === 'messages')
+              : version < 5
+                ? defaults.filter((itemId) => itemId === 'messages')
+                : defaults.filter((itemId) => itemId === 'audit')
         const missingDefaults = versionDefaults.filter((itemId) => !assignedItemIds.has(itemId))
         if (missingDefaults.length === 0) return group
         missingDefaults.forEach((itemId) => assignedItemIds.add(itemId))
@@ -262,7 +272,7 @@ export function sidebarOrderPayload(order: SidebarOrder) {
       .filter(([itemId, label]) => navById.has(itemId) && Boolean(label))
   )
   return {
-    version: 5,
+    version: 6,
     groups: normalized.groups.map((group) => ({
       id: group.id,
       label: group.label.trim() || 'Кнопка',
@@ -294,6 +304,7 @@ export function visibleSidebarNav(user: User | null) {
   return sidebarNav.filter((item) => {
     if (item.section === 'task' && !hasTaskWorkspaceAccess(user)) return false
     if (item.section === 'feedback' && !hasFeedbackAccess(user)) return false
+    if (item.section === 'audit' && !hasAuditAccess(user)) return false
     if (item.section === 'development' && !hasDevelopmentAccess(user)) return false
     if (item.section === 'personal') return true
     if (item.section === 'settings') return true

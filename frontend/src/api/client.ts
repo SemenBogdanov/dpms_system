@@ -11,6 +11,7 @@ const API_BASE =
 const GET_TIMEOUT_MS = 10_000
 const WRITE_TIMEOUT_MS = 25_000
 const UPLOAD_TIMEOUT_MS = 60_000
+const INTEGRATION_TIMEOUT_MS = 120_000
 const RETRY_DELAY_MS = 350
 
 export class ApiUnavailableError extends Error {
@@ -18,6 +19,26 @@ export class ApiUnavailableError extends Error {
     super(message)
     this.name = 'ApiUnavailableError'
   }
+}
+
+export class ApiError extends Error {
+  status: number
+  code: string | null
+
+  constructor(status: number, message: string, code: string | null = null) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+  }
+}
+
+function errorCode(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null
+  const detail = (payload as { detail?: unknown }).detail
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return null
+  const code = (detail as { code?: unknown }).code
+  return typeof code === 'string' ? code : null
 }
 
 function errorMessage(payload: unknown, fallback: string): string {
@@ -72,8 +93,15 @@ function requestMethod(options: RequestInit) {
   return (options.method || 'GET').toUpperCase()
 }
 
-function requestTimeout(options: RequestInit, jsonRequest: boolean) {
+function requestTimeout(path: string, options: RequestInit, jsonRequest: boolean) {
   if (!jsonRequest) return UPLOAD_TIMEOUT_MS
+  if (
+    path.startsWith('/api/audit/synology')
+    || path.includes('/ai-atomization/')
+    || path.startsWith('/api/admin/integrations/ai')
+  ) {
+    return INTEGRATION_TIMEOUT_MS
+  }
   return requestMethod(options) === 'GET' ? GET_TIMEOUT_MS : WRITE_TIMEOUT_MS
 }
 
@@ -150,19 +178,19 @@ async function request<T>(
       ...options.headers,
     },
   }
-  const res = await fetchWithRetry(url, requestOptions, requestTimeout(options, jsonRequest))
+  const res = await fetchWithRetry(url, requestOptions, requestTimeout(path, options, jsonRequest))
   if (res.status === 401) {
     clearToken()
     if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
       window.location.href = '/login'
     }
     const err: unknown = await res.json().catch(() => null)
-    throw new Error(errorMessage(err, 'Требуется авторизация'))
+    throw new ApiError(res.status, errorMessage(err, 'Требуется авторизация'), errorCode(err))
   }
   if (!res.ok) {
     const err: unknown = await res.json().catch(() => null)
     const fallback = res.status === 422 ? 'Проверьте заполнение полей' : res.statusText || 'Ошибка запроса'
-    throw new Error(errorMessage(err, fallback))
+    throw new ApiError(res.status, errorMessage(err, fallback), errorCode(err))
   }
   const text = await res.text()
   return (text ? JSON.parse(text) : null) as T
@@ -182,12 +210,12 @@ async function requestBlob(path: string): Promise<Blob> {
       window.location.href = '/login'
     }
     const err: unknown = await res.json().catch(() => null)
-    throw new Error(errorMessage(err, 'Требуется авторизация'))
+    throw new ApiError(res.status, errorMessage(err, 'Требуется авторизация'), errorCode(err))
   }
   if (!res.ok) {
     const err: unknown = await res.json().catch(() => null)
     const fallback = res.status === 422 ? 'Проверьте заполнение полей' : res.statusText || 'Ошибка запроса'
-    throw new Error(errorMessage(err, fallback))
+    throw new ApiError(res.status, errorMessage(err, fallback), errorCode(err))
   }
   return res.blob()
 }

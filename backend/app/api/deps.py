@@ -184,3 +184,37 @@ def require_task_workspace_role(*allowed_roles: str) -> Callable:
         return user
 
     return _require_task_workspace_role
+
+
+def ensure_audit_access(user: User) -> User:
+    """Allow audit APIs only for admins or users explicitly enabled by admin."""
+    if user.role == UserRole.admin or user.audit_enabled:
+        return user
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Раздел аудита недоступен",
+    )
+
+
+async def require_audit_access(
+    user: User = Depends(get_current_user),
+) -> User:
+    """Dependency: current user must have the audit feature enabled."""
+    return ensure_audit_access(user)
+
+
+def require_audit_role(*allowed_roles: str) -> Callable:
+    """Dependency factory: audit feature gate plus role gate."""
+
+    async def _require_audit_role(
+        user: User = Depends(get_current_user),
+    ) -> User:
+        ensure_audit_access(user)
+        if user.role.value not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Недостаточно прав",
+            )
+        return user
+
+    return _require_audit_role

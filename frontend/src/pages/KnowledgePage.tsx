@@ -30,6 +30,7 @@ type KnowledgeFormState = {
 const SECTION_OPTIONS: SectionOption[] = [
   { id: 'start', label: 'Начать здесь' },
   { id: 'tasks', label: 'Задачи' },
+  { id: 'audit', label: 'Аудит' },
   { id: 'rules', label: 'Правила' },
   { id: 'general', label: 'Общее' },
 ]

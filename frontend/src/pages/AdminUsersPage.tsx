@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '@/api/client'
 import type { AdminUser, User, PeriodHistoryItem, LeagueEvaluation, LeagueChange, RolloverResponse } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
@@ -7,7 +8,7 @@ import { UserModal, type UserFormPayload } from '@/components/UserModal'
 import { UserAdminHistoryModal } from '@/components/UserAdminHistoryModal'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
-import { Copy, History, KeyRound, Pencil, Plus, RotateCcw, Trash2, UserPlus } from 'lucide-react'
+import { Copy, History, KeyRound, Pencil, PlugZap, Plus, RotateCcw, Trash2, UserPlus, Users } from 'lucide-react'
 
 const MONTHS = [
   'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
@@ -240,6 +241,7 @@ export function AdminUsersPage() {
         task_workspace_enabled: payload.task_workspace_enabled,
         can_link_queue_tasks_to_projects: payload.can_link_queue_tasks_to_projects,
         feedback_enabled: payload.feedback_enabled,
+        audit_enabled: payload.audit_enabled,
         competency_development_enabled: payload.competency_development_enabled,
         competency_constructor_enabled: payload.competency_constructor_enabled,
       })
@@ -255,6 +257,7 @@ export function AdminUsersPage() {
         task_workspace_enabled: payload.task_workspace_enabled,
         can_link_queue_tasks_to_projects: payload.can_link_queue_tasks_to_projects,
         feedback_enabled: payload.feedback_enabled,
+        audit_enabled: payload.audit_enabled,
         competency_development_enabled: payload.competency_development_enabled,
         competency_constructor_enabled: payload.competency_constructor_enabled,
         password: payload.password,
@@ -309,6 +312,7 @@ export function AdminUsersPage() {
           task_workspace_enabled: false,
           can_link_queue_tasks_to_projects: false,
           feedback_enabled: false,
+          audit_enabled: false,
           competency_development_enabled: true,
           competency_constructor_enabled: false,
           password,
@@ -399,6 +403,9 @@ export function AdminUsersPage() {
       <span className={accessBadgeClass(u.feedback_enabled, 'bg-emerald-50 text-emerald-700')}>
         ОС: {u.feedback_enabled ? 'вкл' : 'выкл'}
       </span>
+      <span className={accessBadgeClass(u.audit_enabled, 'bg-amber-50 text-amber-700')}>
+        Аудит: {u.audit_enabled ? 'вкл' : 'выкл'}
+      </span>
       <span className={accessBadgeClass(u.competency_development_enabled, 'bg-blue-50 text-blue-700')}>
         Развитие: {u.competency_development_enabled ? 'вкл' : 'выкл'}
       </span>
@@ -469,7 +476,20 @@ export function AdminUsersPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold text-slate-900">Сотрудники</h1>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-primary">Администрирование</p>
+          <h1 className="mt-1 text-2xl font-semibold text-slate-900">Сотрудники</h1>
+        </div>
+        <nav className="flex items-center rounded-md border border-slate-200 bg-white p-1" aria-label="Разделы администрирования">
+          <span className="inline-flex min-h-10 items-center gap-2 rounded bg-primary px-3 text-sm font-medium text-primary-foreground">
+            <Users className="h-4 w-4" />Сотрудники
+          </span>
+          <Link to="/admin/integrations" className="inline-flex min-h-10 items-center gap-2 rounded px-3 text-sm font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">
+            <PlugZap className="h-4 w-4" />Интеграции
+          </Link>
+        </nav>
+      </header>
 
       {/* Управление сотрудниками */}
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -548,7 +568,7 @@ export function AdminUsersPage() {
           ))}
         </div>
         <div className="mt-4 hidden overflow-x-auto rounded-lg border border-slate-200 lg:block">
-          <table className="min-w-[1120px] text-sm">
+          <table className="min-w-[1200px] text-sm">
             <thead className="bg-slate-50">
               <tr>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">ФИО</th>
@@ -560,6 +580,7 @@ export function AdminUsersPage() {
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Статус</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Задачи</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">ОС</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Аудит</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Развитие</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Действия</th>
               </tr>
@@ -634,6 +655,11 @@ export function AdminUsersPage() {
                   <td className="px-4 py-3">
                     <span className={accessBadgeClass(u.feedback_enabled, 'bg-emerald-50 text-emerald-700')}>
                       {u.feedback_enabled ? 'Вкл' : 'Выкл'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={accessBadgeClass(u.audit_enabled, 'bg-amber-50 text-amber-700')}>
+                      {u.audit_enabled ? 'Вкл' : 'Выкл'}
                     </span>
                   </td>
                   <td className="px-4 py-3">

@@ -6,6 +6,7 @@ import { ProtectedRoute } from '@/components/ProtectedRoute'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   firstAvailablePath,
+  hasAuditAccess,
   hasDevelopmentAccess,
   hasFeedbackAccess,
   hasTaskWorkspaceAccess,
@@ -69,6 +70,7 @@ const CalculatorPage = lazyPage(() => import('@/pages/CalculatorPage'), 'Calcula
 const ProfilePage = lazyPage(() => import('@/pages/ProfilePage'), 'ProfilePage')
 const ShopPage = lazyPage(() => import('@/pages/ShopPage'), 'ShopPage')
 const AdminUsersPage = lazyPage(() => import('@/pages/AdminUsersPage'), 'AdminUsersPage')
+const AdminIntegrationsPage = lazyPage(() => import('@/pages/AdminIntegrationsPage'), 'AdminIntegrationsPage')
 const CatalogPage = lazyPage(() => import('@/pages/CatalogPage'), 'CatalogPage')
 const KnowledgePage = lazyPage(() => import('@/pages/KnowledgePage'), 'KnowledgePage')
 const AbsencesPage = lazyPage(() => import('@/pages/AbsencesPage'), 'AbsencesPage')
@@ -79,6 +81,7 @@ const FeedbackPage = lazyPage(() => import('@/pages/FeedbackPage'), 'FeedbackPag
 const CompetenciesPage = lazyPage(() => import('@/pages/CompetenciesPage'), 'CompetenciesPage')
 const SettingsPage = lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage')
 const WorkEntitiesPage = lazyPage(() => import('@/pages/WorkEntitiesPage'), 'WorkEntitiesPage')
+const AuditPage = lazyPage(() => import('@/pages/AuditPage'), 'AuditPage')
 const ContactsPage = lazyPage(() => import('@/pages/ContactsPage'), 'ContactsPage')
 const MessagesPage = lazyPage(() => import('@/pages/MessagesPage'), 'MessagesPage')
 const QuickNotesPage = lazyPage(() => import('@/pages/QuickNotesPage'), 'QuickNotesPage')
@@ -126,6 +129,14 @@ function AdminRoute({ children }: { children: ReactElement }) {
 function FeedbackAccessRoute({ children }: { children: ReactElement }) {
   const { user } = useAuth()
   if (!hasFeedbackAccess(user)) {
+    return <Navigate to={firstAvailablePath(user)} replace />
+  }
+  return children
+}
+
+function AuditAccessRoute({ children }: { children: ReactElement }) {
+  const { user } = useAuth()
+  if (!hasAuditAccess(user)) {
     return <Navigate to={firstAvailablePath(user)} replace />
   }
   return children
@@ -194,6 +205,7 @@ function App() {
         <Route path="personal-tasks" element={<PersonalTasksPage />} />
         <Route path="deadline-trackers" element={<DeadlineTrackersPage />} />
         <Route path="work-entities" element={<TaskWorkspaceRoute><WorkEntitiesPage /></TaskWorkspaceRoute>} />
+        <Route path="audit" element={<AuditAccessRoute><AuditPage /></AuditAccessRoute>} />
         <Route path="shop" element={<TaskWorkspaceRoute><ShopPage /></TaskWorkspaceRoute>} />
         <Route
           path="feedback"
@@ -224,6 +236,14 @@ function App() {
           element={
             <AdminRoute>
               <AdminUsersPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="admin/integrations"
+          element={
+            <AdminRoute>
+              <AdminIntegrationsPage />
             </AdminRoute>
           }
         />

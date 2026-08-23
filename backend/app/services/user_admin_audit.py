@@ -39,6 +39,7 @@ AUDITED_USER_FIELDS = (
     "task_workspace_enabled",
     "can_link_queue_tasks_to_projects",
     "feedback_enabled",
+    "audit_enabled",
     "competency_development_enabled",
     "competency_constructor_enabled",
     "plan_started_at",

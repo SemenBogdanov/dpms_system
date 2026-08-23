@@ -109,6 +109,7 @@ export interface User {
   task_workspace_enabled: boolean
   can_link_queue_tasks_to_projects: boolean
   feedback_enabled: boolean
+  audit_enabled: boolean
   competency_development_enabled: boolean
   competency_constructor_enabled: boolean
   plan_started_at: string | null
@@ -125,6 +126,304 @@ export interface AuthenticatedUser extends User {
 
 export interface AdminUser extends AuthenticatedUser {
   temporary_password_expires_at: string | null
+}
+
+export type AuditCaseStatus = 'draft' | 'atomization' | 'ready' | 'archived'
+export type AuditWorkflowStage =
+  | 'unassigned'
+  | 'atomization'
+  | 'alpha_review'
+  | 'commission_pending'
+  | 'fixes_required'
+  | 'fixing'
+  | 'recommission_pending'
+  | 'ready'
+export type AuditAtomState = 'draft' | 'ready' | 'excluded'
+export type AuditTeamRole = 'leader' | 'member'
+export type AuditDocumentKind = 'technical_spec' | 'atom_register' | 'audit_result' | 'protocol' | 'other'
+
+export interface AuditAtom {
+  id: string
+  case_id: string
+  item_code: string
+  title: string
+  digital_product: string
+  work_type: string | null
+  object_type: string | null
+  source_clause: string | null
+  system_url: string | null
+  notes: string | null
+  state: AuditAtomState
+  source_sheet: string | null
+  source_row: number | null
+  source_fingerprint: string | null
+  import_batch_id: string | null
+  alpha_result: string | null
+  alpha_result_raw: string | null
+  alpha_date: string | null
+  commission_result: string | null
+  commission_result_raw: string | null
+  commission_date: string | null
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface AuditCaseSummary {
+  id: string
+  case_number: string
+  code: string
+  created_by_id: string | null
+  responsible_user_id: string | null
+  responsible_name: string | null
+  responsible_email: string | null
+  title: string
+  digital_product: string
+  contract_reference_mask: string | null
+  contract_date: string | null
+  status: AuditCaseStatus
+  workflow_stage: AuditWorkflowStage
+  notes: string | null
+  atoms_count: number
+  ready_atoms_count: number
+  draft_atoms_count: number
+  excluded_atoms_count: number
+  alpha_passed_count: number
+  commission_passed_count: number
+  documents_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface AuditCaseDetail extends AuditCaseSummary {
+  atoms: AuditAtom[]
+}
+
+export interface AuditEvent {
+  id: string
+  case_id: string
+  atom_id: string | null
+  import_batch_id: string | null
+  actor_id: string | null
+  actor_name: string | null
+  event_type: string
+  message: string
+  payload_json: Record<string, unknown> | null
+  created_at: string
+}
+
+export interface AuditCaseCreate {
+  title: string
+  digital_product: string
+  contract_reference?: string | null
+  contract_date?: string | null
+  status?: AuditCaseStatus
+  workflow_stage?: AuditWorkflowStage
+  notes?: string | null
+}
+
+export type AuditCaseUpdate = Partial<AuditCaseCreate>
+
+export interface AuditAtomCreate {
+  item_code?: string | null
+  title: string
+  digital_product: string
+  work_type?: string | null
+  object_type?: string | null
+  source_clause?: string | null
+  system_url?: string | null
+  notes?: string | null
+  state?: AuditAtomState
+  alpha_result_raw?: string | null
+  commission_result_raw?: string | null
+}
+
+export type AuditAtomUpdate = Partial<AuditAtomCreate>
+
+export interface AuditImportIssue {
+  row_number: number
+  field: string
+  message: string
+  severity: 'error' | 'warning'
+}
+
+export interface AuditImportPreviewRow {
+  group_id: string
+  row_number: number
+  item_code: string
+  contract_reference_mask: string | null
+  contract_date: string | null
+  title: string | null
+  digital_product: string | null
+  work_type: string | null
+  object_type: string | null
+  source_clause: string | null
+  system_url_mask: string | null
+  state: AuditAtomState
+  source_sheet: string | null
+  source_row: number | null
+  alpha_result: string | null
+  alpha_result_raw: string | null
+  alpha_date: string | null
+  commission_result: string | null
+  commission_result_raw: string | null
+  commission_date: string | null
+  issues: AuditImportIssue[]
+}
+
+export interface AuditImportPreviewGroup {
+  group_id: string
+  contract_reference_mask: string
+  total_rows: number
+  valid_rows: number
+  error_rows: number
+  warning_rows: number
+  digital_products: string[]
+}
+
+export interface AuditImportPreview {
+  sha256: string
+  source_sheet: string
+  total_rows: number
+  valid_rows: number
+  error_rows: number
+  warning_rows: number
+  has_errors: boolean
+  grouped_counts: AuditImportPreviewGroup[]
+  rows: AuditImportPreviewRow[]
+}
+
+export interface AuditTeamMember {
+  id: string
+  user_id: string
+  full_name: string
+  email: string
+  role: AuditTeamRole
+  is_active: boolean
+  audit_enabled: boolean
+  added_by_id: string | null
+  created_at: string
+}
+
+export interface AuditTeamCandidate {
+  user_id: string
+  full_name: string
+  email: string
+  is_active: boolean
+  audit_enabled: boolean
+}
+
+export interface AuditDocument {
+  id: string
+  case_id: string
+  uploaded_by_id: string | null
+  uploaded_by_name: string | null
+  kind: AuditDocumentKind
+  display_name: string
+  content_type: string
+  size_bytes: number
+  sha256: string
+  created_at: string
+}
+
+export interface AuditDocumentUploadItem {
+  case: AuditCaseDetail
+  document: AuditDocument
+}
+
+export interface AuditDocumentBatchResponse {
+  items: AuditDocumentUploadItem[]
+}
+
+export interface AuditAtomizationSkillVersion {
+  id: string
+  skill_id: string
+  slug: string
+  name: string
+  description: string | null
+  version: string
+  schema_version: string
+  content_sha256: string
+  source_filename: string
+  is_enabled: boolean
+  is_active: boolean
+  created_at: string
+  activated_at: string | null
+}
+
+export interface AuditAtomizationSkillList {
+  items: AuditAtomizationSkillVersion[]
+}
+
+export interface AuditAssignment {
+  id: string
+  case_id: string
+  case_number: string
+  case_title: string
+  digital_product: string
+  case_status: AuditCaseStatus
+  workflow_stage: AuditWorkflowStage
+  atoms_count: number
+  assignee_id: string
+  assignee_name: string
+  scheduled_date: string
+  assigned_by_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface AuditAssignmentList {
+  date_from: string
+  date_to: string
+  items: AuditAssignment[]
+}
+
+export interface AuditAISourceRef {
+  source_unit_id: string
+  locator: string
+  excerpt: string
+}
+
+export interface AuditAIAtomDraft {
+  id: string
+  title: string
+  digital_product: string
+  work_type: string | null
+  object_type: string | null
+  source_clause: string
+  notes: string | null
+  confidence_percent: number | null
+  review_status: 'pending' | 'accepted' | 'rejected' | 'committed'
+  sort_order: number
+  source_refs: AuditAISourceRef[]
+}
+
+export interface AuditAIAtomizationAttempt {
+  id: string
+  case_id: string
+  document_id: string
+  skill_version_id: string
+  skill_name: string
+  skill_version: string
+  status: 'running' | 'draft_ready' | 'failed' | 'committed'
+  config_version: number
+  model_name: string
+  document_sha256: string
+  skill_sha256: string
+  coverage_summary: Record<string, number>
+  warnings: string[]
+  error_code: string | null
+  drafts: AuditAIAtomDraft[]
+  created_at: string
+  committed_at: string | null
+}
+
+export interface AuditAIAtomizationCommitResult {
+  attempt_id: string
+  case_id: string
+  atoms_created: number
+  atom_ids: string[]
+  already_committed: boolean
 }
 
 export type AdminUserAuditAction = 'created' | 'updated' | 'temporary_password_issued'
@@ -2341,4 +2640,112 @@ export interface PersonalTaskArtifact {
   updated_at: string
   can_edit: boolean
   versions: PersonalTaskArtifactVersion[]
+}
+
+export interface AuditSynologyConnection {
+  configured: boolean
+  id: string | null
+  display_name: string | null
+  base_url: string | null
+  account_name: string | null
+  root_path: string | null
+  enabled: boolean
+  is_active: boolean
+  credential_saved: boolean
+  config_version: number | null
+  last_tested_at: string | null
+  last_test_status: 'ok' | 'error' | null
+  last_verified_config_version: number | null
+  ready_for_use: boolean
+  last_error_code: string | null
+  allowed_origins_configured: boolean
+  encryption_key_configured: boolean
+  updated_at: string | null
+}
+
+export interface AuditSynologyConnectionList {
+  items: AuditSynologyConnection[]
+  allowed_origins_configured: boolean
+  encryption_key_configured: boolean
+}
+
+export interface AuditSynologyConnectResponse {
+  session_token: string
+  expires_at: string
+  connection: AuditSynologyConnection
+}
+
+export interface AuditSynologyFile {
+  item_id: string
+  path_token: string
+  name: string
+  is_dir: boolean
+  size_bytes: number
+  modified_at: number
+  extension: string
+  selectable: boolean
+  already_imported: boolean
+  disabled_reason: string | null
+}
+
+export interface AuditSynologyBrowser {
+  current_folder_name: string
+  root_folder_name: string
+  parent_token: string | null
+  offset: number
+  total: number
+  items: AuditSynologyFile[]
+}
+
+export interface AuditSynologyPreview {
+  preview_token: string
+  expires_in_seconds: number
+  file_count: number
+  total_size_bytes: number
+  items: Array<{
+    file_token: string
+    name: string
+    size_bytes: number
+    modified_at: number
+    extension: string
+  }>
+}
+
+export interface AuditSynologyImportResult {
+  imported_count: number
+  total_size_bytes: number
+  items: Array<{
+    case_id: string
+    case_number: string
+    document_id: string
+    file_name: string
+    size_bytes: number
+  }>
+}
+
+export interface AIProviderConfig {
+  configured: boolean
+  id: string | null
+  provider_kind: 'openai_compatible'
+  display_name: string | null
+  base_url: string | null
+  model_name: string | null
+  enabled: boolean
+  api_key_configured: boolean
+  config_version: number | null
+  last_tested_at: string | null
+  last_test_status: 'ok' | 'error' | null
+  last_verified_config_version: number | null
+  ready_for_use: boolean
+  last_error_code: string | null
+  allowed_origins_configured: boolean
+  encryption_key_configured: boolean
+  updated_at: string | null
+}
+
+export interface AIProviderTestResult {
+  ok: boolean
+  model_name: string
+  message: string
+  tested_at: string
 }

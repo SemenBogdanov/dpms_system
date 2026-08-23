@@ -1,0 +1,8 @@
+# Non-secret defaults for external integrations.
+# Allowed origins contain only scheme + host + optional port, without API paths.
+SYNOLOGY_ALLOWED_ORIGINS=https://fs.ac.gov.ru:5001
+SYNOLOGY_CA_BUNDLE=/app/certs/letsencrypt-gen-y.pem
+AI_PROVIDER_ALLOWED_ORIGINS=https://api.rox.one
+AI_PROVIDER_DEFAULT_DISPLAY_NAME=ROX-1
+AI_PROVIDER_DEFAULT_BASE_URL=https://api.rox.one/v1
+AI_PROVIDER_DEFAULT_MODEL_NAME=cx/gpt-5.6-sol-max

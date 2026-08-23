@@ -46,6 +46,27 @@ from app.models.personal_task_artifact import (
     PersonalTaskArtifactVersion,
 )
 from app.models.deadline_tracker import DeadlineTracker
+from app.models.audit import (
+    AuditAIAtomDraft,
+    AuditAIAtomizationAttempt,
+    AuditAssignment,
+    AuditAtom,
+    AuditCase,
+    AuditDocument,
+    AuditEvent,
+    AuditImportBatch,
+    AuditSynologyConnection,
+    AuditSynologyEvent,
+    AuditSynologyImport,
+    AuditSynologyImportBatch,
+    AuditTeamMember,
+)
+from app.models.ai_provider import (
+    AIProviderConfig,
+    AIProviderEvent,
+    AuditAtomizationSkill,
+    AuditAtomizationSkillVersion,
+)
 from app.models.execution_contract import WorkEntityExecutionContract
 from app.models.work_entity import (
     WorkEntity,
@@ -107,6 +128,23 @@ __all__ = [
     "PersonalTaskArtifact",
     "PersonalTaskArtifactVersion",
     "DeadlineTracker",
+    "AuditCase",
+    "AuditAIAtomDraft",
+    "AuditAIAtomizationAttempt",
+    "AuditAssignment",
+    "AuditAtom",
+    "AuditImportBatch",
+    "AuditDocument",
+    "AuditSynologyConnection",
+    "AuditSynologyEvent",
+    "AuditSynologyImport",
+    "AuditSynologyImportBatch",
+    "AuditTeamMember",
+    "AuditEvent",
+    "AIProviderConfig",
+    "AIProviderEvent",
+    "AuditAtomizationSkill",
+    "AuditAtomizationSkillVersion",
     "WorkEntityExecutionContract",
     "WorkEntity",
     "WorkEntityMember",

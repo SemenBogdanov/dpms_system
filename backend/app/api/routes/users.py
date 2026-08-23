@@ -140,6 +140,7 @@ async def create_user(
         task_workspace_enabled=body.task_workspace_enabled,
         can_link_queue_tasks_to_projects=body.can_link_queue_tasks_to_projects,
         feedback_enabled=body.feedback_enabled,
+        audit_enabled=body.audit_enabled,
         competency_development_enabled=body.competency_development_enabled,
         competency_constructor_enabled=body.competency_constructor_enabled,
         plan_started_at=now,
@@ -244,6 +245,9 @@ async def update_user(
     if body.feedback_enabled is not None:
         revoke_sessions = revoke_sessions or body.feedback_enabled != user.feedback_enabled
         user.feedback_enabled = body.feedback_enabled
+    if body.audit_enabled is not None:
+        revoke_sessions = revoke_sessions or body.audit_enabled != user.audit_enabled
+        user.audit_enabled = body.audit_enabled
     if body.competency_development_enabled is not None:
         revoke_sessions = (
             revoke_sessions

@@ -19,9 +19,12 @@ services:
     build: ./backend
     ports:
       - "${DPMS_BACKEND_PORT:-8000}:8000"
+    env_file:
+      - ./deploy/integrations.defaults
     environment:
       DATABASE_URL: postgresql+asyncpg://dpms_user:dpms_pass@db:5432/dpms
       UPLOAD_DIR: /app/uploads
+      INTEGRATION_SECRET_KEY: ${INTEGRATION_SECRET_KEY:-}
     depends_on:
       db:
         condition: service_healthy
