@@ -290,7 +290,7 @@ def upgrade() -> None:
             document_sha256, skill_sha256, response_sha256, atom_count,
             coverage_json, warnings_json, created_by_id, created_at
         )
-        SELECT gen_random_uuid(), attempt.case_id, attempt.canonical_run_id,
+        SELECT attempt.id, attempt.case_id, attempt.canonical_run_id,
                attempt.document_id, attempt.skill_version_id, attempt.provider_config_id,
                attempt.provider_config_version, provider.display_name, attempt.model_name,
                attempt.document_sha256, attempt.skill_sha256,
@@ -311,7 +311,7 @@ def upgrade() -> None:
             source_clause, notes, source_refs_json, source_fingerprint,
             confidence_percent, sort_order, created_at
         )
-        SELECT gen_random_uuid(), registry.id, draft.case_id, draft.title, draft.digital_product,
+        SELECT draft.id, registry.id, draft.case_id, draft.title, draft.digital_product,
                draft.work_type, draft.object_type, draft.source_clause, draft.notes,
                draft.source_refs_json, draft.source_fingerprint, draft.confidence_percent,
                draft.sort_order, draft.created_at
