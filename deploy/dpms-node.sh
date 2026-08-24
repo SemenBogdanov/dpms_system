@@ -257,16 +257,16 @@ healthcheck() {
   fi
   if [[ -f "$DPMS_COMPOSE_FILE" ]] && \
     docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
-      ps --status running --services 2>/dev/null | grep -Fxq 'email-worker'; then
+      ps --status running --services 2>/dev/null | grep -Fx 'email-worker' >/dev/null; then
     email_worker=running
   else
     email_worker=missing
   fi
   if [[ -f "$DPMS_COMPOSE_FILE" ]] && \
     docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
-      config --services 2>/dev/null | grep -Fxq 'audit-worker'; then
+      config --services 2>/dev/null | grep -Fx 'audit-worker' >/dev/null; then
     if docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
-      ps --status running --services 2>/dev/null | grep -Fxq 'audit-worker'; then
+      ps --status running --services 2>/dev/null | grep -Fx 'audit-worker' >/dev/null; then
       audit_worker=running
     else
       audit_worker=missing
@@ -819,7 +819,7 @@ rollback_release() {
     cp "$backup_dir/current-release-before.txt" "$DPMS_LIVE_ROOT/current-release"
   fi
   cd "$DPMS_LIVE_ROOT/deploy"
-  if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fxq audit-worker; then
+  if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fx audit-worker >/dev/null; then
     runtime_services+=(audit-worker)
   else
     docker rm -f deploy-audit-worker-1 >/dev/null 2>&1 || true
