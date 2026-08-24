@@ -269,7 +269,7 @@ async def verify_head_schema(database_url: URL) -> None:
                     text("SELECT version_num FROM alembic_version")
                 )
             ).scalar_one()
-            assert revision == "057_email_outbox"
+            assert revision == "072_audit_multi_model"
             admin_audit_index = (
                 await connection.execute(
                     text(
@@ -305,7 +305,10 @@ async def verify_head_schema(database_url: URL) -> None:
                                 'message_threads',
                                 'message_thread_participants',
                                 'message_posts',
-                                'email_outbox'
+                                'email_outbox',
+                                'audit_tz_runs',
+                                'audit_tz_runtime_jobs',
+                                'audit_tz_artifacts'
                               )
                             """
                         )
@@ -327,6 +330,32 @@ async def verify_head_schema(database_url: URL) -> None:
                 "message_thread_participants",
                 "message_posts",
                 "email_outbox",
+                "audit_tz_runs",
+                "audit_tz_runtime_jobs",
+                "audit_tz_artifacts",
+            }
+            runtime_columns = set(
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT column_name
+                            FROM information_schema.columns
+                            WHERE table_name = 'audit_atomization_skill_versions'
+                              AND column_name IN (
+                                'runtime_checked_at',
+                                'runtime_error_code',
+                                'runtime_selftest_json'
+                              )
+                            """
+                        )
+                    )
+                ).scalars()
+            )
+            assert runtime_columns == {
+                "runtime_checked_at",
+                "runtime_error_code",
+                "runtime_selftest_json",
             }
             quick_note_columns = set(
                 (
@@ -352,7 +381,8 @@ async def verify_head_schema(database_url: URL) -> None:
                             WHERE slug IN (
                                 'sovmestnaya-rabota-i-realtime-v-zametkah',
                                 'soobshcheniya-obrashcheniya-i-vazhnoe',
-                                'email-uvedomleniya-o-soobshcheniyah'
+                                'email-uvedomleniya-o-soobshcheniyah',
+                                'audit-ai-atomization-skills'
                             )
                               AND status = 'published'
                             """
@@ -364,6 +394,7 @@ async def verify_head_schema(database_url: URL) -> None:
                 "sovmestnaya-rabota-i-realtime-v-zametkah",
                 "soobshcheniya-obrashcheniya-i-vazhnoe",
                 "email-uvedomleniya-o-soobshcheniyah",
+                "audit-ai-atomization-skills",
             }
             user_columns = set(
                 (

@@ -3,27 +3,34 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+import hmac
 from io import BytesIO
 import json
 from pathlib import Path
 import re
+import secrets
 from typing import Literal
+import unicodedata
+from uuid import UUID
 from xml.etree import ElementTree as ET
 from zipfile import BadZipFile, ZipFile
 
-from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from pypdf import PdfReader
 
 from app.config import settings
+from app.core.security import create_access_token, decode_access_token
 from app.models.ai_provider import AuditAtomizationSkillVersion
 from app.models.audit import AuditCase, AuditDocument
-from app.schemas.audit_ai import AuditAtomizationSkillPackage
 from app.services.ai_provider import generate_text
+from app.services.audit_skill_package import (
+    MAX_DECLARATIVE_SKILL_BYTES as MAX_SKILL_BYTES,
+    parse_audit_skill_package,
+)
 
 
-MAX_SKILL_BYTES = 256 * 1024
 MAX_SOURCE_BYTES = 25 * 1024 * 1024
 MAX_SOURCE_CHARS = 35_000
 MAX_SOURCE_UNITS = 500
@@ -96,6 +103,34 @@ class PreparedAuditAtomization:
     units: list[AuditSourceUnit]
     source_manifest: list[dict]
     prompt_sha256: str
+    privacy_verified: bool
+
+
+@dataclass(frozen=True)
+class PreparedPrivacySafeAtomization:
+    prepared: PreparedAuditAtomization
+    pseudonym: str
+    alias_digest: str
+    replacement_count: int
+    identifier_count: int
+    source_unit_count: int
+    character_count: int
+    samples: list[dict[str, str]]
+    payload_sha256: str
+
+
+@dataclass(frozen=True)
+class AuditPrivacyPreview:
+    prepared: PreparedAuditAtomization
+    token: str
+    expires_at: datetime
+    pseudonym: str
+    replacement_count: int
+    identifier_count: int
+    source_unit_count: int
+    character_count: int
+    samples: list[dict[str, str]]
+    payload_sha256: str
 
 
 class _ModelAtom(BaseModel):
@@ -146,27 +181,6 @@ class _ModelResult(BaseModel):
         if any(len(item) > 500 for item in cleaned):
             raise ValueError("Предупреждение модели слишком длинное")
         return cleaned
-
-
-def parse_audit_skill_package(filename: str, data: bytes) -> tuple[AuditAtomizationSkillPackage, str]:
-    safe_name = Path(filename or "audit-skill.json").name[:255]
-    if Path(safe_name).suffix.lower() != ".json":
-        raise HTTPException(status_code=400, detail="Skill импортируется только как декларативный JSON")
-    if not data:
-        raise HTTPException(status_code=400, detail="Файл skill пустой")
-    if len(data) > MAX_SKILL_BYTES:
-        raise HTTPException(status_code=413, detail="Файл skill больше 256 КБ")
-    try:
-        payload = json.loads(data.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise HTTPException(status_code=400, detail="Skill должен быть корректным UTF-8 JSON")
-    try:
-        package = AuditAtomizationSkillPackage.model_validate(payload)
-    except ValidationError as error:
-        first = error.errors()[0]
-        field = ".".join(str(item) for item in first.get("loc", ())) or "skill"
-        raise HTTPException(status_code=422, detail=f"Некорректное поле {field}: {first.get('msg', 'ошибка')}")
-    return package, sha256(data).hexdigest()
 
 
 def _safe_document_bytes(document: AuditDocument) -> bytes:
@@ -394,6 +408,274 @@ def _build_messages(
     ]
 
 
+_DASH_TRANSLATION = str.maketrans({char: "-" for char in "‐‑‒–—―−"})
+_PRIVACY_TOKEN_TYPE = "audit_ai_privacy_preview_v1"
+_PRIVACY_PREVIEW_MINUTES = 10
+_PSEUDONYM_RE = re.compile(r"^\[ДОГОВОР-[A-F0-9]{8}\]$")
+
+
+def _normalized_identifier(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).translate(_DASH_TRANSLATION).casefold()
+    return "".join(normalized.split())
+
+
+def _identifier_pattern(value: str) -> re.Pattern[str]:
+    normalized = _normalized_identifier(value)
+    if len(normalized) < 4:
+        raise AuditAIAtomizationError(
+            "identifier_too_short",
+            "Номер договора или его вариант должен содержать минимум 4 значимых символа",
+        )
+    tokens = [
+        r"[-‐‑‒–—―−]" if char == "-" else re.escape(char)
+        for char in normalized
+    ]
+    body = r"\s*".join(tokens)
+    prefix = r"(?<!\w)" if normalized[0].isalnum() else ""
+    suffix = r"(?!\w)" if normalized[-1].isalnum() else ""
+    return re.compile(f"{prefix}{body}{suffix}", re.IGNORECASE)
+
+
+def _identifier_digest(identifiers: list[str]) -> str:
+    normalized = sorted({_normalized_identifier(item) for item in identifiers})
+    message = "\0".join(normalized).encode("utf-8")
+    return hmac.new(
+        settings.DPMS_SECRET_KEY.encode("utf-8"),
+        b"audit-ai-privacy-aliases-v1\0" + message,
+        sha256,
+    ).hexdigest()
+
+
+def _replace_identifiers(text: str, identifiers: list[str], pseudonym: str) -> tuple[str, int]:
+    sanitized = unicodedata.normalize("NFKC", text)
+    replacements = 0
+    unique_identifiers = sorted(
+        {_normalized_identifier(item): item for item in identifiers}.values(),
+        key=lambda item: len(_normalized_identifier(item)),
+        reverse=True,
+    )
+    for identifier in unique_identifiers:
+        sanitized, count = _identifier_pattern(identifier).subn(pseudonym, sanitized)
+        replacements += count
+    return sanitized, replacements
+
+
+def _assert_no_identifier_leak(serialized_payload: str, identifiers: list[str]) -> None:
+    if any(_identifier_pattern(identifier).search(serialized_payload) for identifier in identifiers):
+        raise AuditAIAtomizationError(
+            "privacy_leak_detected",
+            "Номер договора сохранился в исходящем запросе; передача заблокирована",
+            409,
+        )
+
+
+def prepare_privacy_safe_atomization(
+    *,
+    audit_case: AuditCase,
+    document: AuditDocument,
+    skill_version: AuditAtomizationSkillVersion,
+    identifiers: list[str],
+    pseudonym: str | None = None,
+) -> PreparedPrivacySafeAtomization:
+    clean_identifiers = [item.strip() for item in identifiers if item.strip()]
+    if not clean_identifiers:
+        raise AuditAIAtomizationError("identifier_required", "Укажите номер договора или его точный вариант")
+    pseudonym = pseudonym or f"[ДОГОВОР-{secrets.token_hex(4).upper()}]"
+    if not _PSEUDONYM_RE.fullmatch(pseudonym):
+        raise AuditAIAtomizationError("privacy_token_invalid", "Предпросмотр обезличивания недействителен", 409)
+
+    original_units = extract_audit_source_units(document)
+    sanitized_product, replacement_count = _replace_identifiers(
+        audit_case.digital_product,
+        clean_identifiers,
+        pseudonym,
+    )
+    sanitized_units: list[AuditSourceUnit] = []
+    samples: list[dict[str, str]] = []
+    for unit in original_units:
+        sanitized_text, unit_replacements = _replace_identifiers(unit.text, clean_identifiers, pseudonym)
+        replacement_count += unit_replacements
+        sanitized_unit = AuditSourceUnit(
+            source_unit_id=unit.source_unit_id,
+            locator=unit.locator,
+            text=sanitized_text,
+            text_sha256=sha256(sanitized_text.encode("utf-8")).hexdigest(),
+        )
+        sanitized_units.append(sanitized_unit)
+        if unit_replacements and len(samples) < 3:
+            samples.append({
+                "source_unit_id": unit.source_unit_id,
+                "locator": unit.locator,
+                "excerpt": sanitized_text[:320],
+            })
+    if replacement_count == 0:
+        raise AuditAIAtomizationError(
+            "identifier_not_found",
+            "Указанный номер договора не найден в ТЗ; проверьте номер и допустимые варианты",
+        )
+
+    messages = _build_messages(
+        SimpleAuditCase(digital_product=sanitized_product),
+        skill_version,
+        sanitized_units,
+    )
+    for outbound_text in [
+        sanitized_product,
+        skill_version.instructions_text,
+        *(str(item) for item in (skill_version.rules_json or [])),
+        *(unit.text for unit in sanitized_units),
+    ]:
+        _assert_no_identifier_leak(outbound_text, clean_identifiers)
+    canonical_payload = json.dumps(messages, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    _assert_no_identifier_leak(canonical_payload, clean_identifiers)
+    payload_sha256 = sha256(canonical_payload.encode("utf-8")).hexdigest()
+    prepared = PreparedAuditAtomization(
+        messages=messages,
+        units=original_units,
+        source_manifest=[
+            {
+                "source_unit_id": unit.source_unit_id,
+                "locator": unit.locator,
+                "text_sha256": unit.text_sha256,
+                "char_count": len(unit.text),
+            }
+            for unit in original_units
+        ],
+        prompt_sha256=payload_sha256,
+        privacy_verified=True,
+    )
+    return PreparedPrivacySafeAtomization(
+        prepared=prepared,
+        pseudonym=pseudonym,
+        alias_digest=_identifier_digest(clean_identifiers),
+        replacement_count=replacement_count,
+        identifier_count=len({_normalized_identifier(item) for item in clean_identifiers}),
+        source_unit_count=len(original_units),
+        character_count=sum(len(unit.text) for unit in sanitized_units),
+        samples=samples,
+        payload_sha256=payload_sha256,
+    )
+
+
+@dataclass(frozen=True)
+class SimpleAuditCase:
+    digital_product: str
+
+
+def create_audit_privacy_preview(
+    *,
+    user_id: UUID,
+    case_id: UUID,
+    audit_case: AuditCase,
+    document: AuditDocument,
+    skill_version: AuditAtomizationSkillVersion,
+    provider,
+    identifiers: list[str],
+) -> AuditPrivacyPreview:
+    privacy = prepare_privacy_safe_atomization(
+        audit_case=audit_case,
+        document=document,
+        skill_version=skill_version,
+        identifiers=identifiers,
+    )
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=_PRIVACY_PREVIEW_MINUTES)
+    token = create_access_token(
+        {
+            "type": _PRIVACY_TOKEN_TYPE,
+            # Deliberately omit `sub`: this proof must never authenticate API requests.
+            "uid": str(user_id),
+            "case_id": str(case_id),
+            "document_id": str(document.id),
+            "document_sha256": document.sha256,
+            "skill_version_id": str(skill_version.id),
+            "skill_sha256": skill_version.content_sha256,
+            "provider_id": str(provider.id),
+            "provider_config_version": provider.config_version,
+            "model_name": provider.model_name,
+            "alias_digest": privacy.alias_digest,
+            "pseudonym": privacy.pseudonym,
+            "payload_sha256": privacy.payload_sha256,
+            "replacement_count": privacy.replacement_count,
+            "jti": secrets.token_hex(12),
+        },
+        expires_delta=timedelta(minutes=_PRIVACY_PREVIEW_MINUTES),
+    )
+    return AuditPrivacyPreview(
+        prepared=privacy.prepared,
+        token=token,
+        expires_at=expires_at,
+        pseudonym=privacy.pseudonym,
+        replacement_count=privacy.replacement_count,
+        identifier_count=privacy.identifier_count,
+        source_unit_count=privacy.source_unit_count,
+        character_count=privacy.character_count,
+        samples=privacy.samples,
+        payload_sha256=privacy.payload_sha256,
+    )
+
+
+def verify_audit_privacy_preview(
+    *,
+    token: str,
+    user_id: UUID,
+    case_id: UUID,
+    audit_case: AuditCase,
+    document: AuditDocument,
+    skill_version: AuditAtomizationSkillVersion,
+    provider,
+    identifiers: list[str],
+) -> PreparedPrivacySafeAtomization:
+    claims = decode_access_token(token)
+    if claims is None or claims.get("type") != _PRIVACY_TOKEN_TYPE:
+        raise AuditAIAtomizationError(
+            "privacy_preview_expired",
+            "Предпросмотр обезличивания истек или недействителен; выполните его заново",
+            409,
+        )
+    expected = {
+        "uid": str(user_id),
+        "case_id": str(case_id),
+        "document_id": str(document.id),
+        "document_sha256": document.sha256,
+        "skill_version_id": str(skill_version.id),
+        "skill_sha256": skill_version.content_sha256,
+        "provider_id": str(provider.id),
+        "provider_config_version": provider.config_version,
+        "model_name": provider.model_name,
+    }
+    if any(claims.get(key) != value for key, value in expected.items()):
+        raise AuditAIAtomizationError(
+            "privacy_context_changed",
+            "Документ, skill или ИИ-профиль изменились после предпросмотра",
+            409,
+        )
+    pseudonym = claims.get("pseudonym")
+    if not isinstance(pseudonym, str) or not _PSEUDONYM_RE.fullmatch(pseudonym):
+        raise AuditAIAtomizationError("privacy_token_invalid", "Предпросмотр обезличивания недействителен", 409)
+    privacy = prepare_privacy_safe_atomization(
+        audit_case=audit_case,
+        document=document,
+        skill_version=skill_version,
+        identifiers=identifiers,
+        pseudonym=pseudonym,
+    )
+    comparisons = (
+        (claims.get("alias_digest"), privacy.alias_digest),
+        (claims.get("payload_sha256"), privacy.payload_sha256),
+        (str(claims.get("replacement_count")), str(privacy.replacement_count)),
+    )
+    if any(
+        not isinstance(actual, str) or not hmac.compare_digest(actual, expected_value)
+        for actual, expected_value in comparisons
+    ):
+        raise AuditAIAtomizationError(
+            "privacy_preview_mismatch",
+            "Номер договора или обезличенный запрос изменились после предпросмотра",
+            409,
+        )
+    return privacy
+
+
 def _json_from_model_response(raw: str) -> dict:
     value = raw.strip()
     if value.startswith("```"):
@@ -509,56 +791,18 @@ def _validate_model_result(raw: str, units: list[AuditSourceUnit], digital_produ
     return drafts, summary, result.warnings
 
 
-async def generate_audit_atom_draft_package(
-    *,
-    provider,
-    audit_case: AuditCase,
-    document: AuditDocument,
-    skill_version: AuditAtomizationSkillVersion,
-) -> GeneratedAuditDraftPackage:
-    prepared = prepare_audit_atomization(
-        audit_case=audit_case,
-        document=document,
-        skill_version=skill_version,
-    )
-    return await complete_audit_atomization(
-        provider=provider,
-        prepared=prepared,
-        digital_product=audit_case.digital_product,
-    )
-
-
-def prepare_audit_atomization(
-    *,
-    audit_case: AuditCase,
-    document: AuditDocument,
-    skill_version: AuditAtomizationSkillVersion,
-) -> PreparedAuditAtomization:
-    units = extract_audit_source_units(document)
-    messages = _build_messages(audit_case, skill_version, units)
-    canonical_prompt = json.dumps(messages, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return PreparedAuditAtomization(
-        messages=messages,
-        units=units,
-        source_manifest=[
-            {
-                "source_unit_id": unit.source_unit_id,
-                "locator": unit.locator,
-                "text_sha256": unit.text_sha256,
-                "char_count": len(unit.text),
-            }
-            for unit in units
-        ],
-        prompt_sha256=sha256(canonical_prompt.encode("utf-8")).hexdigest(),
-    )
-
-
 async def complete_audit_atomization(
     *,
     provider,
     prepared: PreparedAuditAtomization,
     digital_product: str,
 ) -> GeneratedAuditDraftPackage:
+    if not prepared.privacy_verified:
+        raise AuditAIAtomizationError(
+            "privacy_verification_required",
+            "Передача документа заблокирована: требуется проверка обезличивания",
+            409,
+        )
     raw = await generate_text(provider, prepared.messages, max_tokens=4096, temperature=0)
     drafts, coverage, warnings = _validate_model_result(raw, prepared.units, digital_product)
     return GeneratedAuditDraftPackage(

@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -13,7 +13,6 @@ from app.models import Base
 class AIProviderConfig(Base):
     __tablename__ = "ai_provider_configs"
     __table_args__ = (
-        UniqueConstraint("provider_kind", name="uq_ai_provider_configs_kind"),
         CheckConstraint("provider_kind = 'openai_compatible'", name="ck_ai_provider_configs_kind"),
         CheckConstraint("config_version >= 1", name="ck_ai_provider_configs_version"),
         CheckConstraint(
@@ -24,6 +23,7 @@ class AIProviderConfig(Base):
             "last_verified_config_version IS NULL OR last_verified_config_version >= 1",
             name="ck_ai_provider_configs_verified_version",
         ),
+        Index("ix_ai_provider_configs_kind_created_at", "provider_kind", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -144,6 +144,19 @@ class AuditAtomizationSkillVersion(Base):
             name="uq_audit_atomization_skill_versions_sha",
         ),
         CheckConstraint("schema_version = '1.0'", name="ck_audit_atomization_skill_versions_schema"),
+        CheckConstraint(
+            "package_format IN ('declarative_json', 'trusted_skill_archive')",
+            name="ck_audit_atomization_skill_versions_package_format",
+        ),
+        CheckConstraint(
+            "runtime_status IN ('ready', 'pending_worker', 'runtime_failed')",
+            name="ck_audit_atomization_skill_versions_runtime_status",
+        ),
+        CheckConstraint(
+            "(package_format = 'declarative_json' AND package_blob IS NULL) OR "
+            "(package_format = 'trusted_skill_archive' AND package_blob IS NOT NULL)",
+            name="ck_audit_atomization_skill_versions_package_blob",
+        ),
         Index(
             "uq_audit_atomization_skill_versions_active",
             "skill_id",
@@ -165,6 +178,13 @@ class AuditAtomizationSkillVersion(Base):
     rules_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     content_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     source_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    package_format: Mapped[str] = mapped_column(String(40), nullable=False, default="declarative_json")
+    package_blob: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    package_manifest_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    runtime_status: Mapped[str] = mapped_column(String(40), nullable=False, default="ready")
+    runtime_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    runtime_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    runtime_selftest_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_by_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),

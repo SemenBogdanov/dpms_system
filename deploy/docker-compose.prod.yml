@@ -9,6 +9,9 @@ services:
     env_file:
       - ./integrations.defaults
       - ${DPMS_ENV_FILE:-/opt/dpms/deploy/.env.prod}
+    environment:
+      AUDIT_TZ_WORKER_ENABLED: ${AUDIT_TZ_WORKER_ENABLED:-true}
+      AUDIT_TZ_EXTERNAL_AI_ENABLED: ${AUDIT_TZ_EXTERNAL_AI_ENABLED:-true}
     volumes:
       - ${DPMS_UPLOAD_DIR:-/opt/dpms/uploads}:/app/uploads
     healthcheck:
@@ -28,3 +31,32 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+  audit-worker:
+    image: deploy-audit-worker:latest
+    command: ["python", "-m", "app.workers.audit_tz"]
+    restart: always
+    healthcheck:
+      disable: true
+    env_file:
+      - ./integrations.defaults
+      - ${DPMS_ENV_FILE:-/opt/dpms/deploy/.env.prod}
+    environment:
+      AUDIT_TZ_WORKER_ENABLED: ${AUDIT_TZ_WORKER_ENABLED:-true}
+      AUDIT_TZ_EXTERNAL_AI_ENABLED: ${AUDIT_TZ_EXTERNAL_AI_ENABLED:-true}
+      AUDIT_TZ_RUNTIME_DIR: /app/audit-runtime
+      PYTHONDONTWRITEBYTECODE: "1"
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ${DPMS_UPLOAD_DIR:-/opt/dpms/uploads}:/app/uploads:ro
+      - ${DPMS_AUDIT_TZ_RUNTIME_DIR:-/opt/dpms/audit-runtime}:/app/audit-runtime
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128

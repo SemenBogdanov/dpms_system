@@ -67,6 +67,18 @@ class Settings(BaseSettings):
     AI_PROVIDER_DEFAULT_MODEL_NAME: str = ""
     AI_PROVIDER_CONNECT_TIMEOUT_SECONDS: float = 5.0
     AI_PROVIDER_READ_TIMEOUT_SECONDS: float = 90.0
+    # Comma-separated, non-secret SHA-256 allowlist for reviewed skill archives.
+    AUDIT_TRUSTED_SKILL_SHA256: str = "3d49f30d86a9eb05f190af7a3ebfa1688c7823c599baf29090a8fded893fc23b"
+    AUDIT_TZ_WORKER_ENABLED: bool = False
+    AUDIT_TZ_RUNTIME_DIR: str = "/app/audit-runtime"
+    AUDIT_TZ_WORKER_POLL_SECONDS: float = 2.0
+    # A preflight can run several bounded CLI phases; keep the lease longer
+    # than the combined command timeout so another worker cannot reclaim it.
+    AUDIT_TZ_WORKER_LEASE_SECONDS: int = 600
+    AUDIT_TZ_CLI_TIMEOUT_SECONDS: int = 120
+    # Global kill switch. Canonical model calls additionally require a verified
+    # provider and explicit confirmation for the selected immutable document.
+    AUDIT_TZ_EXTERNAL_AI_ENABLED: bool = False
 
 
 settings = Settings()

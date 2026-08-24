@@ -151,6 +151,8 @@ export interface AuditAtom {
   work_type: string | null
   object_type: string | null
   source_clause: string | null
+  source_evidence_text: string | null
+  source_refs_json: AuditAISourceRef[]
   system_url: string | null
   notes: string | null
   state: AuditAtomState
@@ -320,6 +322,7 @@ export interface AuditDocument {
   uploaded_by_name: string | null
   kind: AuditDocumentKind
   display_name: string
+  original_filename: string
   content_type: string
   size_bytes: number
   sha256: string
@@ -335,6 +338,13 @@ export interface AuditDocumentBatchResponse {
   items: AuditDocumentUploadItem[]
 }
 
+export interface AuditCaseDeleteResponse {
+  id: string
+  case_number: string
+  deleted_documents_count: number
+  deleted_atoms_count: number
+}
+
 export interface AuditAtomizationSkillVersion {
   id: string
   skill_id: string
@@ -345,6 +355,14 @@ export interface AuditAtomizationSkillVersion {
   schema_version: string
   content_sha256: string
   source_filename: string
+  package_format: 'declarative_json' | 'trusted_skill_archive'
+  package_manifest: Record<string, unknown>
+  runtime_status: 'ready' | 'pending_worker' | 'runtime_failed'
+  runtime_ready: boolean
+  runtime_checked_at: string | null
+  runtime_error_code: string | null
+  runtime_selftest: Record<string, unknown>
+  is_trusted_archive: boolean
   is_enabled: boolean
   is_active: boolean
   created_at: string
@@ -353,6 +371,28 @@ export interface AuditAtomizationSkillVersion {
 
 export interface AuditAtomizationSkillList {
   items: AuditAtomizationSkillVersion[]
+}
+
+export interface AuditAIPrivacySample {
+  source_unit_id: string
+  locator: string
+  excerpt: string
+}
+
+export interface AuditAIPrivacyPreview {
+  privacy_token: string
+  expires_at: string
+  provider_name: string
+  model_name: string
+  pseudonym: string
+  identifier_count: number
+  replacement_count: number
+  source_unit_count: number
+  character_count: number
+  outbound_fields: string[]
+  samples: AuditAIPrivacySample[]
+  payload_sha256: string
+  warnings: string[]
 }
 
 export interface AuditAssignment {
@@ -407,6 +447,8 @@ export interface AuditAIAtomizationAttempt {
   skill_version: string
   status: 'running' | 'draft_ready' | 'failed' | 'committed'
   config_version: number
+  provider_config_id: string
+  provider_name: string
   model_name: string
   document_sha256: string
   skill_sha256: string
@@ -420,6 +462,138 @@ export interface AuditAIAtomizationAttempt {
 
 export interface AuditAIAtomizationCommitResult {
   attempt_id: string
+  case_id: string
+  atoms_created: number
+  atom_ids: string[]
+  already_committed: boolean
+}
+
+export interface AuditTZArtifact {
+  kind: 'identity_report' | 'gated_evidence_bundle' | 'source_units' | 'primary_prompt' | 'primary_atom_package'
+  sha256: string
+  safe_summary: Record<string, unknown>
+}
+
+export interface AuditTZRun {
+  id: string
+  case_id: string
+  document_id: string
+  skill_version_id: string
+  skill_name: string
+  skill_version: string
+  status: 'queued' | 'running' | 'preflight_pass' | 'atomization_queued' | 'atomizing' | 'draft_ready' | 'committed' | 'blocked' | 'failed'
+  current_phase: string
+  source_unit_count: number
+  warning_count: number
+  atom_count: number
+  completed_batch_count: number
+  total_batch_count: number
+  safe_summary: Record<string, unknown>
+  error_code: string | null
+  artifacts: AuditTZArtifact[]
+  external_ai_called: boolean
+  ai_attempt_id: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface AuditTZAtomizationPreview {
+  consent_token: string
+  provider_id: string
+  provider_name: string
+  model_name: string
+  source_unit_count: number
+  outbound_fields: string[]
+  warnings: string[]
+}
+
+export interface AuditAIProviderOption {
+  id: string
+  display_name: string
+  model_name: string
+  config_version: number
+}
+
+export interface AuditAIProviderOptionList {
+  items: AuditAIProviderOption[]
+}
+
+export interface AuditAIModelRegistryItem {
+  id: string
+  title: string
+  digital_product: string
+  work_type: string | null
+  object_type: string | null
+  source_clause: string
+  notes: string | null
+  confidence_percent: number | null
+  sort_order: number
+  source_refs: AuditAISourceRef[]
+}
+
+export interface AuditAIModelRegistry {
+  id: string
+  case_id: string
+  canonical_run_id: string
+  provider_config_id: string
+  provider_config_version: number
+  provider_name: string
+  model_name: string
+  atom_count: number
+  coverage_summary: Record<string, number>
+  warnings: string[]
+  items: AuditAIModelRegistryItem[]
+  created_at: string
+}
+
+export interface AuditAIModelRegistryList {
+  items: AuditAIModelRegistry[]
+}
+
+export interface AuditAIModelVariant {
+  registry_id: string
+  registry_item_id: string
+  provider_name: string
+  model_name: string
+  title: string
+  object_type: string | null
+  work_type: string | null
+  confidence_percent: number | null
+}
+
+export interface AuditAIModelComparisonDraft {
+  id: string
+  title: string
+  digital_product: string
+  work_type: string | null
+  object_type: string | null
+  source_clause: string
+  notes: string | null
+  confidence_percent: number | null
+  agreement_count: number
+  registry_count: number
+  review_status: 'pending' | 'committed' | 'rejected'
+  sort_order: number
+  source_refs: AuditAISourceRef[]
+  model_variants: AuditAIModelVariant[]
+}
+
+export interface AuditAIModelComparison {
+  id: string
+  case_id: string
+  canonical_run_id: string
+  status: 'draft_ready' | 'committed'
+  config_version: number
+  registry_ids: string[]
+  registry_snapshot: Array<Record<string, unknown>>
+  drafts: AuditAIModelComparisonDraft[]
+  created_at: string
+  committed_at: string | null
+}
+
+export interface AuditAIModelComparisonCommitResult {
+  comparison_id: string
   case_id: string
   atoms_created: number
   atom_ids: string[]
@@ -2741,6 +2915,12 @@ export interface AIProviderConfig {
   allowed_origins_configured: boolean
   encryption_key_configured: boolean
   updated_at: string | null
+}
+
+export interface AIProviderConfigList {
+  items: AIProviderConfig[]
+  allowed_origins_configured: boolean
+  encryption_key_configured: boolean
 }
 
 export interface AIProviderTestResult {

@@ -205,11 +205,11 @@ export function normalizeSidebarOrder(order?: SidebarOrderInput): SidebarOrder {
     return { ...group, id }
   })
   const version = typeof order?.version === 'number' ? order.version : 1
-  if (rawGroups.length > 0 && version < 6 && !uniqueGroups.some((group) => group.id === 'audit')) {
+  if (rawGroups.length > 0 && version < 7 && !uniqueGroups.some((group) => group.id === 'audit')) {
     const auditGroup = defaultSidebarOrder.groups.find((group) => group.id === 'audit')
     if (auditGroup) uniqueGroups = [...uniqueGroups, auditGroup]
   }
-  const shouldBackfillMissingDefaults = rawGroups.length > 0 && version < 6
+  const shouldBackfillMissingDefaults = rawGroups.length > 0 && version < 7
   const assignedItemIds = new Set(uniqueGroups.flatMap((group) => group.itemIds))
   let mergedGroups = shouldBackfillMissingDefaults
     ? uniqueGroups.map((group) => {
@@ -272,7 +272,7 @@ export function sidebarOrderPayload(order: SidebarOrder) {
       .filter(([itemId, label]) => navById.has(itemId) && Boolean(label))
   )
   return {
-    version: 6,
+    version: 7,
     groups: normalized.groups.map((group) => ({
       id: group.id,
       label: group.label.trim() || 'Кнопка',

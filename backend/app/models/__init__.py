@@ -49,6 +49,10 @@ from app.models.deadline_tracker import DeadlineTracker
 from app.models.audit import (
     AuditAIAtomDraft,
     AuditAIAtomizationAttempt,
+    AuditAIModelComparison,
+    AuditAIModelComparisonDraft,
+    AuditAIModelRegistry,
+    AuditAIModelRegistryItem,
     AuditAssignment,
     AuditAtom,
     AuditCase,
@@ -67,6 +71,7 @@ from app.models.ai_provider import (
     AuditAtomizationSkill,
     AuditAtomizationSkillVersion,
 )
+from app.models.audit_runtime import AuditTZArtifact, AuditTZRun, AuditTZRuntimeJob
 from app.models.execution_contract import WorkEntityExecutionContract
 from app.models.work_entity import (
     WorkEntity,
@@ -131,6 +136,10 @@ __all__ = [
     "AuditCase",
     "AuditAIAtomDraft",
     "AuditAIAtomizationAttempt",
+    "AuditAIModelComparison",
+    "AuditAIModelComparisonDraft",
+    "AuditAIModelRegistry",
+    "AuditAIModelRegistryItem",
     "AuditAssignment",
     "AuditAtom",
     "AuditImportBatch",
@@ -145,6 +154,9 @@ __all__ = [
     "AIProviderEvent",
     "AuditAtomizationSkill",
     "AuditAtomizationSkillVersion",
+    "AuditTZRun",
+    "AuditTZRuntimeJob",
+    "AuditTZArtifact",
     "WorkEntityExecutionContract",
     "WorkEntity",
     "WorkEntityMember",

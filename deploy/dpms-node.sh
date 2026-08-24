@@ -241,7 +241,7 @@ validate_env_file() {
 }
 
 healthcheck() {
-  local backend https_health https_root frontend_assets email_worker
+  local backend https_health https_root frontend_assets email_worker audit_worker
   log "== DPMS healthcheck =="
   log "time_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ -f "$DPMS_COMPOSE_FILE" ]]; then
@@ -262,13 +262,27 @@ healthcheck() {
   else
     email_worker=missing
   fi
+  if [[ -f "$DPMS_COMPOSE_FILE" ]] && \
+    docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
+      config --services 2>/dev/null | grep -Fxq 'audit-worker'; then
+    if docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
+      ps --status running --services 2>/dev/null | grep -Fxq 'audit-worker'; then
+      audit_worker=running
+    else
+      audit_worker=missing
+    fi
+  else
+    audit_worker=not_configured
+  fi
   log "backend_health=$backend"
   log "https_health=$https_health"
   log "https_root=$https_root"
   log "frontend_assets=$frontend_assets"
   log "email_worker=$email_worker"
+  log "audit_worker=$audit_worker"
   if [[ "$backend" == 200 && "$https_health" == 200 && "$https_root" == 200 && \
-    "$frontend_assets" == ok && "$email_worker" == running ]]; then
+    "$frontend_assets" == ok && "$email_worker" == running && \
+    "$audit_worker" != missing ]]; then
     log "healthcheck_ok=1"
     return 0
   fi
@@ -349,6 +363,12 @@ build_backend_image() {
   docker build -f "$release_dir/deploy/Dockerfile.prod" -t "$image_tag" "$release_dir"
 }
 
+build_audit_worker_image() {
+  local release_dir="$1"
+  local image_tag="$2"
+  docker build -f "$release_dir/deploy/Dockerfile.audit-worker.prod" -t "$image_tag" "$release_dir"
+}
+
 run_runtime_env_checks() {
   local image_tag="$1"
   docker run -i --rm --env-file "$DPMS_ENV_FILE" "$image_tag" python - <<'PY'
@@ -358,6 +378,8 @@ import sys
 database_url = os.getenv("DATABASE_URL", "")
 secret = os.getenv("DPMS_SECRET_KEY", "")
 cors = os.getenv("CORS_ORIGINS", "")
+integration_secret = os.getenv("INTEGRATION_SECRET_KEY", "").strip()
+integration_secret_file = os.getenv("INTEGRATION_SECRET_KEY_FILE", "").strip()
 errors = []
 if not database_url:
     errors.append("DATABASE_URL is missing")
@@ -369,6 +391,10 @@ if not cors:
     errors.append("CORS_ORIGINS is missing")
 if cors.strip().startswith("*"):
     errors.append("CORS_ORIGINS must not be wildcard")
+if not integration_secret and not integration_secret_file:
+    errors.append("INTEGRATION_SECRET_KEY or INTEGRATION_SECRET_KEY_FILE is required")
+if integration_secret and len(integration_secret) < 32:
+    errors.append("INTEGRATION_SECRET_KEY is too short")
 if errors:
     for error in errors:
         print(error, file=sys.stderr)
@@ -424,17 +450,18 @@ migration_delta() {
 }
 
 write_manifest() {
-  local release_dir="$1" release_id="$2" sha="$3" ref="$4" image_tag="$5" migrations_file="$6"
-  local frontend_hash npm_lock_hash image_id phrase current_release free_mb now manifest
+  local release_dir="$1" release_id="$2" sha="$3" ref="$4" image_tag="$5" audit_worker_image_tag="$6" migrations_file="$7"
+  local frontend_hash npm_lock_hash image_id audit_worker_image_id phrase current_release free_mb now manifest
   frontend_hash=$(find "$release_dir/frontend/dist" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
   npm_lock_hash=$(sha256sum "$release_dir/frontend/package-lock.json" | awk '{print $1}')
   image_id=$(docker image inspect "$image_tag" --format '{{.Id}}')
+  audit_worker_image_id=$(docker image inspect "$audit_worker_image_tag" --format '{{.Id}}')
   phrase=$(approval_phrase "$release_id" "$sha")
   current_release=$(current_release_id)
   free_mb=$(free_mb_on_opt)
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   manifest="$(manifest_path "$release_dir")"
-  python3 - "$manifest" "$migrations_file" "$release_id" "$DPMS_REPO_URL" "$ref" "$sha" "${sha:0:12}" "$now" "$release_dir" "$image_tag" "$image_id" "$frontend_hash" "$npm_lock_hash" "$DPMS_ENV_FILE" "$current_release" "$phrase" "$free_mb" <<'PY'
+  python3 - "$manifest" "$migrations_file" "$release_id" "$DPMS_REPO_URL" "$ref" "$sha" "${sha:0:12}" "$now" "$release_dir" "$image_tag" "$image_id" "$audit_worker_image_tag" "$audit_worker_image_id" "$frontend_hash" "$npm_lock_hash" "$DPMS_ENV_FILE" "$current_release" "$phrase" "$free_mb" <<'PY'
 import json
 import sys
 
@@ -450,13 +477,15 @@ import sys
     release_dir,
     image_tag,
     image_id,
+    audit_worker_image_tag,
+    audit_worker_image_id,
     frontend_hash,
     npm_lock_hash,
     env_file_path,
     current_release,
     approval_phrase,
     free_mb,
-) = sys.argv[1:18]
+) = sys.argv[1:20]
 with open(migrations_file, "r", encoding="utf-8") as f:
     migrations = [line.rstrip("\n") for line in f if line.rstrip("\n")]
 data = {
@@ -469,6 +498,8 @@ data = {
     "release_dir": release_dir,
     "image_tag": image_tag,
     "image_id": image_id,
+    "audit_worker_image_tag": audit_worker_image_tag,
+    "audit_worker_image_id": audit_worker_image_id,
     "frontend_hash": frontend_hash,
     "npm_lock_hash": npm_lock_hash,
     "env_file_path": env_file_path,
@@ -506,6 +537,8 @@ lines = [
     f"release_dir={data['release_dir']}",
     f"image_tag={data['image_tag']}",
     f"image_id={data['image_id']}",
+    f"audit_worker_image_tag={data['audit_worker_image_tag']}",
+    f"audit_worker_image_id={data['audit_worker_image_id']}",
     f"frontend_hash={data['frontend_hash']}",
     f"npm_lock_hash={data['npm_lock_hash']}",
     f"env_file_path={data['env_file_path']}",
@@ -530,17 +563,20 @@ prepare_release() {
   fetch_repo
   validate_env_file
   [[ "$(free_mb_on_opt)" -ge "$DPMS_MIN_FREE_MB" ]] || die "not enough free space on /opt"
-  local sha release_id release_dir image_tag forbidden migrations_file
+  local sha release_id release_dir image_tag audit_worker_image_tag forbidden migrations_file
   sha="$(resolve_ref "$ref")"
   release_id="$(release_id_for_sha "$sha")"
   release_dir="$(release_dir_for_id "$release_id")"
   image_tag="dpms-backend:${sha:0:12}"
+  audit_worker_image_tag="dpms-audit-worker:${sha:0:12}"
   if [[ -d "$release_dir" ]]; then
     if [[ -f "$(manifest_path "$release_dir")" && "$(manifest_get "$(manifest_path "$release_dir")" commit_sha)" == "$sha" ]]; then
       local existing_image
       existing_image="$(manifest_get "$(manifest_path "$release_dir")" image_tag)"
       [[ -f "$release_dir/frontend/dist/index.html" ]] || die "existing release is missing frontend/dist"
       docker image inspect "$existing_image" >/dev/null || die "existing release image is missing: $existing_image"
+      docker image inspect "$(manifest_get "$(manifest_path "$release_dir")" audit_worker_image_tag)" >/dev/null \
+        || die "existing audit worker image is missing"
       print_approval_sheet "$release_dir"
       return 0
     fi
@@ -563,18 +599,20 @@ prepare_release() {
   forbidden="$(forbidden_scan "$release_dir")"
   [[ -z "$forbidden" ]] || { log "$forbidden"; die "release contains forbidden filenames"; }
   [[ -f "$release_dir/deploy/Dockerfile.prod" ]] || die "release missing deploy/Dockerfile.prod"
+  [[ -f "$release_dir/deploy/Dockerfile.audit-worker.prod" ]] || die "release missing deploy/Dockerfile.audit-worker.prod"
   [[ -f "$release_dir/deploy/docker-compose.prod.yml" ]] || die "release missing deploy/docker-compose.prod.yml"
   if grep -R -nE 'alembic[[:space:]]+upgrade|app\.seed|python[[:space:]]+-m[[:space:]]+app\.seed' "$release_dir/deploy/Dockerfile.prod" "$release_dir/deploy/docker-compose.prod.yml"; then
     die "production image/compose must not run migrations or seed at startup"
   fi
   build_frontend "$release_dir"
   build_backend_image "$release_dir" "$image_tag"
+  build_audit_worker_image "$release_dir" "$audit_worker_image_tag"
   run_runtime_env_checks "$image_tag"
   run_db_checks "$image_tag"
   nginx -t >/dev/null
   migrations_file="$release_dir/migrations.delta"
   migration_delta "$image_tag" > "$migrations_file"
-  write_manifest "$release_dir" "$release_id" "$sha" "$ref" "$image_tag" "$migrations_file"
+  write_manifest "$release_dir" "$release_id" "$sha" "$ref" "$image_tag" "$audit_worker_image_tag" "$migrations_file"
   print_approval_sheet "$release_dir"
 }
 
@@ -655,6 +693,7 @@ backup_app_state() {
     -czf "$backup_dir/deploy-source.tar.gz" \
     -C "$DPMS_LIVE_ROOT" deploy
   docker inspect deploy-backend-1 --format '{{.Image}}' > "$backup_dir/previous-backend-image-id.txt" 2>/dev/null || true
+  docker inspect deploy-audit-worker-1 --format '{{.Image}}' > "$backup_dir/previous-audit-worker-image-id.txt" 2>/dev/null || true
   current_release_id > "$backup_dir/current-release-before.txt"
   log "$backup_dir"
 }
@@ -674,7 +713,8 @@ promote_release() {
       *) die "unknown promote arg: $1" ;;
     esac
   done
-  local release_dir manifest expected_approval sha image_tag migrations_count backup_dir network_args=() net_args runtime_migration_delta
+  local release_dir manifest expected_approval sha image_tag audit_worker_image_tag migrations_count backup_dir network_args=() net_args runtime_migration_delta
+  local runtime_services=(backend email-worker audit-worker)
   release_dir="$(release_dir_for_id "$release_id")"
   manifest="$(manifest_path "$release_dir")"
   [[ -f "$manifest" ]] || die "manifest missing for release: $release_id"
@@ -682,10 +722,12 @@ promote_release() {
   [[ "$approval" == "$expected_approval" ]] || die "approval phrase mismatch; run prepare and copy exact approval_phrase"
   sha="$(manifest_get "$manifest" commit_sha)"
   image_tag="$(manifest_get "$manifest" image_tag)"
+  audit_worker_image_tag="$(manifest_get "$manifest" audit_worker_image_tag)"
   migrations_count="$(manifest_get "$manifest" migrations_count)"
   [[ -d "$release_dir" ]] || die "release dir missing: $release_dir"
   [[ "$(resolve_ref "$sha")" == "$sha" ]] || die "repo cannot verify prepared commit sha"
   docker image inspect "$image_tag" >/dev/null || die "prepared image is missing: $image_tag"
+  docker image inspect "$audit_worker_image_tag" >/dev/null || die "prepared audit worker image is missing: $audit_worker_image_tag"
   validate_env_file
   runtime_migration_delta="$(migration_delta "$image_tag")"
   if [[ -n "$runtime_migration_delta" ]]; then
@@ -708,11 +750,12 @@ promote_release() {
     docker run --rm --env-file "$DPMS_ENV_FILE" "${network_args[@]}" "$image_tag" alembic upgrade head
   fi
   docker tag "$image_tag" deploy-backend:latest
+  docker tag "$audit_worker_image_tag" deploy-audit-worker:latest
   copy_runtime_files_from_release "$release_dir"
   install_nginx_config_from_release "$release_dir"
   install_tool_from_release "$release_dir"
   cd "$DPMS_LIVE_ROOT/deploy"
-  DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml up -d --no-build --force-recreate backend email-worker
+  DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml up -d --no-build --force-recreate "${runtime_services[@]}"
   nginx -t
   systemctl reload nginx
   wait_for_healthcheck
@@ -727,6 +770,7 @@ rollback_release() {
   require_root
   with_lock
   local backup_dir="${1:-}"
+  local runtime_services=(backend email-worker)
   [[ -n "$backup_dir" && -d "$backup_dir" ]] || die "usage: rollback <backup-dir>"
   if [[ -f "$backup_dir/previous-backend-image-id.txt" ]]; then
     local previous_image
@@ -734,6 +778,14 @@ rollback_release() {
     if [[ -n "$previous_image" ]]; then
       docker image inspect "$previous_image" >/dev/null
       docker tag "$previous_image" deploy-backend:latest
+    fi
+  fi
+  if [[ -f "$backup_dir/previous-audit-worker-image-id.txt" ]]; then
+    local previous_audit_worker_image
+    previous_audit_worker_image="$(tr -d '[:space:]' < "$backup_dir/previous-audit-worker-image-id.txt")"
+    if [[ -n "$previous_audit_worker_image" ]]; then
+      docker image inspect "$previous_audit_worker_image" >/dev/null
+      docker tag "$previous_audit_worker_image" deploy-audit-worker:latest
     fi
   fi
   if [[ -f "$backup_dir/backend-source.tar.gz" ]]; then
@@ -767,7 +819,12 @@ rollback_release() {
     cp "$backup_dir/current-release-before.txt" "$DPMS_LIVE_ROOT/current-release"
   fi
   cd "$DPMS_LIVE_ROOT/deploy"
-  DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml up -d --no-build --force-recreate backend email-worker
+  if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fxq audit-worker; then
+    runtime_services+=(audit-worker)
+  else
+    docker rm -f deploy-audit-worker-1 >/dev/null 2>&1 || true
+  fi
+  DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml up -d --no-build --force-recreate "${runtime_services[@]}"
   nginx -t
   systemctl reload nginx
   healthcheck

@@ -136,7 +136,14 @@ def _clean_sidebar_menu_order(value: dict | None) -> dict | None:
         for item_id, label in item_labels.items()
         if isinstance(item_id, str) and isinstance(label, str) and label.strip()
     }
-    return {"groups": cleaned_groups, "items": cleaned_items, "item_labels": cleaned_item_labels}
+    raw_version = value.get("version")
+    version = raw_version if type(raw_version) is int and 1 <= raw_version <= 100 else 1
+    return {
+        "version": version,
+        "groups": cleaned_groups,
+        "items": cleaned_items,
+        "item_labels": cleaned_item_labels,
+    }
 
 
 @router.post("/login", response_model=TokenResponse)

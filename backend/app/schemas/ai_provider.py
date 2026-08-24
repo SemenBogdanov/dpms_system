@@ -40,6 +40,12 @@ class AIProviderRead(BaseModel):
     updated_at: datetime | None = None
 
 
+class AIProviderList(BaseModel):
+    items: list[AIProviderRead] = Field(default_factory=list)
+    allowed_origins_configured: bool = False
+    encryption_key_configured: bool = False
+
+
 class AIProviderTestRead(BaseModel):
     ok: bool
     model_name: str

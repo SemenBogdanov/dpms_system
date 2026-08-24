@@ -15,6 +15,7 @@ from app.services.audit_documents import (
     finalize_pending_audit_document,
     prepare_audit_document,
     prepare_audit_document_bytes,
+    remove_audit_case_files,
     stage_audit_document_file,
 )
 
@@ -68,6 +69,23 @@ class AuditDocumentValidationTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(staged.final_path.exists())
             self.assertEqual(staged.final_path.read_bytes(), prepared.data)
             self.assertTrue(finalize_pending_audit_document(staged.stored_filename))
+
+    def test_case_cleanup_removes_only_the_target_audit_directory(self):
+        case_id = uuid4()
+        with TemporaryDirectory() as temp_dir, patch.object(settings, "UPLOAD_DIR", temp_dir):
+            root = Path(temp_dir).resolve()
+            case_directory = root / "audit" / str(case_id)
+            case_directory.mkdir(parents=True)
+            stored = f"audit/{case_id}/source.pdf"
+            (root / stored).write_bytes(b"%PDF-1.7\ncontent")
+            outside = root.parent / f"{case_id}-must-remain.pdf"
+            outside.write_bytes(b"%PDF-1.7\noutside")
+
+            remove_audit_case_files(case_id, [stored, f"../{outside.name}"])
+
+            self.assertFalse(case_directory.exists())
+            self.assertTrue(outside.exists())
+            outside.unlink()
 
 
 if __name__ == "__main__":

@@ -24,7 +24,9 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://dpms_user:dpms_pass@db:5432/dpms
       UPLOAD_DIR: /app/uploads
-      INTEGRATION_SECRET_KEY: ${INTEGRATION_SECRET_KEY:-}
+      INTEGRATION_SECRET_KEY: ${INTEGRATION_SECRET_KEY:-local-dev-integration-key-not-for-production-2026}
+      AUDIT_TZ_WORKER_ENABLED: "true"
+      AUDIT_TZ_EXTERNAL_AI_ENABLED: "true"
     depends_on:
       db:
         condition: service_healthy
@@ -44,6 +46,38 @@ services:
       backend:
         condition: service_started
 
+  audit-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.audit-worker
+    command: ["python", "-m", "app.workers.audit_tz"]
+    env_file:
+      - ./deploy/integrations.defaults
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dpms_user:dpms_pass@db:5432/dpms
+      UPLOAD_DIR: /app/uploads
+      INTEGRATION_SECRET_KEY: ${INTEGRATION_SECRET_KEY:-local-dev-integration-key-not-for-production-2026}
+      AUDIT_TZ_WORKER_ENABLED: "true"
+      AUDIT_TZ_EXTERNAL_AI_ENABLED: "true"
+      AUDIT_TZ_RUNTIME_DIR: /app/audit-runtime
+      PYTHONDONTWRITEBYTECODE: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      - ./uploads:/app/uploads:ro
+      - audit_tz_runtime:/app/audit-runtime
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+
   frontend:
     build: ./frontend
     ports:
@@ -55,3 +89,4 @@ services:
 
 volumes:
   pgdata:
+  audit_tz_runtime:

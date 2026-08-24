@@ -11,7 +11,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import and_, delete, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -32,16 +32,21 @@ from app.models.audit import (
     AuditEvent,
     AuditTeamMember,
 )
+from app.models.audit_runtime import AuditTZRun, AuditTZRuntimeJob
 from app.models.contact import Contact
 from app.models.user import User, UserRole
 from app.schemas.audit import (
     AuditAtomCreate,
+    AuditAtomBulkStatusRead,
+    AuditAtomBulkStatusUpdate,
     AuditAtomRead,
     AuditAtomUpdate,
     AuditAssignmentCellUpdate,
     AuditAssignmentListRead,
     AuditAssignmentRead,
     AuditCaseCreate,
+    AuditCaseDeleteRequest,
+    AuditCaseDeleteResponse,
     AuditCaseRead,
     AuditCaseUpdate,
     AuditDocumentBatchResponse,
@@ -61,6 +66,8 @@ from app.schemas.audit_ai import (
     AuditAIAtomizationAttemptRead,
     AuditAIAtomizationCommit,
     AuditAIAtomizationCommitRead,
+    AuditAIPrivacyPreviewRead,
+    AuditAIPrivacyPreviewRequest,
     AuditAIAtomizationStart,
     AuditAISourceRefRead,
     AuditAtomizationSkillList,
@@ -70,16 +77,23 @@ from app.services.ai_provider import AIProviderError, get_ready_ai_provider
 from app.services.audit_ai_atomization import (
     AuditAIAtomizationError,
     complete_audit_atomization,
-    prepare_audit_atomization,
+    create_audit_privacy_preview,
+    verify_audit_privacy_preview,
 )
 from app.services.audit_documents import (
     MAX_AUDIT_BATCH_BYTES,
     MAX_AUDIT_DOCUMENTS_PER_BATCH,
     audit_document_path,
+    discard_staged_audit_document,
+    finalize_pending_audit_document,
+    finalize_staged_audit_document,
     persist_audit_document_file,
     prepare_audit_document,
+    remove_audit_case_files,
+    stage_audit_document_file,
 )
 from app.services.audit_import import (
+    build_audit_atom_export,
     build_audit_atom_template,
     build_contract_fields,
     commit_audit_import,
@@ -87,6 +101,8 @@ from app.services.audit_import import (
     preview_audit_import,
     record_audit_event,
 )
+from app.services.audit_model_comparison import evidence_text
+from app.services.activity import record_activity_event
 
 router = APIRouter()
 CASE_STATUSES = {"draft", "atomization", "ready", "archived"}
@@ -126,6 +142,21 @@ SAFE_EVENT_PAYLOAD_FIELDS = {
     "retained_assignment_id",
     "workflow_stage",
     "previous_workflow_stage",
+    "identifier_count",
+    "replacement_count",
+    "source_unit_count",
+    "payload_sha256",
+    "runtime_run_id",
+    "block_code",
+    "error_code",
+}
+AUDIT_DOCUMENT_KINDS = {"technical_spec", "atom_register", "audit_result", "protocol", "other"}
+AUDIT_DOCUMENT_KIND_LABELS = {
+    "technical_spec": "Техническое задание",
+    "atom_register": "Реестр атомов",
+    "audit_result": "Результат аудита",
+    "protocol": "Протокол",
+    "other": "Другой материал",
 }
 
 
@@ -499,6 +530,85 @@ async def update_audit_case(
     return await _serialize_case(db, audit_case, include_atoms=True)
 
 
+@router.delete("/cases/{case_id}", response_model=AuditCaseDeleteResponse)
+async def delete_audit_case(
+    case_id: UUID,
+    body: AuditCaseDeleteRequest,
+    manager: User = Depends(require_audit_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    audit_case = await db.scalar(
+        select(AuditCase).where(AuditCase.id == case_id).with_for_update()
+    )
+    if audit_case is None:
+        raise HTTPException(status_code=404, detail="Аудит не найден")
+    if audit_case.status != "archived":
+        raise HTTPException(
+            status_code=409,
+            detail="Сначала перенесите договор в архив. Рабочий договор удалить нельзя.",
+        )
+    if body.confirmation_code != audit_case.case_number.upper():
+        raise HTTPException(
+            status_code=422,
+            detail=f"Для подтверждения введите код {audit_case.case_number}",
+        )
+
+    active_runtime_job = await db.scalar(
+        select(AuditTZRuntimeJob.id)
+        .join(AuditTZRun, AuditTZRuntimeJob.run_id == AuditTZRun.id)
+        .where(
+            AuditTZRun.case_id == case_id,
+            AuditTZRuntimeJob.status.in_(["queued", "running"]),
+        )
+        .with_for_update()
+        .limit(1)
+    )
+    active_ai_attempt = await db.scalar(
+        select(AuditAIAtomizationAttempt.id)
+        .where(
+            AuditAIAtomizationAttempt.case_id == case_id,
+            AuditAIAtomizationAttempt.status == "running",
+        )
+        .with_for_update()
+        .limit(1)
+    )
+    if active_runtime_job is not None or active_ai_attempt is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Дождитесь завершения текущей проверки или атомизации, затем повторите удаление.",
+        )
+
+    documents = list(
+        await db.scalars(select(AuditDocument).where(AuditDocument.case_id == case_id))
+    )
+    atoms_count = int(
+        await db.scalar(select(func.count(AuditAtom.id)).where(AuditAtom.case_id == case_id)) or 0
+    )
+    case_number = audit_case.case_number
+    await record_activity_event(
+        db,
+        manager.id,
+        "audit_case_deleted",
+        metadata={
+            "audit_case_id": str(case_id),
+            "case_number": case_number,
+            "documents_count": len(documents),
+            "atoms_count": atoms_count,
+            "reason": body.reason,
+        },
+    )
+    await db.execute(delete(AuditCase).where(AuditCase.id == case_id))
+    await db.commit()
+
+    remove_audit_case_files(case_id, [document.stored_filename for document in documents])
+    return AuditCaseDeleteResponse(
+        id=case_id,
+        case_number=case_number,
+        deleted_documents_count=len(documents),
+        deleted_atoms_count=atoms_count,
+    )
+
+
 @router.post("/cases/{case_id}/atoms", response_model=AuditAtomRead, status_code=status.HTTP_201_CREATED)
 async def create_audit_atom(
     case_id: UUID,
@@ -532,6 +642,103 @@ async def create_audit_atom(
         payload_json={"item_code": atom.item_code, "title": atom.title},
     )
     return AuditAtomRead.model_validate(atom)
+
+
+@router.patch(
+    "/cases/{case_id}/atoms/bulk-status",
+    response_model=AuditAtomBulkStatusRead,
+)
+async def bulk_update_audit_atom_status(
+    case_id: UUID,
+    body: AuditAtomBulkStatusUpdate,
+    user: User = Depends(require_audit_workspace_member),
+    db: AsyncSession = Depends(get_db),
+):
+    audit_case = await _get_case_or_404(db, case_id)
+    await _ensure_case_atom_editor(audit_case, user, db)
+    atoms = list(
+        (
+            await db.scalars(
+                select(AuditAtom)
+                .where(
+                    AuditAtom.case_id == case_id,
+                    AuditAtom.id.in_(body.atom_ids),
+                )
+                .with_for_update()
+            )
+        ).all()
+    )
+    if len(atoms) != len(body.atom_ids):
+        raise HTTPException(status_code=422, detail="Один из выбранных атомов не найден в этом аудите")
+    changed_atoms = [atom for atom in atoms if atom.state != body.state]
+    for atom in changed_atoms:
+        previous_state = atom.state
+        atom.state = body.state
+        record_audit_event(
+            db,
+            case_id=case_id,
+            atom_id=atom.id,
+            actor_id=user.id,
+            event_type="atom_status_changed",
+            message=f"Статус атома {atom.item_code}: {previous_state} -> {body.state}",
+            payload_json={"item_code": atom.item_code, "fields": ["state"]},
+        )
+    if audit_case.status == "ready" and body.state not in {"ready", "excluded"}:
+        audit_case.status = "atomization"
+    record_audit_event(
+        db,
+        case_id=case_id,
+        actor_id=user.id,
+        event_type="atoms_bulk_status_changed",
+        message=f"Для {len(changed_atoms)} атомов установлен статус {body.state}",
+        payload_json={"atom_count": len(changed_atoms), "fields": ["state"]},
+    )
+    await db.flush()
+    return AuditAtomBulkStatusRead(
+        case_id=case_id,
+        state=body.state,
+        updated_count=len(changed_atoms),
+        atom_ids=[atom.id for atom in changed_atoms],
+    )
+
+
+@router.get("/cases/{case_id}/atoms/export")
+async def export_audit_atoms(
+    case_id: UUID,
+    user: User = Depends(require_audit_workspace_member),
+    db: AsyncSession = Depends(get_db),
+):
+    if user.role != UserRole.admin:
+        raise HTTPException(status_code=403, detail="Экспорт генерального реестра доступен только администратору")
+    audit_case = await _get_case_or_404(db, case_id)
+    atoms = list(
+        (
+            await db.scalars(
+                select(AuditAtom)
+                .where(AuditAtom.case_id == case_id)
+                .order_by(AuditAtom.sort_order.asc(), AuditAtom.item_code.asc())
+            )
+        ).all()
+    )
+    if not atoms:
+        raise HTTPException(status_code=409, detail="В этом аудите еще нет атомов для экспорта")
+    content = build_audit_atom_export(audit_case, atoms)
+    record_audit_event(
+        db,
+        case_id=case_id,
+        actor_id=user.id,
+        event_type="atoms_exported",
+        message="Администратор выгрузил генеральный реестр атомов",
+        payload_json={"atom_count": len(atoms)},
+    )
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{audit_case.case_number}-general-atoms.xlsx"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.patch("/cases/{case_id}/atoms/{atom_id}", response_model=AuditAtomRead)
@@ -640,6 +847,7 @@ def _document_read(document: AuditDocument, uploaded_by_name: str | None = None)
         uploaded_by_name=uploaded_by_name,
         kind=document.kind,
         display_name=document.display_name,
+        original_filename=document.original_filename,
         content_type=document.content_type,
         size_bytes=document.size_bytes,
         sha256=document.sha256,
@@ -665,6 +873,14 @@ def _active_skill_read(
         schema_version=version.schema_version,
         content_sha256=version.content_sha256,
         source_filename=version.source_filename,
+        package_format=version.package_format,
+        package_manifest=dict(version.package_manifest_json or {}),
+        runtime_status=version.runtime_status,
+        runtime_ready=version.runtime_status == "ready",
+        runtime_checked_at=version.runtime_checked_at,
+        runtime_error_code=version.runtime_error_code,
+        runtime_selftest=dict(version.runtime_selftest_json or {}),
+        is_trusted_archive=version.package_format == "trusted_skill_archive",
         is_enabled=skill.is_enabled,
         is_active=version.is_active,
         created_at=version.created_at,
@@ -728,6 +944,7 @@ async def _serialize_ai_attempt(
                 AuditAIAtomizationAttempt,
                 AuditAtomizationSkill,
                 AuditAtomizationSkillVersion,
+                AIProviderConfig,
             )
             .join(
                 AuditAtomizationSkillVersion,
@@ -737,12 +954,16 @@ async def _serialize_ai_attempt(
                 AuditAtomizationSkill,
                 AuditAtomizationSkill.id == AuditAtomizationSkillVersion.skill_id,
             )
+            .join(
+                AIProviderConfig,
+                AIProviderConfig.id == AuditAIAtomizationAttempt.provider_config_id,
+            )
             .where(AuditAIAtomizationAttempt.id == attempt_id)
         )
     ).one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail="Черновик ИИ-атомизации не найден")
-    attempt, skill, version = row
+    attempt, skill, version, provider = row
     drafts = list(
         (
             await db.scalars(
@@ -761,6 +982,8 @@ async def _serialize_ai_attempt(
         skill_version=version.version_label,
         status=attempt.status,
         config_version=attempt.config_version,
+        provider_config_id=attempt.provider_config_id,
+        provider_name=provider.display_name,
         model_name=attempt.model_name,
         document_sha256=attempt.document_sha256,
         skill_sha256=attempt.skill_sha256,
@@ -817,6 +1040,7 @@ async def list_active_audit_atomization_skills(
             .where(
                 AuditAtomizationSkill.is_enabled.is_(True),
                 AuditAtomizationSkillVersion.is_active.is_(True),
+                AuditAtomizationSkillVersion.runtime_status == "ready",
             )
             .order_by(AuditAtomizationSkill.name.asc())
         )
@@ -1426,6 +1650,110 @@ async def list_audit_documents(
     return [_document_read(document, uploader_name) for document, uploader_name in result.all()]
 
 
+@router.post(
+    "/cases/{case_id}/documents",
+    response_model=list[AuditDocumentRead],
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_audit_case_documents(
+    case_id: UUID,
+    files: list[UploadFile] = File(...),
+    kind: str = Form("other", max_length=30),
+    display_name: str | None = Form(None, max_length=255),
+    user: User = Depends(require_audit_workspace_member),
+    db: AsyncSession = Depends(get_db),
+):
+    audit_case = await db.scalar(
+        select(AuditCase).where(AuditCase.id == case_id).with_for_update()
+    )
+    if audit_case is None:
+        raise HTTPException(status_code=404, detail="Аудит не найден")
+    await _ensure_case_atom_editor(audit_case, user, db)
+    if kind not in AUDIT_DOCUMENT_KINDS:
+        raise HTTPException(status_code=422, detail="Некорректная категория материала")
+    if not files or len(files) > MAX_AUDIT_DOCUMENTS_PER_BATCH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"За один раз можно загрузить от 1 до {MAX_AUDIT_DOCUMENTS_PER_BATCH} документов",
+        )
+    requested_name = (display_name or "").strip()
+    if requested_name and len(files) != 1:
+        raise HTTPException(
+            status_code=422,
+            detail="Собственное название можно указать только при загрузке одного файла",
+        )
+
+    prepared_documents = [await prepare_audit_document(upload) for upload in files]
+    if sum(document.size_bytes for document in prepared_documents) > MAX_AUDIT_BATCH_BYTES:
+        raise HTTPException(status_code=400, detail="Общий размер пакета больше 100 МБ")
+    hashes = [document.sha256 for document in prepared_documents]
+    if len(set(hashes)) != len(hashes):
+        raise HTTPException(status_code=409, detail="В пакете есть одинаковые файлы")
+    existing_hash = await db.scalar(
+        select(AuditDocument.sha256)
+        .where(
+            AuditDocument.case_id == case_id,
+            AuditDocument.sha256.in_(hashes),
+        )
+        .limit(1)
+    )
+    if existing_hash is not None:
+        raise HTTPException(status_code=409, detail="Этот файл уже прикреплен к договору")
+
+    staged_documents = []
+    created_documents: list[AuditDocument] = []
+    category_label = AUDIT_DOCUMENT_KIND_LABELS[kind]
+    try:
+        for prepared in prepared_documents:
+            staged = stage_audit_document_file(case_id, prepared)
+            staged_documents.append(staged)
+            material_name = requested_name or (
+                category_label
+                if len(prepared_documents) == 1
+                else f"{category_label}: {Path(prepared.original_filename).stem[:180]}"
+            )
+            document = AuditDocument(
+                case_id=case_id,
+                uploaded_by_id=user.id,
+                kind=kind,
+                display_name=material_name,
+                original_filename=prepared.original_filename,
+                stored_filename=staged.stored_filename,
+                content_type=prepared.content_type,
+                size_bytes=prepared.size_bytes,
+                sha256=prepared.sha256,
+            )
+            db.add(document)
+            created_documents.append(document)
+        await db.flush()
+        for document in created_documents:
+            record_audit_event(
+                db,
+                case_id=case_id,
+                actor_id=user.id,
+                event_type="document_uploaded",
+                message=f"Загружен материал «{document.display_name}»",
+                payload_json={
+                    "document_id": str(document.id),
+                    "document_kind": document.kind,
+                    "sha256": document.sha256,
+                },
+            )
+        await db.commit()
+    except Exception:
+        for staged in staged_documents:
+            discard_staged_audit_document(staged)
+        raise
+
+    for staged in staged_documents:
+        try:
+            finalize_staged_audit_document(staged)
+        except OSError:
+            # Reconciliation and download can finalize a committed pending file.
+            pass
+    return [_document_read(document, user.full_name) for document in created_documents]
+
+
 @router.get("/documents/{document_id}/content")
 async def download_audit_document(
     document_id: UUID,
@@ -1437,12 +1765,121 @@ async def download_audit_document(
         raise HTTPException(status_code=404, detail="Документ не найден")
     file_path = audit_document_path(document)
     if not file_path.is_file():
+        finalize_pending_audit_document(document.stored_filename)
+    if not file_path.is_file():
         raise HTTPException(status_code=404, detail="Файл документа отсутствует в хранилище")
     return FileResponse(
         str(file_path),
         media_type=document.content_type,
         filename=document.original_filename,
         content_disposition_type="attachment",
+    )
+
+
+@router.post(
+    "/cases/{case_id}/ai-atomization/privacy-preview",
+    response_model=AuditAIPrivacyPreviewRead,
+)
+async def preview_ai_atomization_privacy(
+    case_id: UUID,
+    body: AuditAIPrivacyPreviewRequest,
+    user: User = Depends(require_audit_workspace_member),
+    db: AsyncSession = Depends(get_db),
+):
+    audit_case = await _get_case_or_404(db, case_id)
+    await _ensure_case_atom_editor(audit_case, user, db)
+    atoms_count = int(
+        await db.scalar(select(func.count(AuditAtom.id)).where(AuditAtom.case_id == case_id)) or 0
+    )
+    if atoms_count:
+        raise HTTPException(
+            status_code=409,
+            detail="ИИ-черновик первого slice создается только до появления атомов в реестре",
+        )
+    document = await db.scalar(
+        select(AuditDocument).where(
+            AuditDocument.id == body.document_id,
+            AuditDocument.case_id == case_id,
+        )
+    )
+    if document is None:
+        raise HTTPException(status_code=404, detail="Исходный документ этого аудита не найден")
+    if document.kind != "technical_spec":
+        raise HTTPException(status_code=422, detail="Для ИИ-атомизации выберите исходное техническое задание")
+    skill_row = (
+        await db.execute(
+            select(AuditAtomizationSkill, AuditAtomizationSkillVersion)
+            .join(
+                AuditAtomizationSkillVersion,
+                AuditAtomizationSkillVersion.skill_id == AuditAtomizationSkill.id,
+            )
+            .where(
+                AuditAtomizationSkillVersion.id == body.skill_version_id,
+                AuditAtomizationSkillVersion.package_format == "declarative_json",
+                AuditAtomizationSkillVersion.is_active.is_(True),
+                AuditAtomizationSkillVersion.runtime_status == "ready",
+                AuditAtomizationSkill.is_enabled.is_(True),
+            )
+        )
+    ).one_or_none()
+    if skill_row is None:
+        raise HTTPException(status_code=409, detail="Выбранная версия skill не готова к запуску")
+    _, skill_version = skill_row
+    try:
+        provider = await get_ready_ai_provider(db)
+        identifiers = [item.get_secret_value() for item in body.contract_identifiers]
+        body.contract_identifiers.clear()
+        preview = create_audit_privacy_preview(
+            user_id=user.id,
+            case_id=case_id,
+            audit_case=audit_case,
+            document=document,
+            skill_version=skill_version,
+            provider=provider,
+            identifiers=identifiers,
+        )
+        identifiers = []
+    except (AIProviderError, AuditAIAtomizationError) as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"code": error.code, "message": error.message},
+        )
+    record_audit_event(
+        db,
+        case_id=case_id,
+        actor_id=user.id,
+        event_type="ai_atomization_privacy_previewed",
+        message="Проверено обезличивание запроса к ИИ",
+        payload_json={
+            "identifier_count": preview.identifier_count,
+            "replacement_count": preview.replacement_count,
+            "source_unit_count": preview.source_unit_count,
+            "payload_sha256": preview.payload_sha256,
+            "document_id": str(document.id),
+            "skill_version_id": str(skill_version.id),
+            "model_name": provider.model_name,
+        },
+    )
+    await db.commit()
+    return AuditAIPrivacyPreviewRead(
+        privacy_token=preview.token,
+        expires_at=preview.expires_at,
+        provider_name=provider.display_name,
+        model_name=provider.model_name,
+        pseudonym=preview.pseudonym,
+        identifier_count=preview.identifier_count,
+        replacement_count=preview.replacement_count,
+        source_unit_count=preview.source_unit_count,
+        character_count=preview.character_count,
+        outbound_fields=[
+            "протокол атомизации",
+            "обезличенный цифровой продукт",
+            "правила активного skill",
+            "локаторы и обезличенный текст фрагментов",
+        ],
+        samples=preview.samples,
+        payload_sha256=preview.payload_sha256,
+        warnings=["Гарантия распространяется на указанный номер и перечисленные точные варианты написания."],
     )
 
 
@@ -1498,13 +1935,15 @@ async def create_ai_atomization_attempt(
             )
             .where(
                 AuditAtomizationSkillVersion.id == body.skill_version_id,
+                AuditAtomizationSkillVersion.package_format == "declarative_json",
                 AuditAtomizationSkillVersion.is_active.is_(True),
+                AuditAtomizationSkillVersion.runtime_status == "ready",
                 AuditAtomizationSkill.is_enabled.is_(True),
             )
         )
     ).one_or_none()
     if skill_row is None:
-        raise HTTPException(status_code=409, detail="Выбранная версия skill не активна")
+        raise HTTPException(status_code=409, detail="Выбранная версия skill не готова к запуску")
     skill, skill_version = skill_row
     try:
         provider = await get_ready_ai_provider(db)
@@ -1546,11 +1985,20 @@ async def create_ai_atomization_attempt(
         last_verified_config_version=provider.last_verified_config_version,
     )
     try:
-        prepared = prepare_audit_atomization(
+        identifiers = [item.get_secret_value() for item in body.contract_identifiers]
+        body.contract_identifiers.clear()
+        privacy = verify_audit_privacy_preview(
+            token=body.privacy_token,
+            user_id=user_id,
+            case_id=case_id,
             audit_case=case_snapshot,
             document=document_snapshot,
             skill_version=skill_snapshot,
+            provider=provider_snapshot,
+            identifiers=identifiers,
         )
+        identifiers = []
+        prepared = privacy.prepared
     except AuditAIAtomizationError as error:
         raise HTTPException(
             status_code=error.status_code,
@@ -1602,6 +2050,10 @@ async def create_ai_atomization_attempt(
             "document_id": str(document_snapshot.id),
             "skill_version_id": str(skill_snapshot.id),
             "model_name": provider_snapshot.model_name,
+            "identifier_count": privacy.identifier_count,
+            "replacement_count": privacy.replacement_count,
+            "source_unit_count": privacy.source_unit_count,
+            "payload_sha256": privacy.payload_sha256,
         },
     )
     await db.commit()
@@ -1675,6 +2127,7 @@ async def create_ai_atomization_attempt(
         and current_skill is not None
         and current_skill.content_sha256 == skill_snapshot.content_sha256
         and current_skill.is_active
+        and current_skill.runtime_status == "ready"
         and current_skill_definition is not None
         and current_skill_definition.is_enabled
         and current_provider is not None
@@ -1836,6 +2289,8 @@ async def commit_ai_atomization_attempt(
             work_type=draft.work_type,
             object_type=draft.object_type,
             source_clause=draft.source_clause,
+            source_evidence_text=evidence_text(draft.source_refs_json or []),
+            source_refs_json=list(draft.source_refs_json or []),
             notes=draft.notes,
             state="draft",
             source_sheet="ИИ-черновик",
@@ -1863,6 +2318,13 @@ async def commit_ai_atomization_attempt(
     attempt.committed_by_id = user_id
     attempt.committed_at = datetime.now(timezone.utc)
     attempt.config_version += 1
+    if attempt.canonical_run_id is not None:
+        canonical_run = await db.get(AuditTZRun, attempt.canonical_run_id)
+        if canonical_run is not None:
+            canonical_run.status = "committed"
+            canonical_run.current_phase = "registry_committed"
+            canonical_run.atom_count = len(created_atoms)
+            canonical_run.finished_at = datetime.now(timezone.utc)
     audit_case.status = "atomization"
     record_audit_event(
         db,

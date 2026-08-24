@@ -180,6 +180,133 @@ def build_audit_atom_template() -> bytes:
     return buffer.getvalue()
 
 
+def build_audit_atom_export(audit_case: AuditCase, atoms: list[AuditAtom]) -> bytes:
+    """Build a macro-free snapshot of the reviewed atom registry."""
+
+    headers = [
+        "Код аудита",
+        "Код атома",
+        "Цифровой продукт",
+        "Название атома",
+        "Тип работ",
+        "Тип объекта",
+        "Пункт источника",
+        "Текстовое основание",
+        "Статус",
+        "Ссылка на объект в системе",
+        "Наличие объекта в системе",
+        "Дата альфа-проверки",
+        "Решение комиссии",
+        "Дата комиссии",
+        "Комментарий",
+        "Источник реестра",
+    ]
+
+    def clean(value: object | None) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, (date, datetime)):
+            value = value.isoformat()
+        text_value = str(value)
+        return "".join(
+            character
+            for character in text_value
+            if character in "\t\n\r" or ord(character) >= 32
+        )[:32_767]
+
+    def cell(reference: str, value: object | None) -> str:
+        return f'<c r="{reference}" t="inlineStr"><is><t xml:space="preserve">{escape(clean(value))}</t></is></c>'
+
+    rows = [headers]
+    rows.extend(
+        [
+            audit_case.case_number,
+            atom.item_code,
+            atom.digital_product,
+            atom.title,
+            atom.work_type,
+            atom.object_type,
+            atom.source_clause,
+            atom.source_evidence_text,
+            atom.state,
+            atom.system_url,
+            atom.alpha_result_raw or atom.alpha_result,
+            atom.alpha_date,
+            atom.commission_result_raw or atom.commission_result,
+            atom.commission_date,
+            atom.notes,
+            atom.source_sheet,
+        ]
+        for atom in atoms
+    )
+    row_xml = "".join(
+        f'<row r="{row_index}">'
+        + "".join(
+            cell(f"{_xlsx_column_name(column_index)}{row_index}", value)
+            for column_index, value in enumerate(row)
+        )
+        + "</row>"
+        for row_index, row in enumerate(rows, start=1)
+    )
+    last_column = _xlsx_column_name(len(headers) - 1)
+    sheet_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" '
+        'activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
+        '<cols>'
+        + "".join(
+            f'<col min="{index + 1}" max="{index + 1}" width="{width}" customWidth="1"/>'
+            for index, width in enumerate((15, 15, 24, 48, 22, 22, 28, 72, 16, 36, 24, 20, 24, 20, 40, 24))
+        )
+        + f'</cols><sheetData>{row_xml}</sheetData>'
+        f'<autoFilter ref="A1:{last_column}{max(1, len(rows))}"/>'
+        '</worksheet>'
+    )
+    workbook_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="Генеральный реестр" sheetId="1" r:id="rId1"/></sheets>'
+        '</workbook>'
+    )
+    workbook_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+        'Target="worksheets/sheet1.xml"/>'
+        '</Relationships>'
+    )
+    root_rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+        'Target="xl/workbook.xml"/>'
+        '</Relationships>'
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '</Types>'
+    )
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types)
+        archive.writestr("_rels/.rels", root_rels)
+        archive.writestr("xl/workbook.xml", workbook_xml)
+        archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
+        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+    return buffer.getvalue()
+
+
 @dataclass
 class ParsedAuditRow:
     row_number: int

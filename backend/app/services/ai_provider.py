@@ -7,6 +7,7 @@ from hashlib import sha256
 import json
 import ssl
 from typing import Any, TYPE_CHECKING
+from uuid import UUID
 from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -146,12 +147,18 @@ def ai_provider_ready(provider: "AIProviderConfig") -> bool:
     )
 
 
-async def get_ready_ai_provider(db: AsyncSession) -> "AIProviderConfig":
+async def get_ready_ai_provider(
+    db: AsyncSession,
+    provider_id: UUID | None = None,
+) -> "AIProviderConfig":
     from app.models.ai_provider import AIProviderConfig
 
-    provider = await db.scalar(
-        select(AIProviderConfig).where(AIProviderConfig.provider_kind == "openai_compatible")
-    )
+    query = select(AIProviderConfig).where(AIProviderConfig.provider_kind == "openai_compatible")
+    if provider_id is not None:
+        query = query.where(AIProviderConfig.id == provider_id)
+    else:
+        query = query.order_by(AIProviderConfig.created_at.asc(), AIProviderConfig.id.asc())
+    provider = await db.scalar(query)
     if provider is None:
         raise AIProviderError("provider_missing", "ИИ-провайдер не настроен", 503)
     if not provider.enabled:

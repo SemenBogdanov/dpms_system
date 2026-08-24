@@ -80,8 +80,12 @@ for (const [path, label] of expectedInternalRoutes) {
 
 const payloadVersionMatch = sidebarSource.match(/sidebarOrderPayload[\s\S]*?return\s*\{\s*version:\s*(\d+)/)
 const payloadVersion = payloadVersionMatch ? Number(payloadVersionMatch[1]) : 0
-if (payloadVersion < 6) {
-  errors.push(`sidebar menu payload version must be >= 6, got ${payloadVersion || 'unknown'}`)
+if (payloadVersion < 7) {
+  errors.push(`sidebar menu payload version must be >= 7, got ${payloadVersion || 'unknown'}`)
+}
+
+if (!sidebarSource.includes("version < 7 && !uniqueGroups.some((group) => group.id === 'audit')")) {
+  errors.push('sidebar migration must restore the Audit group for saved menus created before version 7')
 }
 
 if (errors.length > 0) {

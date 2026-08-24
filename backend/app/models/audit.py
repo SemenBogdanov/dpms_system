@@ -472,6 +472,12 @@ class AuditAtom(Base):
             unique=True,
             postgresql_where=text("ai_atomization_draft_id IS NOT NULL"),
         ),
+        Index(
+            "uq_audit_atoms_ai_comparison_draft_id",
+            "ai_comparison_draft_id",
+            unique=True,
+            postgresql_where=text("ai_comparison_draft_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -487,6 +493,8 @@ class AuditAtom(Base):
     work_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
     object_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_clause: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    source_evidence_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_refs_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     system_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     state: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
@@ -502,6 +510,11 @@ class AuditAtom(Base):
     ai_atomization_draft_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("audit_ai_atom_drafts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    ai_comparison_draft_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_ai_comparison_drafts.id", ondelete="SET NULL"),
         nullable=True,
     )
     alpha_result: Mapped[str | None] = mapped_column(String(40), nullable=True)
@@ -536,6 +549,12 @@ class AuditAIAtomizationAttempt(Base):
         ),
         CheckConstraint("config_version >= 1", name="ck_audit_ai_attempts_version"),
         Index("ix_audit_ai_attempts_case_created_at", "case_id", "created_at"),
+        Index(
+            "uq_audit_ai_attempts_canonical_run",
+            "canonical_run_id",
+            unique=True,
+            postgresql_where=text("canonical_run_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -544,6 +563,11 @@ class AuditAIAtomizationAttempt(Base):
         ForeignKey("audit_cases.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+    )
+    canonical_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_tz_runs.id", ondelete="SET NULL"),
+        nullable=True,
     )
     document_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -573,6 +597,7 @@ class AuditAIAtomizationAttempt(Base):
     source_manifest_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     coverage_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     warnings_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    batch_results_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     prompt_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     response_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
@@ -661,6 +686,234 @@ class AuditAIAtomDraft(Base):
     )
 
     attempt = relationship("AuditAIAtomizationAttempt", back_populates="drafts")
+
+
+class AuditAIModelRegistry(Base):
+    """Immutable result lane produced by one exact provider/model configuration."""
+
+    __tablename__ = "audit_ai_model_registries"
+    __table_args__ = (
+        UniqueConstraint(
+            "canonical_run_id",
+            "provider_config_id",
+            "provider_config_version",
+            "model_name",
+            name="uq_audit_ai_model_registry_lane",
+        ),
+        CheckConstraint("atom_count >= 0", name="ck_audit_ai_model_registries_atom_count"),
+        Index("ix_audit_ai_model_registries_case_created_at", "case_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_cases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    canonical_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_tz_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_documents.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    skill_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_atomization_skill_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    provider_config_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("ai_provider_configs.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    provider_config_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    document_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    skill_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    atom_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    coverage_json: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    warnings_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    items = relationship(
+        "AuditAIModelRegistryItem",
+        back_populates="registry",
+        cascade="all, delete-orphan",
+        order_by="AuditAIModelRegistryItem.sort_order.asc()",
+    )
+
+
+class AuditAIModelRegistryItem(Base):
+    """One immutable atom proposal in a model-specific registry."""
+
+    __tablename__ = "audit_ai_model_registry_items"
+    __table_args__ = (
+        UniqueConstraint("registry_id", "source_fingerprint", name="uq_audit_ai_registry_items_fingerprint"),
+        Index("ix_audit_ai_registry_items_registry_order", "registry_id", "sort_order"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    registry_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_ai_model_registries.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_cases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    digital_product: Mapped[str] = mapped_column(String(255), nullable=False)
+    work_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    object_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_clause: Mapped[str] = mapped_column(String(500), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_refs_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    confidence_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    registry = relationship("AuditAIModelRegistry", back_populates="items")
+
+
+class AuditAIModelComparison(Base):
+    """Human-reviewed master draft built from multiple model registries."""
+
+    __tablename__ = "audit_ai_model_comparisons"
+    __table_args__ = (
+        UniqueConstraint("comparison_key_hash", name="uq_audit_ai_model_comparisons_key"),
+        UniqueConstraint("commit_key_hash", name="uq_audit_ai_model_comparisons_commit_key"),
+        CheckConstraint(
+            "status IN ('draft_ready', 'committed')",
+            name="ck_audit_ai_model_comparisons_status",
+        ),
+        CheckConstraint("config_version >= 1", name="ck_audit_ai_model_comparisons_version"),
+        Index("ix_audit_ai_model_comparisons_case_created_at", "case_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_cases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    canonical_run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_tz_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_documents.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    skill_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_atomization_skill_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    comparison_key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    commit_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    registry_ids_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    registry_snapshot_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft_ready")
+    config_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    requested_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    committed_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    drafts = relationship(
+        "AuditAIModelComparisonDraft",
+        back_populates="comparison",
+        cascade="all, delete-orphan",
+        order_by="AuditAIModelComparisonDraft.sort_order.asc()",
+    )
+
+
+class AuditAIModelComparisonDraft(Base):
+    """Editable master atom with complete cross-model provenance."""
+
+    __tablename__ = "audit_ai_comparison_drafts"
+    __table_args__ = (
+        UniqueConstraint("comparison_id", "source_fingerprint", name="uq_audit_ai_comparison_drafts_fingerprint"),
+        CheckConstraint(
+            "review_status IN ('pending', 'committed', 'rejected')",
+            name="ck_audit_ai_comparison_drafts_review_status",
+        ),
+        CheckConstraint("agreement_count >= 1", name="ck_audit_ai_comparison_drafts_agreement"),
+        CheckConstraint("registry_count >= agreement_count", name="ck_audit_ai_comparison_drafts_registry_count"),
+        Index("ix_audit_ai_comparison_drafts_order", "comparison_id", "sort_order"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    comparison_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_ai_model_comparisons.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_cases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    digital_product: Mapped[str] = mapped_column(String(255), nullable=False)
+    work_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    object_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    source_clause: Mapped[str] = mapped_column(String(500), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_refs_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    model_variants_json: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    confidence_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    agreement_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    registry_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    review_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    comparison = relationship("AuditAIModelComparison", back_populates="drafts")
 
 
 class AuditEvent(Base):

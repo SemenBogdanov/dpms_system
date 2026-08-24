@@ -26,14 +26,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [authError, setAuthError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const loadUser = useCallback(async () => {
-    setLoading(true)
+  const loadUser = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true)
     setAuthError(null)
     const t = getToken()
     if (!t) {
       setUser(null)
       setTokenState(null)
-      setLoading(false)
+      if (!silent) setLoading(false)
       return
     }
     setTokenState(t)
@@ -50,12 +50,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setTokenState(null)
       }
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    loadUser()
+    void loadUser()
+  }, [loadUser])
+
+  useEffect(() => {
+    const refreshAccess = () => {
+      if (document.visibilityState === 'visible' && getToken()) void loadUser(true)
+    }
+    window.addEventListener('focus', refreshAccess)
+    document.addEventListener('visibilitychange', refreshAccess)
+    const timer = window.setInterval(refreshAccess, 60_000)
+    return () => {
+      window.removeEventListener('focus', refreshAccess)
+      document.removeEventListener('visibilitychange', refreshAccess)
+      window.clearInterval(timer)
+    }
   }, [loadUser])
 
   const login = useCallback(
@@ -92,7 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         login,
         logout,
         updateUser,
-        retryAuth: loadUser,
+        retryAuth: () => loadUser(false),
         authError,
         loading,
       }}

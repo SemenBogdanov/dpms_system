@@ -28,6 +28,7 @@ import {
 import { ApiError, api } from '@/api/client'
 import type {
   AIProviderConfig,
+  AIProviderConfigList,
   AIProviderTestResult,
   AuditAtomizationSkillList,
   AuditAtomizationSkillVersion,
@@ -185,7 +186,12 @@ export function AdminIntegrationsPage() {
   const [digitalProduct, setDigitalProduct] = useState('')
   const [importResult, setImportResult] = useState<AuditSynologyImportResult | null>(null)
 
+  const [aiProviders, setAiProviders] = useState<AIProviderConfig[]>([])
   const [aiConfig, setAiConfig] = useState<AIProviderConfig | null>(null)
+  const [selectedAiProviderId, setSelectedAiProviderId] = useState<string | null>(null)
+  const [aiCreating, setAiCreating] = useState(false)
+  const [aiAllowlistReady, setAiAllowlistReady] = useState(false)
+  const [aiEncryptionReady, setAiEncryptionReady] = useState(false)
   const [aiDisplayName, setAiDisplayName] = useState('ИИ-провайдер')
   const [aiUrl, setAiUrl] = useState('')
   const [aiModel, setAiModel] = useState('')
@@ -197,11 +203,35 @@ export function AdminIntegrationsPage() {
   const [skillFile, setSkillFile] = useState<File | null>(null)
   const [skillBusy, setSkillBusy] = useState(false)
 
+  function applyAIForm(config: AIProviderConfig | null) {
+    setAiConfig(config)
+    setSelectedAiProviderId(config?.id ?? null)
+    setAiCreating(config === null)
+    setAiDisplayName(config?.display_name ?? 'ИИ-провайдер')
+    setAiUrl(config?.base_url ?? '')
+    setAiModel(config?.model_name ?? '')
+    setAiKey('')
+    setAiEnabled(config?.configured ? config.enabled : true)
+  }
+
+  async function reloadAIProviders(preferredId?: string | null) {
+    const result = await api.get<AIProviderConfigList>('/api/admin/integrations/ai/providers')
+    setAiProviders(result.items)
+    setAiAllowlistReady(result.allowed_origins_configured)
+    setAiEncryptionReady(result.encryption_key_configured)
+    const selected = result.items.find((item) => item.id === preferredId)
+      ?? result.items.find((item) => item.id === selectedAiProviderId)
+      ?? result.items[0]
+      ?? null
+    applyAIForm(selected)
+    return result
+  }
+
   useEffect(() => {
     let cancelled = false
     Promise.allSettled([
       api.get<AuditSynologyConnectionList>('/api/audit/synology/connections'),
-      api.get<AIProviderConfig>('/api/admin/integrations/ai'),
+      api.get<AIProviderConfigList>('/api/admin/integrations/ai/providers'),
       api.get<AuditAtomizationSkillList>('/api/admin/integrations/ai/skills'),
     ])
       .then(([synologyResult, aiResult, skillsResult]) => {
@@ -223,12 +253,12 @@ export function AdminIntegrationsPage() {
           toast.error(synologyResult.reason instanceof Error ? synologyResult.reason.message : 'Не удалось загрузить Synology')
         }
         if (aiResult.status === 'fulfilled') {
-          const ai = aiResult.value
-          setAiConfig(ai)
-          setAiDisplayName(ai.display_name ?? 'ИИ-провайдер')
-          setAiUrl(ai.base_url ?? '')
-          setAiModel(ai.model_name ?? '')
-          setAiEnabled(ai.configured ? ai.enabled : true)
+          const providers = aiResult.value.items
+          setAiProviders(providers)
+          setAiAllowlistReady(aiResult.value.allowed_origins_configured)
+          setAiEncryptionReady(aiResult.value.encryption_key_configured)
+          const ai = providers[0] ?? null
+          applyAIForm(ai)
         } else {
           toast.error(aiResult.reason instanceof Error ? aiResult.reason.message : 'Не удалось загрузить ИИ-провайдера')
         }
@@ -243,6 +273,24 @@ export function AdminIntegrationsPage() {
       })
     return () => { cancelled = true }
   }, [])
+
+  useEffect(() => {
+    if (!auditSkills.some((version) => version.runtime_status === 'pending_worker')) return
+    let cancelled = false
+    const timer = window.setInterval(() => {
+      void api.get<AuditAtomizationSkillList>('/api/admin/integrations/ai/skills')
+        .then((result) => {
+          if (!cancelled) setAuditSkills(result.items)
+        })
+        .catch(() => {
+          // Keep the last known state; the regular page reload remains available.
+        })
+    }, 1500)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [auditSkills])
 
   const selectedSize = useMemo(
     () => Array.from(selectedFiles.values()).reduce((sum, item) => sum + item.size_bytes, 0),
@@ -521,16 +569,18 @@ export function AdminIntegrationsPage() {
     event.preventDefault()
     setAiBusy(true)
     try {
-      const result = await api.put<AIProviderConfig>('/api/admin/integrations/ai', {
+      const payload = {
         display_name: aiDisplayName,
         base_url: aiUrl,
         model_name: aiModel,
         api_key: aiKey || null,
         enabled: aiEnabled,
-        expected_config_version: aiConfig?.config_version ?? null,
-      })
-      setAiConfig(result)
-      setAiKey('')
+        expected_config_version: aiCreating ? null : aiConfig?.config_version ?? null,
+      }
+      const result = aiCreating || !selectedAiProviderId
+        ? await api.post<AIProviderConfig>('/api/admin/integrations/ai/providers', payload)
+        : await api.put<AIProviderConfig>(`/api/admin/integrations/ai/providers/${selectedAiProviderId}`, payload)
+      await reloadAIProviders(result.id)
       toast.success('Профиль ИИ проверен и сохранен')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось сохранить ИИ-провайдера')
@@ -540,9 +590,10 @@ export function AdminIntegrationsPage() {
   }
 
   async function handleTestAi() {
+    if (!selectedAiProviderId) return
     setAiBusy(true)
     try {
-      const result = await api.post<AIProviderTestResult>('/api/admin/integrations/ai/test', {})
+      const result = await api.post<AIProviderTestResult>(`/api/admin/integrations/ai/providers/${selectedAiProviderId}/test`, {})
       setAiConfig((current) => current ? {
         ...current,
         last_test_status: 'ok',
@@ -554,7 +605,7 @@ export function AdminIntegrationsPage() {
       toast.success(result.message)
     } catch (error) {
       try {
-        setAiConfig(await api.get<AIProviderConfig>('/api/admin/integrations/ai'))
+        await reloadAIProviders(selectedAiProviderId)
       } catch {
         // Keep the original provider error as the actionable message.
       }
@@ -579,7 +630,11 @@ export function AdminIntegrationsPage() {
       await reloadAuditSkills()
       setSkillFile(null)
       if (skillFileInputRef.current) skillFileInputRef.current.value = ''
-      toast.success(`${result.name}: версия ${result.version} установлена`)
+      toast.success(
+        result.runtime_ready
+          ? `${result.name}: версия ${result.version} установлена и активна`
+          : `${result.name}: пакет принят, self-test runtime поставлен в очередь`
+      )
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось установить skill')
     } finally {
@@ -588,7 +643,7 @@ export function AdminIntegrationsPage() {
   }
 
   async function handleActivateAuditSkill(version: AuditAtomizationSkillVersion) {
-    if (skillBusy || version.is_active) return
+    if (skillBusy || version.is_active || !version.runtime_ready) return
     setSkillBusy(true)
     try {
       await api.post<AuditAtomizationSkillVersion>(`/api/admin/integrations/ai/skills/${version.id}/activate`, {})
@@ -596,6 +651,23 @@ export function AdminIntegrationsPage() {
       toast.success(`${version.name}: версия ${version.version} активирована`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось активировать версию skill')
+    } finally {
+      setSkillBusy(false)
+    }
+  }
+
+  async function handleRetryAuditSkillSelftest(version: AuditAtomizationSkillVersion) {
+    if (skillBusy || version.runtime_status === 'pending_worker') return
+    setSkillBusy(true)
+    try {
+      await api.post<AuditAtomizationSkillVersion>(
+        `/api/admin/integrations/ai/skills/${version.id}/runtime-selftest`,
+        {}
+      )
+      await reloadAuditSkills()
+      toast.success(`${version.name}: self-test повторно поставлен в очередь`)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось повторить self-test')
     } finally {
       setSkillBusy(false)
     }
@@ -872,12 +944,54 @@ export function AdminIntegrationsPage() {
       )}
 
       {tab === 'ai' && (
-        <div className="max-w-4xl space-y-5">
+        <div className="max-w-5xl space-y-5">
+        <section className="rounded-lg border border-border bg-background shadow-sm" aria-labelledby="ai-profiles-title">
+          <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-4 sm:px-5">
+            <div>
+              <h2 id="ai-profiles-title" className="font-semibold text-foreground">Подключения к ИИ</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Каждый профиль хранит собственный endpoint, модель и проверенную версию конфигурации.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => applyAIForm(null)}
+              disabled={aiBusy}
+              className="inline-flex min-h-10 items-center gap-2 rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
+            >
+              <Plus className="h-4 w-4" />
+              Новое подключение
+            </button>
+          </header>
+          {aiProviders.length === 0 ? (
+            <div className="px-5 py-5 text-sm text-muted-foreground">Подключений пока нет. Создайте первый профиль ниже.</div>
+          ) : (
+            <div className="grid gap-2 p-3 sm:grid-cols-2 lg:grid-cols-3">
+              {aiProviders.map((provider) => (
+                <button
+                  key={provider.id}
+                  type="button"
+                  onClick={() => applyAIForm(provider)}
+                  className={cn(
+                    'min-w-0 rounded-md border px-3 py-3 text-left transition',
+                    provider.id === selectedAiProviderId && !aiCreating
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border hover:bg-muted/60'
+                  )}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className={cn('h-2.5 w-2.5 shrink-0 rounded-full', provider.ready_for_use ? 'bg-emerald-500' : provider.last_test_status === 'error' ? 'bg-rose-500' : 'bg-amber-500')} />
+                    <span className="truncate text-sm font-semibold text-foreground">{provider.display_name}</span>
+                  </span>
+                  <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">{provider.model_name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
         <form onSubmit={handleSaveAi} className="space-y-5 rounded-lg border border-border bg-background p-5 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex items-center gap-2">
               <BrainCircuit className="h-5 w-5 text-primary" />
-              <h2 className="font-semibold text-foreground">OpenAI-compatible API</h2>
+              <h2 className="font-semibold text-foreground">{aiCreating ? 'Новое OpenAI-compatible подключение' : 'Параметры подключения'}</h2>
             </div>
             {aiConfig?.configured && (
               <span className={cn(
@@ -911,7 +1025,7 @@ export function AdminIntegrationsPage() {
           </label>
           <label className="block text-sm font-medium text-foreground">API key
             <span className="relative mt-1 block">
-              <input type={showAiKey ? 'text' : 'password'} value={aiKey} onChange={(event) => setAiKey(event.target.value)} placeholder={aiConfig?.api_key_configured ? 'Ключ сохранен; оставьте пустым без изменений' : ''} autoComplete="new-password" className="h-11 w-full rounded-md border border-input bg-background px-3 pr-12 text-base sm:text-sm" required={!aiConfig?.api_key_configured} />
+              <input type={showAiKey ? 'text' : 'password'} value={aiKey} onChange={(event) => setAiKey(event.target.value)} placeholder={aiConfig?.api_key_configured && !aiCreating ? 'Ключ сохранен; оставьте пустым без изменений' : ''} autoComplete="new-password" className="h-11 w-full rounded-md border border-input bg-background px-3 pr-12 text-base sm:text-sm" required={aiCreating || !aiConfig?.api_key_configured} />
               <button type="button" onPointerDown={() => setShowAiKey(true)} onPointerUp={() => setShowAiKey(false)} onPointerCancel={() => setShowAiKey(false)} onPointerLeave={() => setShowAiKey(false)} className="absolute right-1 top-1 inline-flex h-9 w-9 items-center justify-center rounded text-muted-foreground hover:bg-muted" aria-label="Показать API key во время удерживания">
                 {showAiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
@@ -922,17 +1036,17 @@ export function AdminIntegrationsPage() {
             Подключение активно
           </label>
           <div className="grid gap-2 sm:grid-cols-2">
-            <IntegrationStatus ok={Boolean(aiConfig?.allowed_origins_configured)}>HTTPS allowlist {aiConfig?.allowed_origins_configured ? 'настроен' : 'не настроен на backend'}</IntegrationStatus>
-            <IntegrationStatus ok={Boolean(aiConfig?.encryption_key_configured)}>Ключ интеграций {aiConfig?.encryption_key_configured ? 'настроен' : 'не настроен на backend'}</IntegrationStatus>
+            <IntegrationStatus ok={aiAllowlistReady}>HTTPS allowlist {aiAllowlistReady ? 'настроен' : 'не настроен на backend'}</IntegrationStatus>
+            <IntegrationStatus ok={aiEncryptionReady}>Ключ интеграций {aiEncryptionReady ? 'настроен' : 'не настроен на backend'}</IntegrationStatus>
           </div>
           <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
-            <button type="button" onClick={handleTestAi} disabled={aiBusy || !aiConfig?.configured} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
+            <button type="button" onClick={handleTestAi} disabled={aiBusy || aiCreating || !aiConfig?.configured} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
               {aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               Повторить проверку
             </button>
             <button type="submit" disabled={aiBusy} className="inline-flex min-h-11 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50">
               {aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              Проверить и сохранить
+              {aiCreating ? 'Проверить и создать' : 'Проверить и сохранить'}
             </button>
           </div>
         </form>
@@ -943,23 +1057,29 @@ export function AdminIntegrationsPage() {
               <FileJson2 className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
               <div>
                 <h2 id="audit-skills-title" className="font-semibold text-foreground">Skills атомизации аудита</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Декларативные правила разбора ТЗ. Skill не исполняет программный код.</p>
+                <p className="mt-1 text-sm text-muted-foreground">JSON-правила либо доверенный архив. Код архива сохраняется неизменяемо и не исполняется в API.</p>
               </div>
             </div>
-            <span className="shrink-0 text-xs text-muted-foreground">JSON · schema 1.0</span>
+            <span className="shrink-0 text-xs text-muted-foreground">JSON / .skill · schema 1.0</span>
           </header>
 
           <div className="space-y-4 px-4 py-4 sm:px-5">
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
               <label className="block text-sm font-medium text-foreground">
                 Новая версия skill
-                <input
-                  ref={skillFileInputRef}
-                  type="file"
-                  accept=".json,application/json"
-                  onChange={(event) => setSkillFile(event.target.files?.[0] ?? null)}
-                  className="mt-1 min-h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-base text-foreground file:mr-3 file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-medium sm:text-sm"
-                />
+                <span className="mt-1 flex min-h-11 min-w-0 cursor-pointer items-center gap-3 rounded-md border border-input bg-background px-2 py-1.5">
+                  <span className="shrink-0 rounded bg-muted px-3 py-2 text-sm font-medium text-foreground">Выбрать файл</span>
+                  <span className="min-w-0 truncate text-sm font-normal text-muted-foreground" title={skillFile?.name}>
+                    {skillFile?.name ?? 'Файл не выбран'}
+                  </span>
+                  <input
+                    ref={skillFileInputRef}
+                    type="file"
+                    accept=".json,.skill,application/json,application/zip,application/octet-stream"
+                    onChange={(event) => setSkillFile(event.target.files?.[0] ?? null)}
+                    className="sr-only"
+                  />
+                </span>
               </label>
               <button
                 type="button"
@@ -984,28 +1104,65 @@ export function AdminIntegrationsPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="truncate text-sm font-semibold text-foreground">{version.name}</span>
                         <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">v{version.version}</span>
+                        <span className="rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+                          {version.is_trusted_archive ? '.skill · доверенный' : 'JSON · данные'}
+                        </span>
                         {version.is_active ? (
                           <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">Активна</span>
+                        ) : null}
+                        {!version.runtime_ready ? (
+                          <span className={cn(
+                            'rounded px-1.5 py-0.5 text-xs font-medium',
+                            version.runtime_status === 'runtime_failed'
+                              ? 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200'
+                              : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'
+                          )}>
+                            {version.runtime_status === 'runtime_failed' ? 'Runtime заблокирован' : 'Self-test runtime выполняется'}
+                          </span>
+                        ) : null}
+                        {version.is_trusted_archive && version.runtime_ready && !version.is_active ? (
+                          <span className="rounded bg-sky-100 px-1.5 py-0.5 text-xs font-medium text-sky-900 dark:bg-sky-950 dark:text-sky-200">Runtime готов</span>
                         ) : null}
                       </div>
                       <p className="mt-1 truncate text-xs text-muted-foreground" title={version.description ?? version.source_filename}>
                         {version.description || version.source_filename} · SHA {version.content_sha256.slice(0, 12)}
                       </p>
+                      {version.is_trusted_archive && version.runtime_ready ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Self-test: {String(version.runtime_selftest.passed_count ?? 0)} пройдено
+                          {Number(version.runtime_selftest.skipped_count ?? 0) > 0 ? ` · ${String(version.runtime_selftest.skipped_count)} пропущено` : ''}
+                        </p>
+                      ) : version.runtime_status === 'runtime_failed' ? (
+                        <p className="mt-1 font-mono text-xs text-rose-700 dark:text-rose-300">{version.runtime_error_code ?? 'skill_selftest_failed'}</p>
+                      ) : null}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleActivateAuditSkill(version)}
-                      disabled={skillBusy || version.is_active || !version.is_enabled}
-                      className={cn(
-                        'inline-flex min-h-10 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium disabled:opacity-50',
-                        version.is_active
-                          ? 'border border-emerald-300 text-emerald-800 dark:border-emerald-800 dark:text-emerald-200'
-                          : 'border border-border text-foreground hover:bg-muted'
-                      )}
-                    >
-                      <Power className="h-4 w-4" />
-                      {version.is_active ? 'Используется' : 'Активировать'}
-                    </button>
+                    {version.runtime_status === 'runtime_failed' ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleRetryAuditSkillSelftest(version)}
+                        disabled={skillBusy}
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                      >
+                        <RefreshCw className={cn('h-4 w-4', skillBusy && 'animate-spin')} />
+                        Повторить self-test
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void handleActivateAuditSkill(version)}
+                        disabled={skillBusy || version.is_active || !version.is_enabled || !version.runtime_ready}
+                        title={!version.runtime_ready ? 'Отдельный runtime проверяет пакет' : undefined}
+                        className={cn(
+                          'inline-flex min-h-10 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium disabled:opacity-50',
+                          version.is_active
+                            ? 'border border-emerald-300 text-emerald-800 dark:border-emerald-800 dark:text-emerald-200'
+                            : 'border border-border text-foreground hover:bg-muted'
+                        )}
+                      >
+                        <Power className="h-4 w-4" />
+                        {version.is_active ? 'Используется' : version.runtime_ready ? 'Активировать' : 'Проверяется'}
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

@@ -7,6 +7,7 @@ from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 import os
+import shutil
 import uuid
 from zipfile import BadZipFile, ZipFile
 
@@ -173,6 +174,31 @@ def finalize_pending_audit_document(stored_filename: str) -> bool:
 
 def discard_staged_audit_document(staged: StagedAuditDocument) -> None:
     staged.pending_path.unlink(missing_ok=True)
+
+
+def remove_audit_case_files(case_id: uuid.UUID, stored_filenames: list[str]) -> None:
+    """Best-effort removal after the audit case transaction has committed."""
+
+    root = Path(settings.UPLOAD_DIR).expanduser().resolve()
+    audit_root = (root / "audit").resolve()
+    for stored_filename in stored_filenames:
+        candidate = (root / stored_filename).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            continue
+        candidate.unlink(missing_ok=True)
+        candidate.with_name(f"{candidate.name}.pending").unlink(missing_ok=True)
+
+    case_directory = audit_root / str(case_id)
+    try:
+        case_directory.relative_to(audit_root)
+    except ValueError:
+        return
+    if case_directory.is_symlink():
+        case_directory.unlink(missing_ok=True)
+    elif case_directory.is_dir():
+        shutil.rmtree(case_directory, ignore_errors=True)
 
 
 async def reconcile_staged_audit_documents(db: AsyncSession) -> tuple[int, int]:

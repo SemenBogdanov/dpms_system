@@ -116,6 +116,25 @@ class AuditAtomUpdate(BaseModel):
         return _strip_or_none(value)
 
 
+class AuditAtomBulkStatusUpdate(BaseModel):
+    atom_ids: list[UUID] = Field(..., min_length=1, max_length=1000)
+    state: AuditAtomState
+
+    @field_validator("atom_ids")
+    @classmethod
+    def unique_atom_ids(cls, values: list[UUID]) -> list[UUID]:
+        if len(set(values)) != len(values):
+            raise ValueError("Атом выбран несколько раз")
+        return values
+
+
+class AuditAtomBulkStatusRead(BaseModel):
+    case_id: UUID
+    state: AuditAtomState
+    updated_count: int
+    atom_ids: list[UUID] = Field(default_factory=list)
+
+
 class AuditAtomRead(BaseModel):
     id: UUID
     case_id: UUID
@@ -125,6 +144,8 @@ class AuditAtomRead(BaseModel):
     work_type: str | None = None
     object_type: str | None = None
     source_clause: str | None = None
+    source_evidence_text: str | None = None
+    source_refs_json: list[dict] = Field(default_factory=list)
     system_url: str | None = None
     notes: str | None = None
     state: str
@@ -173,6 +194,30 @@ class AuditCaseUpdate(BaseModel):
     @classmethod
     def clean_text(cls, value):
         return _strip_or_none(value)
+
+
+class AuditCaseDeleteRequest(BaseModel):
+    confirmation_code: str = Field(..., min_length=1, max_length=20)
+    reason: str | None = Field(None, max_length=500)
+
+    @field_validator("confirmation_code", mode="before")
+    @classmethod
+    def normalize_confirmation_code(cls, value):
+        if isinstance(value, str):
+            return value.strip().upper()
+        return value
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def clean_reason(cls, value):
+        return _strip_or_none(value)
+
+
+class AuditCaseDeleteResponse(BaseModel):
+    id: UUID
+    case_number: str
+    deleted_documents_count: int
+    deleted_atoms_count: int
 
 
 class AuditCaseListItem(BaseModel):
@@ -293,6 +338,7 @@ class AuditDocumentRead(BaseModel):
     uploaded_by_name: str | None = None
     kind: AuditDocumentKind
     display_name: str
+    original_filename: str
     content_type: str
     size_bytes: int
     sha256: str

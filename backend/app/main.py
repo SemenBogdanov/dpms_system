@@ -9,7 +9,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
-from app.api.routes import absences, activity, admin, ai_provider, audit, audit_synology, auth, calculator, catalog, client_events, competencies, contacts, dashboard, deadline_trackers, feedback, knowledge, messages, notifications, personal_tasks, project_cockpit, queue, quick_notes, reports, shop, tasks, users, work_entities, work_entity_workspace
+from app.api.routes import absences, activity, admin, ai_provider, audit, audit_runtime, audit_synology, auth, calculator, catalog, client_events, competencies, contacts, dashboard, deadline_trackers, feedback, knowledge, messages, notifications, personal_tasks, project_cockpit, queue, quick_notes, reports, shop, tasks, users, work_entities, work_entity_workspace
 from app.database import AsyncSessionLocal
 from app.services.audit_documents import reconcile_staged_audit_documents
 from app.services.audit_synology import synology_session_store
@@ -75,6 +75,7 @@ app.include_router(work_entities.router, prefix="/api/work-entities", tags=["wor
 app.include_router(work_entity_workspace.router, prefix="/api/work-entities", tags=["work-entities"])
 app.include_router(project_cockpit.router, prefix="/api/project-cockpit", tags=["project-cockpit"])
 app.include_router(audit.router, prefix="/api/audit", tags=["audit"])
+app.include_router(audit_runtime.router, prefix="/api/audit", tags=["audit-runtime"])
 app.include_router(audit_synology.router, prefix="/api/audit/synology", tags=["audit-synology"])
 app.include_router(ai_provider.router, prefix="/api/admin/integrations/ai", tags=["admin-ai-provider"])
 app.include_router(competencies.router, prefix="/api/competencies", tags=["competencies"])
