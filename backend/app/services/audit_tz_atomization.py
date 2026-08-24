@@ -362,7 +362,24 @@ def build_source_batches(prompt_packet: dict) -> list[CanonicalSourceBatch]:
     return result
 
 
-def build_batch_messages(batch: CanonicalSourceBatch, total_batches: int) -> list[dict[str, str]]:
+_CORRECTION_GUIDANCE = {
+    "invalid_model_json": "Верни один валидный JSON-объект без Markdown и пояснений.",
+    "invalid_model_schema": "Строго соблюдай переданную JSON-схему, обязательные поля и допустимые значения.",
+    "coverage_gap": "Добавь ровно одно coverage-решение для каждого переданного source_unit_id.",
+    "duplicate_coverage": "Каждый source_unit_id должен встречаться в coverage ровно один раз.",
+    "coverage_atom_mismatch": "Каждый anchor_source_unit_id атома должен иметь disposition ATOMIZED.",
+    "atomized_unit_not_referenced": "Каждый фрагмент с ATOMIZED должен быть anchor_source_unit_id хотя бы одного атома.",
+    "unknown_source_reference": "Используй только source_unit_id из текущего пакета.",
+    "duplicate_model_atom": "Используй уникальные local_id и не возвращай повторяющиеся атомы.",
+}
+
+
+def build_batch_messages(
+    batch: CanonicalSourceBatch,
+    total_batches: int,
+    *,
+    correction_code: str | None = None,
+) -> list[dict[str, str]]:
     system = """Ты выполняешь техническую атомизацию ТЗ цифрового продукта.
 Атом — один самостоятельно демонстрируемый и проверяемый элемент продукта: экран, вкладка, форма, реестр, таблица, фильтр, показатель, отчет, действие пользователя, уведомление, интеграция или отдельное наблюдаемое поведение.
 Не превращай заголовки, определения, реквизиты, общие организационные фразы и каждое предложение в отдельный атом. Объединяй неразделимые детали одного элемента и разделяй только то, что можно проверить независимо.
@@ -396,6 +413,12 @@ def build_batch_messages(batch: CanonicalSourceBatch, total_batches: int) -> lis
             "warnings": ["string"],
         },
     }
+    guidance = _CORRECTION_GUIDANCE.get(correction_code or "")
+    if guidance:
+        payload["correction"] = {
+            "previous_response_rejected": correction_code,
+            "required_fix": guidance,
+        }
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": _canonical_json(payload)},
@@ -484,8 +507,14 @@ def validate_batch_result(
     )
 
 
-async def generate_batch_result(provider, batch: CanonicalSourceBatch, total_batches: int) -> CanonicalBatchResult:
-    messages = build_batch_messages(batch, total_batches)
+async def generate_batch_result(
+    provider,
+    batch: CanonicalSourceBatch,
+    total_batches: int,
+    *,
+    correction_code: str | None = None,
+) -> CanonicalBatchResult:
+    messages = build_batch_messages(batch, total_batches, correction_code=correction_code)
     try:
         raw = await generate_text(provider, messages, max_tokens=4096, temperature=0)
     except AIProviderError:
@@ -626,14 +655,26 @@ def assemble_atomization_result(
             "После межпакетной консолидации осталось больше 400 атомов; требуется уточнение методики",
             status_code=422,
         )
+    surviving_anchors = {
+        str(item["anchor_source_unit_id"])
+        for item in model_atoms
+    }
+    reclassified_duplicate_count = 0
     if duplicate_anchors:
         for item in coverage:
             target_title = duplicate_anchors.get(str(item["source_unit_id"]))
-            if target_title and item["disposition"] == "ATOMIZED":
+            if (
+                target_title
+                and str(item["source_unit_id"]) not in surviving_anchors
+                and item["disposition"] == "ATOMIZED"
+            ):
                 item["disposition"] = "DUPLICATE"
                 item["reason"] = f"Объединено с межпакетным атомом: {target_title}"[:500]
+                reclassified_duplicate_count += 1
+    if reclassified_duplicate_count:
         warnings.append(
-            f"Межпакетная консолидация объединила {len(duplicate_anchors)} повторяющихся атомов"
+            "Межпакетная консолидация объединила "
+            f"{reclassified_duplicate_count} повторяющихся атомов"
         )
     coverage_summary = {item: 0 for item in sorted(_COVERAGE_DISPOSITIONS)}
     for item in coverage:

@@ -1,6 +1,7 @@
 """Tests for bounded canonical audit atomization and source coverage."""
 
 from hashlib import sha256
+import json
 from types import SimpleNamespace
 import unittest
 from uuid import uuid4
@@ -16,6 +17,7 @@ from app.schemas.audit_runtime import AuditTZAtomizationStart
 from app.services.audit_tz_atomization import (
     CanonicalAtomizationError,
     assemble_atomization_result,
+    build_batch_messages,
     build_source_batches,
     discover_contract_requisites,
     redact_contract_requisites,
@@ -143,6 +145,18 @@ class CanonicalAuditAtomizationTests(unittest.TestCase):
         self.assertTrue(all(len(batch.units) <= 32 for batch in batches))
         self.assertTrue(all("locator" not in item for batch in batches for item in batch.outbound_units))
 
+    def test_schema_retry_prompt_contains_only_safe_correction_code(self):
+        batch = build_source_batches(
+            prompt_packet([source_unit(1, "Экран содержит реестр обращений.")])
+        )[0]
+
+        messages = build_batch_messages(batch, 1, correction_code="coverage_gap")
+        payload = json.loads(messages[1]["content"])
+
+        self.assertEqual(payload["correction"]["previous_response_rejected"], "coverage_gap")
+        self.assertIn("каждого", payload["correction"]["required_fix"])
+        self.assertNotIn("previous_response", payload["correction"])
+
     def test_validated_batches_create_semantic_drafts_not_one_atom_per_fragment(self):
         units = [
             source_unit(1, "Экран содержит реестр обращений."),
@@ -257,6 +271,52 @@ class CanonicalAuditAtomizationTests(unittest.TestCase):
         self.assertEqual(len(assembled.drafts[0].source_refs), 2)
         self.assertEqual(assembled.coverage_summary["ATOMIZED"], 1)
         self.assertEqual(assembled.coverage_summary["DUPLICATE"], 1)
+
+    def test_duplicate_atoms_with_same_anchor_keep_atomized_coverage(self):
+        packet = prompt_packet([source_unit(1, "Экран содержит реестр обращений и список обращений.")])
+        batch = build_source_batches(packet)[0]
+        result = validate_batch_result(
+            {
+                "atoms": [
+                    {
+                        "local_id": "A1",
+                        "title": "Реестр обращений",
+                        "object_type": "Реестр",
+                        "work_type": None,
+                        "notes": None,
+                        "source_unit_ids": ["U000001"],
+                        "anchor_source_unit_id": "U000001",
+                        "confidence": 0.91,
+                    },
+                    {
+                        "local_id": "A2",
+                        "title": "Экран реестра обращений",
+                        "object_type": "Реестр",
+                        "work_type": None,
+                        "notes": None,
+                        "source_unit_ids": ["U000001"],
+                        "anchor_source_unit_id": "U000001",
+                        "confidence": 0.94,
+                    },
+                ],
+                "coverage": [
+                    {
+                        "source_unit_id": "U000001",
+                        "disposition": "ATOMIZED",
+                        "reason": "Опорное требование",
+                    }
+                ],
+                "warnings": [],
+            },
+            batch,
+        )
+
+        assembled = assemble_atomization_result(packet, [result], model_name="test-model")
+
+        self.assertEqual(len(assembled.package["atoms"]), 1)
+        self.assertEqual(assembled.package["coverage"][0]["disposition"], "ATOMIZED")
+        self.assertEqual(assembled.coverage_summary["ATOMIZED"], 1)
+        self.assertEqual(assembled.coverage_summary["DUPLICATE"], 0)
 
     def test_coverage_gap_blocks_draft(self):
         packet = prompt_packet([source_unit(1, "Экран"), source_unit(2, "Фильтр")])

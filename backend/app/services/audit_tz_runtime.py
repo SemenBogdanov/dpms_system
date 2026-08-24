@@ -50,17 +50,27 @@ from app.services.audit_tz_atomization import (
 MAX_CLI_OUTPUT_BYTES = 2 * 1024 * 1024
 MAX_CANONICAL_PACKET_BYTES = 16 * 1024 * 1024
 CONTRACT_KEY = "contract"
+ATOMIZATION_MAX_JOB_ATTEMPTS = 6
+ATOMIZATION_RETRY_MAX_SECONDS = 60 * 60
 _SAFE_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _CHILD_LAUNCHER = Path(__file__).resolve().parents[1] / "workers" / "audit_tz_child.py"
 
 
 class AuditTZRuntimeError(RuntimeError):
-    def __init__(self, code: str, message: str, *, retryable: bool = False):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool = False,
+        retry_after_seconds: int | None = None,
+    ):
         super().__init__(message)
         self.code = code
         self.message = message
         self.retryable = retryable
+        self.retry_after_seconds = retry_after_seconds
 
 
 @dataclass(frozen=True)
@@ -831,23 +841,128 @@ async def _generate_batch_with_retry(provider, batch, total_batches: int):
         "duplicate_coverage",
         "coverage_atom_mismatch",
         "atomized_unit_not_referenced",
+        "unknown_source_reference",
+        "duplicate_model_atom",
     }
     last_error: AIProviderError | None = None
+    correction_code: str | None = None
     for attempt_number in range(1, 4):
         try:
-            return await generate_batch_result(provider, batch, total_batches)
+            return await generate_batch_result(
+                provider,
+                batch,
+                total_batches,
+                correction_code=correction_code,
+            )
         except AIProviderError as error:
             last_error = error
+            if error.code == "rate_limited":
+                raise AuditTZRuntimeError(
+                    error.code,
+                    error.message,
+                    retryable=True,
+                    retry_after_seconds=error.retry_after_seconds,
+                ) from error
             if error.code not in retryable_codes or attempt_number == 3:
                 break
             await asyncio.sleep(float(2 ** (attempt_number - 1)))
         except CanonicalAtomizationError as error:
             if error.code not in retryable_model_codes or attempt_number == 3:
                 raise
+            correction_code = error.code
             await asyncio.sleep(float(attempt_number))
     if last_error is None:
         raise AuditTZRuntimeError("provider_error", "ИИ-провайдер не сформировал ответ")
-    raise AuditTZRuntimeError(last_error.code, last_error.message)
+    raise AuditTZRuntimeError(
+        last_error.code,
+        last_error.message,
+        retryable=last_error.code in retryable_codes,
+        retry_after_seconds=last_error.retry_after_seconds,
+    )
+
+
+def _atomization_retry_delay_seconds(job: AuditTZRuntimeJob, error: AuditTZRuntimeError) -> int:
+    base_seconds = 60 if error.code == "rate_limited" else 30
+    exponential = base_seconds * (2 ** max(0, int(job.attempt_count) - 1))
+    requested = int(error.retry_after_seconds or 0)
+    return min(ATOMIZATION_RETRY_MAX_SECONDS, max(base_seconds, exponential, requested))
+
+
+async def _reschedule_atomization(
+    job_id: UUID,
+    lease_token: str,
+    db_factory,
+    *,
+    error: AuditTZRuntimeError,
+) -> bool:
+    """Pause a transiently failed run without discarding completed model batches."""
+
+    async with db_factory() as db:
+        job = await db.scalar(
+            select(AuditTZRuntimeJob)
+            .where(
+                AuditTZRuntimeJob.id == job_id,
+                AuditTZRuntimeJob.status == "running",
+                AuditTZRuntimeJob.lease_token == lease_token,
+            )
+            .with_for_update()
+        )
+        if job is None or job.attempt_count >= job.max_attempts:
+            await db.rollback()
+            return False
+        run = await db.get(AuditTZRun, job.run_id) if job.run_id else None
+        attempt = (
+            await db.scalar(
+                select(AuditAIAtomizationAttempt).where(
+                    AuditAIAtomizationAttempt.canonical_run_id == run.id
+                )
+            )
+            if run is not None
+            else None
+        )
+        if run is None or attempt is None or attempt.status != "running":
+            await db.rollback()
+            return False
+        now = _now()
+        delay_seconds = _atomization_retry_delay_seconds(job, error)
+        retry_at = now + timedelta(seconds=delay_seconds)
+        code = _safe_code(error.code, "provider_error")
+        job.status = "queued"
+        job.available_at = retry_at
+        job.lease_token = None
+        job.lease_expires_at = None
+        job.worker_id = None
+        job.error_code = code
+        job.finished_at = None
+        run.status = "atomization_queued"
+        run.current_phase = "atomization_retry_wait"
+        run.error_code = code
+        run.finished_at = None
+        run.safe_summary_json = {
+            **dict(run.safe_summary_json or {}),
+            "atomization_retry_at": retry_at.isoformat(),
+            "atomization_retry_count": int(job.attempt_count),
+            "atomization_retry_error": code,
+        }
+        attempt.error_code = code[:80]
+        attempt.config_version += 1
+        db.add(
+            AuditEvent(
+                case_id=run.case_id,
+                actor_id=run.requested_by_id,
+                event_type="audit_tz_atomization_retry_scheduled",
+                message="ИИ-атомизация поставлена на автоматический повтор",
+                payload_json={
+                    "runtime_run_id": str(run.id),
+                    "error_code": code,
+                    "retry_at": retry_at.isoformat(),
+                    "completed_batch_count": run.completed_batch_count,
+                    "total_batch_count": run.total_batch_count,
+                },
+            )
+        )
+        await db.commit()
+        return True
 
 
 async def _fail_atomization(
@@ -1099,6 +1214,13 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
         await _fail_atomization(job_id, lease_token, db_factory, error_code=error.code)
         return
     except AuditTZRuntimeError as error:
+        if error.retryable and await _reschedule_atomization(
+            job_id,
+            lease_token,
+            db_factory,
+            error=error,
+        ):
+            return
         await _fail_atomization(job_id, lease_token, db_factory, error_code=error.code)
         return
 
@@ -1205,12 +1327,16 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
         run.external_ai_called = True
         run.error_code = None
         run.finished_at = _now()
-        run.safe_summary_json = {
-            **dict(run.safe_summary_json or {}),
+        final_summary = dict(run.safe_summary_json or {})
+        final_summary.pop("atomization_retry_at", None)
+        final_summary.pop("atomization_retry_count", None)
+        final_summary.pop("atomization_retry_error", None)
+        final_summary.update({
             "atom_count": run.atom_count,
             "coverage_summary": assembled.coverage_summary,
             "automatic_redaction_count": assembled.redaction_count,
-        }
+        })
+        run.safe_summary_json = final_summary
         await _upsert_artifact(
             db,
             run,

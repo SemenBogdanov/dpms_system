@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from hashlib import sha256
 import json
 import ssl
@@ -26,11 +28,35 @@ MAX_AI_PROMPT_CHARS = 60_000
 
 
 class AIProviderError(Exception):
-    def __init__(self, code: str, message: str, status_code: int = 502):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        status_code: int = 502,
+        *,
+        retry_after_seconds: int | None = None,
+    ):
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
+
+
+def _parse_retry_after(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        seconds = int(float(value.strip()))
+    except (TypeError, ValueError, OverflowError):
+        try:
+            retry_at = parsedate_to_datetime(value)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            seconds = int((retry_at - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return max(1, min(seconds, 3600))
 
 
 def _integration_secret() -> str:
@@ -248,7 +274,12 @@ async def generate_text(
                         422,
                     )
                 if response.status_code == 429:
-                    raise AIProviderError("rate_limited", "Лимит запросов ИИ-провайдера исчерпан", 429)
+                    raise AIProviderError(
+                        "rate_limited",
+                        "Лимит запросов ИИ-провайдера исчерпан",
+                        429,
+                        retry_after_seconds=_parse_retry_after(response.headers.get("retry-after")),
+                    )
                 if response.status_code >= 500:
                     raise AIProviderError("provider_unavailable", "ИИ-провайдер временно недоступен", 503)
                 if response.status_code < 200 or response.status_code >= 300:

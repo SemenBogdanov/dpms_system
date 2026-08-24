@@ -26,10 +26,14 @@ from app.services.audit_runtime_crypto import (
     identifier_digest,
 )
 from app.services.audit_skill_package import extract_trusted_skill_archive
+from app.services.ai_provider import AIProviderError
+from app.services.audit_tz_atomization import CanonicalAtomizationError
 from app.services.audit_tz_runtime import (
     AuditTZRuntimeError,
+    _generate_batch_with_retry,
     _read_json_file,
     _recover_stale_jobs,
+    _reschedule_atomization,
     _run_cli,
     _safe_identity_summary,
     document_binding_digest,
@@ -335,6 +339,125 @@ class AuditTZRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run.current_phase, "atomization_failed")
         self.assertEqual(attempt.status, "failed")
         self.assertEqual(attempt.error_code, "worker_lease_expired")
+
+    async def test_rate_limit_is_deferred_without_immediate_retry_storm(self):
+        error = AIProviderError(
+            "rate_limited",
+            "limited",
+            429,
+            retry_after_seconds=75,
+        )
+        generate = AsyncMock(side_effect=error)
+
+        with patch("app.services.audit_tz_runtime.generate_batch_result", generate):
+            with self.assertRaises(AuditTZRuntimeError) as raised:
+                await _generate_batch_with_retry(SimpleNamespace(), SimpleNamespace(), 12)
+
+        self.assertTrue(raised.exception.retryable)
+        self.assertEqual(raised.exception.retry_after_seconds, 75)
+        self.assertEqual(generate.await_count, 1)
+
+    async def test_schema_retry_adds_targeted_correction_code(self):
+        expected = SimpleNamespace(batch_index=1)
+        generate = AsyncMock(
+            side_effect=[
+                CanonicalAtomizationError("coverage_gap", "missing"),
+                expected,
+            ]
+        )
+
+        with (
+            patch("app.services.audit_tz_runtime.generate_batch_result", generate),
+            patch("app.services.audit_tz_runtime.asyncio.sleep", new=AsyncMock()),
+        ):
+            result = await _generate_batch_with_retry(SimpleNamespace(), SimpleNamespace(), 12)
+
+        self.assertIs(result, expected)
+        self.assertIsNone(generate.await_args_list[0].kwargs["correction_code"])
+        self.assertEqual(generate.await_args_list[1].kwargs["correction_code"], "coverage_gap")
+
+    async def test_transient_failure_reschedules_and_preserves_checkpoints(self):
+        now = datetime.now(timezone.utc)
+        run_id = uuid4()
+        saved_batches = [{"batch_index": 1}, {"batch_index": 2}]
+        job = SimpleNamespace(
+            id=uuid4(),
+            run_id=run_id,
+            status="running",
+            lease_token="lease",
+            attempt_count=1,
+            max_attempts=6,
+            available_at=now,
+            lease_expires_at=now + timedelta(minutes=1),
+            worker_id="worker",
+            error_code=None,
+            finished_at=None,
+        )
+        run = SimpleNamespace(
+            id=run_id,
+            case_id=uuid4(),
+            requested_by_id=uuid4(),
+            status="atomizing",
+            current_phase="atomizing",
+            completed_batch_count=2,
+            total_batch_count=5,
+            safe_summary_json={},
+            error_code=None,
+            finished_at=None,
+        )
+        attempt = SimpleNamespace(
+            status="running",
+            error_code=None,
+            config_version=1,
+            batch_results_json=saved_batches.copy(),
+        )
+        added: list[object] = []
+
+        class FakeSession:
+            def __init__(self):
+                self.scalar_calls = 0
+
+            async def scalar(self, _query):
+                self.scalar_calls += 1
+                return job if self.scalar_calls == 1 else attempt
+
+            async def get(self, model, key):
+                return run if model is AuditTZRun and key == run_id else None
+
+            async def rollback(self):
+                return None
+
+            async def commit(self):
+                return None
+
+            def add(self, value):
+                added.append(value)
+
+        @asynccontextmanager
+        async def db_factory():
+            yield FakeSession()
+
+        with patch("app.services.audit_tz_runtime._now", return_value=now):
+            rescheduled = await _reschedule_atomization(
+                job.id,
+                "lease",
+                db_factory,
+                error=AuditTZRuntimeError(
+                    "rate_limited",
+                    "limited",
+                    retryable=True,
+                    retry_after_seconds=75,
+                ),
+            )
+
+        self.assertTrue(rescheduled)
+        self.assertEqual(job.status, "queued")
+        self.assertEqual(job.available_at, now + timedelta(seconds=75))
+        self.assertEqual(run.current_phase, "atomization_retry_wait")
+        self.assertEqual(run.completed_batch_count, 2)
+        self.assertEqual(attempt.batch_results_json, saved_batches)
+        self.assertEqual(attempt.status, "running")
+        self.assertEqual(len(added), 1)
 
     def test_runtime_artifact_symlink_is_rejected(self):
         with TemporaryDirectory() as temp_dir, patch.object(settings, "AUDIT_TZ_RUNTIME_DIR", temp_dir):

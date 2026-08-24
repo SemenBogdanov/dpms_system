@@ -374,12 +374,21 @@ function canonicalRunLabel(run: AuditTZRun): string {
   if (run.status === 'queued') return 'В очереди'
   if (run.status === 'running') return run.current_phase === 'preflight' ? 'Подготавливаем документ' : 'Runtime обрабатывает документ'
   if (run.status === 'preflight_pass') return 'Документ подготовлен'
-  if (run.status === 'atomization_queued') return 'Атомизация в очереди'
+  if (run.status === 'atomization_queued') {
+    return run.current_phase === 'atomization_retry_wait'
+      ? 'Ожидаем автоматический повтор'
+      : 'Атомизация в очереди'
+  }
   if (run.status === 'atomizing') return 'ИИ анализирует ТЗ'
   if (run.status === 'draft_ready') return 'Черновик атомов готов'
   if (run.status === 'committed') return 'Атомы записаны в реестр'
   if (run.status === 'blocked') return 'Обработка остановлена'
   return 'Техническая ошибка'
+}
+
+function canonicalRetryAt(run: AuditTZRun): string | null {
+  const value = run.safe_summary.atomization_retry_at
+  return typeof value === 'string' && value.trim() ? value : null
 }
 
 function canonicalBlockMessage(code: string | null): string {
@@ -1988,7 +1997,7 @@ export function AuditPage() {
         .catch((error: unknown) => {
           if (!cancelled) setAiAtomizationError(error instanceof Error ? error.message : 'Не удалось обновить состояние runtime')
         })
-    }, 1200)
+    }, canonicalRun.current_phase === 'atomization_retry_wait' ? 5000 : 1200)
     return () => {
       cancelled = true
       window.clearInterval(timer)
@@ -5737,6 +5746,8 @@ export function AuditPage() {
                       ? '634 и подобные значения здесь означают исходные фрагменты, а не атомы. Итоговый список сформирует модель.'
                       : canonicalRun.status === 'atomizing'
                         ? `Обработано пакетов: ${canonicalRun.completed_batch_count} из ${canonicalRun.total_batch_count}. Прогресс сохраняется.`
+                        : canonicalRun.current_phase === 'atomization_retry_wait'
+                          ? `Готово пакетов: ${canonicalRun.completed_batch_count} из ${canonicalRun.total_batch_count}. Повтор начнется автоматически${canonicalRetryAt(canonicalRun) ? ` ${formatDateTime(canonicalRetryAt(canonicalRun) as string)}` : ''}.`
                         : `${canonicalRunLabel(canonicalRun)}. Результат сохраняется в истории аудита.`
                     : 'Сначала документ проверяется локально. Внешний запрос возможен только после отдельного подтверждения.'
                 : aiPrivacyPreview
@@ -5926,18 +5937,29 @@ export function AuditPage() {
                       <MetricTile label="Следующий этап" value="ИИ-анализ" hint="после вашего подтверждения" />
                     </div>
                   ) : ['atomization_queued', 'atomizing', 'draft_ready', 'committed'].includes(canonicalRun.status) ? (
-                    <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                      <MetricTile label="Исходных фрагментов" value={String(canonicalRun.source_unit_count)} />
-                      <MetricTile
-                        label="Обработано пакетов"
-                        value={`${canonicalRun.completed_batch_count}/${canonicalRun.total_batch_count || '—'}`}
-                        tone={canonicalRun.status === 'draft_ready' || canonicalRun.status === 'committed' ? 'success' : 'primary'}
-                      />
-                      <MetricTile
-                        label="Найдено атомов"
-                        value={canonicalRun.status === 'draft_ready' || canonicalRun.status === 'committed' ? String(canonicalRun.atom_count) : '—'}
-                        hint="до ручного подтверждения"
-                      />
+                    <div className="mt-3">
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <MetricTile label="Исходных фрагментов" value={String(canonicalRun.source_unit_count)} />
+                        <MetricTile
+                          label="Обработано пакетов"
+                          value={`${canonicalRun.completed_batch_count}/${canonicalRun.total_batch_count || '—'}`}
+                          tone={canonicalRun.status === 'draft_ready' || canonicalRun.status === 'committed' ? 'success' : 'primary'}
+                        />
+                        <MetricTile
+                          label="Найдено атомов"
+                          value={canonicalRun.status === 'draft_ready' || canonicalRun.status === 'committed' ? String(canonicalRun.atom_count) : '—'}
+                          hint="до ручного подтверждения"
+                        />
+                      </div>
+                      {canonicalRun.current_phase === 'atomization_retry_wait' ? (
+                        <div className="mt-3 flex items-start gap-2 border-t border-border pt-3 text-xs text-amber-800 dark:text-amber-200">
+                          <Clock3 className="mt-0.5 h-4 w-4 shrink-0" />
+                          <span>
+                            ИИ-провайдер временно недоступен или ограничил запросы. DPMS сохранил готовые пакеты и продолжит с места остановки
+                            {canonicalRetryAt(canonicalRun) ? ` ${formatDateTime(canonicalRetryAt(canonicalRun) as string)}` : ''}.
+                          </span>
+                        </div>
+                      ) : null}
                     </div>
                   ) : canonicalRun.status === 'blocked' ? (
                     <div className="mt-2 text-sm text-foreground">

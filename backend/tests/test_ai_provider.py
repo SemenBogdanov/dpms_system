@@ -105,6 +105,33 @@ class AIProviderTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(context.exception.code, expected_code)
                 self.assertNotIn("remote diagnostic", context.exception.message)
 
+    async def test_rate_limit_preserves_bounded_retry_after(self):
+        async def handler(_: httpx.Request) -> httpx.Response:
+            return httpx.Response(429, headers={"Retry-After": "75"})
+
+        with (
+            patch.object(settings, "INTEGRATION_SECRET_KEY", INTEGRATION_KEY),
+            patch.object(settings, "AI_PROVIDER_ALLOWED_ORIGINS", "https://ai.example.test"),
+        ):
+            provider = SimpleNamespace(
+                enabled=True,
+                base_url="https://ai.example.test/v1",
+                model_name="test-model",
+                api_key_ciphertext=encrypt_ai_api_key("provider-secret"),
+                config_version=1,
+                last_test_status="ok",
+                last_verified_config_version=1,
+            )
+            with self.assertRaises(AIProviderError) as context:
+                await generate_text(
+                    provider,
+                    [{"role": "user", "content": "test"}],
+                    transport=httpx.MockTransport(handler),
+                )
+
+        self.assertEqual(context.exception.code, "rate_limited")
+        self.assertEqual(context.exception.retry_after_seconds, 75)
+
     async def test_redirect_is_blocked(self):
         async def handler(_: httpx.Request) -> httpx.Response:
             return httpx.Response(307, headers={"location": "https://other.example.test/v1/chat/completions"})

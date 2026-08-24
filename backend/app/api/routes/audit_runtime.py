@@ -66,7 +66,11 @@ from app.services.audit_runtime_crypto import (
     AuditRuntimeCryptoError,
     build_run_key,
 )
-from app.services.audit_tz_runtime import AuditTZRuntimeError, document_binding_digest
+from app.services.audit_tz_runtime import (
+    ATOMIZATION_MAX_JOB_ATTEMPTS,
+    AuditTZRuntimeError,
+    document_binding_digest,
+)
 
 
 router = APIRouter()
@@ -599,6 +603,11 @@ async def start_canonical_atomization(
         )
         if job is None or job.status == "running":
             raise HTTPException(status_code=409, detail="Не удалось безопасно повторить атомизацию")
+        resume_checkpoint = bool(
+            same_lane
+            and existing_attempt.status == "failed"
+            and existing_attempt.batch_results_json
+        )
         if existing_attempt.status in {"draft_ready", "committed"}:
             saved_registry = await db.scalar(
                 select(AuditAIModelRegistry.id).where(
@@ -630,7 +639,8 @@ async def start_canonical_atomization(
         existing_attempt.model_name = provider.model_name
         existing_attempt.consent_confirmed_at = datetime.now(timezone.utc)
         existing_attempt.requested_by_id = user.id
-        existing_attempt.batch_results_json = []
+        if not resume_checkpoint:
+            existing_attempt.batch_results_json = []
         existing_attempt.source_manifest_json = []
         existing_attempt.coverage_json = {}
         existing_attempt.warnings_json = []
@@ -639,12 +649,24 @@ async def start_canonical_atomization(
         existing_attempt.committed_by_id = None
         existing_attempt.committed_at = None
         run.atom_count = 0
-        run.completed_batch_count = 0
-        run.total_batch_count = 0
-        run.external_ai_called = False
+        run.completed_batch_count = (
+            len(existing_attempt.batch_results_json or []) if resume_checkpoint else 0
+        )
+        if not resume_checkpoint:
+            run.total_batch_count = 0
+            run.external_ai_called = False
+        run_summary = dict(getattr(run, "safe_summary_json", {}) or {})
+        run_summary.pop("atomization_retry_at", None)
+        run_summary.pop("atomization_retry_count", None)
+        run_summary.pop("atomization_retry_error", None)
+        run.safe_summary_json = run_summary
         existing_attempt.config_version += 1
         job.status = "queued"
         job.attempt_count = 0
+        job.max_attempts = max(
+            int(getattr(job, "max_attempts", 0) or 0),
+            ATOMIZATION_MAX_JOB_ATTEMPTS,
+        )
         job.available_at = datetime.now(timezone.utc)
         job.lease_token = None
         job.lease_expires_at = None
@@ -688,7 +710,7 @@ async def start_canonical_atomization(
                 skill_version_id=run.skill_version_id,
                 run_id=run.id,
                 status="queued",
-                max_attempts=3,
+                max_attempts=ATOMIZATION_MAX_JOB_ATTEMPTS,
             )
         )
 
@@ -708,6 +730,7 @@ async def start_canonical_atomization(
                 "provider_id": str(provider.id),
                 "provider_name": provider.display_name,
                 "model_name": provider.model_name,
+                "resumed_batch_count": run.completed_batch_count,
             },
         )
     )
