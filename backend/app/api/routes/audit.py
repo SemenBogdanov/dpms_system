@@ -118,6 +118,22 @@ AUDIT_WORKFLOW_STAGES = {
 }
 REQUIRED_CASE_FIELDS = {"title", "digital_product", "status", "workflow_stage"}
 REQUIRED_ATOM_FIELDS = {"item_code", "title", "digital_product", "state", "sort_order"}
+ATOM_SCOPE_FIELDS = {
+    "item_code",
+    "title",
+    "digital_product",
+    "work_type",
+    "object_type",
+    "source_clause",
+    "state",
+    "sort_order",
+}
+ALPHA_COMMENT_REQUIRED_RESULTS = {
+    "not_present",
+    "partial",
+    "not_applicable",
+    "needs_clarification",
+}
 SAFE_EVENT_PAYLOAD_FIELDS = {
     "case_number",
     "fields",
@@ -142,6 +158,15 @@ SAFE_EVENT_PAYLOAD_FIELDS = {
     "retained_assignment_id",
     "workflow_stage",
     "previous_workflow_stage",
+    "status",
+    "previous_status",
+    "state",
+    "previous_state",
+    "alpha_result",
+    "previous_alpha_result",
+    "alpha_comment",
+    "previous_alpha_comment",
+    "alpha_date",
     "identifier_count",
     "replacement_count",
     "source_unit_count",
@@ -167,10 +192,7 @@ async def require_audit_workspace_member(
     """Allow admins and explicit members of the audit team into shared audit data."""
     if user.role in (UserRole.admin, UserRole.teamlead):
         return user
-    membership = await db.scalar(
-        select(AuditTeamMember.id).where(AuditTeamMember.user_id == user.id)
-    )
-    if membership is None:
+    if not await _is_audit_team_member(user, db):
         raise HTTPException(status_code=403, detail="Пользователь не включен в команду аудита")
     return user
 
@@ -195,6 +217,41 @@ async def _is_audit_manager(user: User, db: AsyncSession) -> bool:
         )
     )
     return membership is not None
+
+
+async def _is_audit_team_member(user: User, db: AsyncSession) -> bool:
+    membership = await db.scalar(
+        select(AuditTeamMember.id).where(AuditTeamMember.user_id == user.id)
+    )
+    return membership is not None
+
+
+def _activate_case_for_assignment(
+    db: AsyncSession,
+    audit_case: AuditCase,
+    actor_id: UUID,
+) -> None:
+    """Keep the public workflow and internal lifecycle consistent on assignment."""
+    previous_stage = audit_case.workflow_stage
+    previous_status = audit_case.status
+    if audit_case.workflow_stage == "unassigned":
+        audit_case.workflow_stage = "atomization"
+    if audit_case.status == "draft":
+        audit_case.status = "atomization"
+    if audit_case.workflow_stage != previous_stage:
+        record_audit_event(
+            db,
+            case_id=audit_case.id,
+            actor_id=actor_id,
+            event_type="workflow_stage_changed",
+            message="Этап аудита: атомизация",
+            payload_json={
+                "previous_workflow_stage": previous_stage,
+                "workflow_stage": audit_case.workflow_stage,
+                "previous_status": previous_status,
+                "status": audit_case.status,
+            },
+        )
 
 
 async def _ensure_case_atom_editor(
@@ -223,17 +280,75 @@ def _validated_url(value: str | None) -> str | None:
     return value
 
 
-async def _get_case_or_404(db: AsyncSession, case_id: UUID) -> AuditCase:
-    result = await db.execute(select(AuditCase).where(AuditCase.id == case_id))
+async def _get_case_or_404(
+    db: AsyncSession,
+    case_id: UUID,
+    *,
+    for_update: bool = False,
+) -> AuditCase:
+    query = select(AuditCase).where(AuditCase.id == case_id)
+    if for_update:
+        query = query.with_for_update()
+    result = await db.execute(query)
     audit_case = result.scalar_one_or_none()
     if audit_case is None:
         raise HTTPException(status_code=404, detail="Аудит не найден")
     return audit_case
 
 
+def _utc_timestamp(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _ensure_atom_version(atom: AuditAtom, expected_updated_at: datetime) -> None:
+    if _utc_timestamp(expected_updated_at) != _utc_timestamp(atom.updated_at):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Атом {atom.item_code} уже изменен другим пользователем. "
+                "Обновите данные и повторите решение."
+            ),
+        )
+
+
+def _return_case_to_atomization(
+    db: AsyncSession,
+    audit_case: AuditCase,
+    actor_id: UUID,
+    *,
+    reason: str,
+) -> None:
+    if audit_case.workflow_stage in {"unassigned", "atomization"}:
+        if audit_case.status == "ready":
+            audit_case.status = "atomization"
+        return
+    previous_stage = audit_case.workflow_stage
+    previous_status = audit_case.status
+    audit_case.workflow_stage = "atomization"
+    audit_case.status = "atomization"
+    record_audit_event(
+        db,
+        case_id=audit_case.id,
+        actor_id=actor_id,
+        event_type="workflow_stage_changed",
+        message="Этап аудита возвращен к атомизации",
+        payload_json={
+            "previous_workflow_stage": previous_stage,
+            "workflow_stage": audit_case.workflow_stage,
+            "previous_status": previous_status,
+            "status": audit_case.status,
+            "fields": [reason],
+        },
+    )
+
+
 async def _get_atom_or_404(db: AsyncSession, case_id: UUID, atom_id: UUID) -> AuditAtom:
     result = await db.execute(
-        select(AuditAtom).where(AuditAtom.id == atom_id, AuditAtom.case_id == case_id)
+        select(AuditAtom)
+        .where(AuditAtom.id == atom_id, AuditAtom.case_id == case_id)
+        .with_for_update()
     )
     atom = result.scalar_one_or_none()
     if atom is None:
@@ -256,6 +371,7 @@ async def _serialize_case(
     include_atoms: bool,
     counts: tuple[int, int, int, int, int, int, int] | None = None,
     responsible: tuple[str | None, str | None] | None = None,
+    can_view_contract_reference: bool = False,
 ) -> AuditCaseRead:
     atoms = await _load_atoms(db, audit_case.id) if include_atoms else []
     if counts is None:
@@ -286,7 +402,9 @@ async def _serialize_case(
         responsible_email=responsible_email,
         title=audit_case.title,
         digital_product=audit_case.digital_product,
-        contract_reference_mask=audit_case.contract_reference_mask,
+        contract_reference_mask=(
+            audit_case.contract_reference_mask if can_view_contract_reference else None
+        ),
         contract_date=audit_case.contract_date,
         status=audit_case.status,
         workflow_stage=audit_case.workflow_stage,
@@ -309,10 +427,11 @@ async def list_audit_cases(
     status_filter: str = Query("all", alias="status"),
     search: str | None = Query(None, max_length=120),
     limit: int = Query(100, ge=1, le=300),
-    _: User = Depends(require_audit_workspace_member),
+    user: User = Depends(require_audit_workspace_member),
     db: AsyncSession = Depends(get_db),
 ):
     """Shared register visible to every user with audit access."""
+    can_view_contract_reference = await _is_audit_team_member(user, db)
     atom_counts = (
         select(
             AuditAtom.case_id.label("case_id"),
@@ -355,13 +474,13 @@ async def list_audit_cases(
         query = query.where(AuditCase.status == status_filter)
     if search and search.strip():
         pattern = f"%{search.strip()}%"
-        query = query.where(
-            or_(
-                AuditCase.title.ilike(pattern),
-                AuditCase.digital_product.ilike(pattern),
-                AuditCase.contract_reference_mask.ilike(pattern),
-            )
-        )
+        search_fields = [
+            AuditCase.title.ilike(pattern),
+            AuditCase.digital_product.ilike(pattern),
+        ]
+        if can_view_contract_reference:
+            search_fields.append(AuditCase.contract_reference_mask.ilike(pattern))
+        query = query.where(or_(*search_fields))
     result = await db.execute(query.order_by(AuditCase.updated_at.desc()).limit(limit))
     return [
         await _serialize_case(
@@ -370,6 +489,7 @@ async def list_audit_cases(
             include_atoms=False,
             counts=(int(total), int(ready), int(draft), int(excluded), int(alpha), int(commission), int(documents)),
             responsible=(responsible_name, responsible_email),
+            can_view_contract_reference=can_view_contract_reference,
         )
         for audit_case, total, ready, draft, excluded, alpha, commission, documents, responsible_name, responsible_email in result.all()
     ]
@@ -387,6 +507,12 @@ async def create_audit_case(
         raise HTTPException(
             status_code=422,
             detail="Новый договор сначала создается без назначения",
+        )
+    can_view_contract_reference = await _is_audit_team_member(user, db)
+    if body.contract_reference and not can_view_contract_reference:
+        raise HTTPException(
+            status_code=403,
+            detail="Номер договора доступен только участникам команды аудита",
         )
     fingerprint, mask = build_contract_fields(body.contract_reference)
     if fingerprint:
@@ -417,16 +543,26 @@ async def create_audit_case(
         message="Создана карточка аудита",
         payload_json={"case_number": audit_case.case_number},
     )
-    return await _serialize_case(db, audit_case, include_atoms=True)
+    return await _serialize_case(
+        db,
+        audit_case,
+        include_atoms=True,
+        can_view_contract_reference=can_view_contract_reference,
+    )
 
 
 @router.get("/cases/{case_id}", response_model=AuditCaseRead)
 async def get_audit_case(
     case_id: UUID,
-    _: User = Depends(require_audit_workspace_member),
+    user: User = Depends(require_audit_workspace_member),
     db: AsyncSession = Depends(get_db),
 ):
-    return await _serialize_case(db, await _get_case_or_404(db, case_id), include_atoms=True)
+    return await _serialize_case(
+        db,
+        await _get_case_or_404(db, case_id),
+        include_atoms=True,
+        can_view_contract_reference=await _is_audit_team_member(user, db),
+    )
 
 
 @router.patch("/cases/{case_id}", response_model=AuditCaseRead)
@@ -438,7 +574,14 @@ async def update_audit_case(
 ):
     audit_case = await _get_case_or_404(db, case_id)
     changes = body.model_dump(exclude_unset=True)
+    contract_reference_requested = "contract_reference" in changes
     contract_reference = changes.pop("contract_reference", None)
+    can_view_contract_reference = await _is_audit_team_member(user, db)
+    if contract_reference_requested and not can_view_contract_reference:
+        raise HTTPException(
+            status_code=403,
+            detail="Номер договора доступен только участникам команды аудита",
+        )
     previous_workflow_stage = audit_case.workflow_stage
     invalid_fields = sorted(field for field in REQUIRED_CASE_FIELDS if field in changes and changes[field] is None)
     if invalid_fields:
@@ -527,7 +670,12 @@ async def update_audit_case(
                 "workflow_stage": audit_case.workflow_stage,
             },
         )
-    return await _serialize_case(db, audit_case, include_atoms=True)
+    return await _serialize_case(
+        db,
+        audit_case,
+        include_atoms=True,
+        can_view_contract_reference=can_view_contract_reference,
+    )
 
 
 @router.delete("/cases/{case_id}", response_model=AuditCaseDeleteResponse)
@@ -616,8 +764,13 @@ async def create_audit_atom(
     user: User = Depends(require_audit_workspace_member),
     db: AsyncSession = Depends(get_db),
 ):
-    audit_case = await _get_case_or_404(db, case_id)
+    audit_case = await _get_case_or_404(db, case_id, for_update=True)
     await _ensure_case_atom_editor(audit_case, user, db)
+    if body.alpha_result is not None or body.alpha_date is not None or body.alpha_comment is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="Сначала добавьте и примите атом, затем зафиксируйте результат альфа-проверки",
+        )
     item_code = body.item_code or await generate_next_item_code(db, case_id)
     duplicate = await db.execute(
         select(AuditAtom.id).where(AuditAtom.case_id == case_id, AuditAtom.item_code == item_code)
@@ -630,6 +783,7 @@ async def create_audit_atom(
     db.add(atom)
     if audit_case.status in {"draft", "ready"}:
         audit_case.status = "atomization"
+    _return_case_to_atomization(db, audit_case, user.id, reason="atom_created")
     await db.flush()
     await db.refresh(atom)
     record_audit_event(
@@ -654,7 +808,7 @@ async def bulk_update_audit_atom_status(
     user: User = Depends(require_audit_workspace_member),
     db: AsyncSession = Depends(get_db),
 ):
-    audit_case = await _get_case_or_404(db, case_id)
+    audit_case = await _get_case_or_404(db, case_id, for_update=True)
     await _ensure_case_atom_editor(audit_case, user, db)
     atoms = list(
         (
@@ -670,10 +824,18 @@ async def bulk_update_audit_atom_status(
     )
     if len(atoms) != len(body.atom_ids):
         raise HTTPException(status_code=422, detail="Один из выбранных атомов не найден в этом аудите")
+    for atom in atoms:
+        _ensure_atom_version(atom, body.expected_updated_at_by_atom[atom.id])
     changed_atoms = [atom for atom in atoms if atom.state != body.state]
     for atom in changed_atoms:
         previous_state = atom.state
         atom.state = body.state
+        if body.state != "ready":
+            atom.alpha_result = None
+            atom.alpha_comment = None
+            atom.alpha_date = None
+            atom.commission_result = None
+            atom.commission_date = None
         record_audit_event(
             db,
             case_id=case_id,
@@ -681,10 +843,15 @@ async def bulk_update_audit_atom_status(
             actor_id=user.id,
             event_type="atom_status_changed",
             message=f"Статус атома {atom.item_code}: {previous_state} -> {body.state}",
-            payload_json={"item_code": atom.item_code, "fields": ["state"]},
+            payload_json={
+                "item_code": atom.item_code,
+                "fields": ["state"],
+                "previous_state": previous_state,
+                "state": body.state,
+            },
         )
-    if audit_case.status == "ready" and body.state not in {"ready", "excluded"}:
-        audit_case.status = "atomization"
+    if changed_atoms:
+        _return_case_to_atomization(db, audit_case, user.id, reason="atom_bulk_state_changed")
     record_audit_event(
         db,
         case_id=case_id,
@@ -741,6 +908,80 @@ async def export_audit_atoms(
     )
 
 
+@router.post("/cases/{case_id}/alpha-review/start", response_model=AuditCaseRead)
+async def start_audit_alpha_review(
+    case_id: UUID,
+    user: User = Depends(require_audit_workspace_member),
+    db: AsyncSession = Depends(get_db),
+):
+    audit_case = await db.scalar(
+        select(AuditCase).where(AuditCase.id == case_id).with_for_update()
+    )
+    if audit_case is None:
+        raise HTTPException(status_code=404, detail="Аудит не найден")
+    await _ensure_case_atom_editor(audit_case, user, db)
+    if audit_case.responsible_user_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Сначала назначьте ответственного за аудит",
+        )
+    if audit_case.workflow_stage == "alpha_review":
+        return await _serialize_case(
+            db,
+            audit_case,
+            include_atoms=True,
+            can_view_contract_reference=await _is_audit_team_member(user, db),
+        )
+    if audit_case.workflow_stage != "atomization":
+        raise HTTPException(
+            status_code=409,
+            detail="Альфа-проверку можно начать только после этапа атомизации",
+        )
+    total_atoms, draft_atoms, ready_atoms = (
+        await db.execute(
+            select(
+                func.count(AuditAtom.id),
+                func.count(AuditAtom.id).filter(AuditAtom.state == "draft"),
+                func.count(AuditAtom.id).filter(AuditAtom.state == "ready"),
+            ).where(AuditAtom.case_id == case_id)
+        )
+    ).one()
+    if int(total_atoms) == 0:
+        raise HTTPException(status_code=409, detail="Сначала сформируйте реестр атомов")
+    if int(draft_atoms) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Сначала проверьте все черновики атомов: осталось {int(draft_atoms)}",
+        )
+    if int(ready_atoms) == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Для альфа-проверки нужен хотя бы один принятый атом",
+        )
+    previous_stage = audit_case.workflow_stage
+    audit_case.workflow_stage = "alpha_review"
+    audit_case.status = "atomization"
+    record_audit_event(
+        db,
+        case_id=case_id,
+        actor_id=user.id,
+        event_type="alpha_review_started",
+        message="Начата альфа-проверка атомов",
+        payload_json={
+            "previous_workflow_stage": previous_stage,
+            "workflow_stage": audit_case.workflow_stage,
+            "atom_count": int(ready_atoms),
+        },
+    )
+    await db.flush()
+    return await _serialize_case(
+        db,
+        audit_case,
+        include_atoms=True,
+        can_view_contract_reference=await _is_audit_team_member(user, db),
+    )
+
+
 @router.patch("/cases/{case_id}/atoms/{atom_id}", response_model=AuditAtomRead)
 async def update_audit_atom(
     case_id: UUID,
@@ -749,10 +990,12 @@ async def update_audit_atom(
     user: User = Depends(require_audit_workspace_member),
     db: AsyncSession = Depends(get_db),
 ):
-    audit_case = await _get_case_or_404(db, case_id)
+    audit_case = await _get_case_or_404(db, case_id, for_update=True)
     await _ensure_case_atom_editor(audit_case, user, db)
     atom = await _get_atom_or_404(db, case_id, atom_id)
     changes = body.model_dump(exclude_unset=True)
+    expected_updated_at = changes.pop("expected_updated_at")
+    _ensure_atom_version(atom, expected_updated_at)
     invalid_fields = sorted(field for field in REQUIRED_ATOM_FIELDS if field in changes and changes[field] is None)
     if invalid_fields:
         raise HTTPException(
@@ -771,21 +1014,91 @@ async def update_audit_atom(
         )
         if duplicate.scalar_one_or_none() is not None:
             raise HTTPException(status_code=409, detail="Код атома уже используется в этом аудите")
+    changes = {
+        field: value
+        for field, value in changes.items()
+        if getattr(atom, field) != value
+    }
+    scope_changed = bool(ATOM_SCOPE_FIELDS.intersection(changes))
+    alpha_fields_changed = bool({"alpha_result", "alpha_comment", "alpha_date"}.intersection(changes))
+    if scope_changed and changes.get("alpha_result") is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="Сначала сохраните изменение атома и повторно пройдите его проверку",
+        )
+    if scope_changed:
+        for field in (
+            "alpha_result",
+            "alpha_comment",
+            "alpha_date",
+            "commission_result",
+            "commission_date",
+        ):
+            if getattr(atom, field) is not None:
+                changes[field] = None
+        _return_case_to_atomization(db, audit_case, user.id, reason="atom_scope_changed")
+
+    if alpha_fields_changed:
+        next_result = changes.get("alpha_result", atom.alpha_result)
+        next_comment = changes.get("alpha_comment", atom.alpha_comment)
+        next_date = changes.get("alpha_date", atom.alpha_date)
+        next_state = changes.get("state", atom.state)
+        if next_result is None:
+            changes["alpha_comment"] = None
+            changes["alpha_date"] = None
+        else:
+            if audit_case.workflow_stage != "alpha_review":
+                raise HTTPException(
+                    status_code=409,
+                    detail="Результат можно фиксировать только после запуска альфа-проверки",
+                )
+            if next_state != "ready":
+                raise HTTPException(
+                    status_code=422,
+                    detail="Альфа-проверка доступна только для принятых атомов",
+                )
+            if next_date is None:
+                raise HTTPException(status_code=422, detail="Укажите дату альфа-проверки")
+            if next_result in ALPHA_COMMENT_REQUIRED_RESULTS and not next_comment:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Для этого результата обязателен комментарий",
+                )
+    previous_state = atom.state
+    previous_alpha_result = atom.alpha_result
+    previous_alpha_comment = atom.alpha_comment
     for field, value in changes.items():
         setattr(atom, field, value)
-    if audit_case.status == "ready" and atom.state not in {"ready", "excluded"}:
-        audit_case.status = "atomization"
     await db.flush()
     await db.refresh(atom)
     if changes:
+        if atom.state != previous_state:
+            event_type = "atom_status_changed"
+            message = f"Статус атома {atom.item_code}: {previous_state} -> {atom.state}"
+        elif atom.alpha_result != previous_alpha_result:
+            event_type = "atom_alpha_decision_changed"
+            message = f"Результат альфа-проверки атома {atom.item_code}: {atom.alpha_result or 'не задан'}"
+        else:
+            event_type = "atom_updated"
+            message = f"Изменен атом {atom.item_code}"
         record_audit_event(
             db,
             case_id=case_id,
             atom_id=atom.id,
             actor_id=user.id,
-            event_type="atom_updated",
-            message=f"Изменен атом {atom.item_code}",
-            payload_json={"item_code": atom.item_code, "fields": list(changes)},
+            event_type=event_type,
+            message=message,
+            payload_json={
+                "item_code": atom.item_code,
+                "fields": list(changes),
+                "previous_state": previous_state,
+                "state": atom.state,
+                "previous_alpha_result": previous_alpha_result,
+                "alpha_result": atom.alpha_result,
+                "previous_alpha_comment": previous_alpha_comment,
+                "alpha_comment": atom.alpha_comment,
+                "alpha_date": atom.alpha_date.isoformat() if atom.alpha_date else None,
+            },
         )
     return AuditAtomRead.model_validate(atom)
 
@@ -1298,19 +1611,7 @@ async def replace_audit_assignment_cell(
             message=assignment_message,
             payload_json=assignment_payload,
         )
-        if audit_case.workflow_stage == "unassigned":
-            audit_case.workflow_stage = "atomization"
-            record_audit_event(
-                db,
-                case_id=case_id,
-                actor_id=manager.id,
-                event_type="workflow_stage_changed",
-                message="Этап аудита: выполняется атомизация",
-                payload_json={
-                    "previous_workflow_stage": "unassigned",
-                    "workflow_stage": "atomization",
-                },
-            )
+        _activate_case_for_assignment(db, audit_case, manager.id)
         previous_user_id = audit_case.responsible_user_id
         if previous_user_id != body.assignee_id:
             audit_case.responsible_user_id = body.assignee_id
@@ -1515,6 +1816,8 @@ async def assign_audit_responsible(
                 "Передайте его другому сотруднику в разделе «Назначения»"
             ),
         )
+    if audit_case.status == "archived" and body.user_id is not None:
+        raise HTTPException(status_code=409, detail="Архивный договор нельзя назначить")
     previous_user_id = audit_case.responsible_user_id
     responsible_name = None
     responsible_email = None
@@ -1532,6 +1835,23 @@ async def assign_audit_responsible(
         responsible_name = responsible.full_name
         responsible_email = responsible.email
     audit_case.responsible_user_id = body.user_id
+    if body.user_id is not None:
+        _activate_case_for_assignment(db, audit_case, manager.id)
+    elif audit_case.workflow_stage != "ready":
+        previous_stage = audit_case.workflow_stage
+        audit_case.workflow_stage = "unassigned"
+        if previous_stage != audit_case.workflow_stage:
+            record_audit_event(
+                db,
+                case_id=audit_case.id,
+                actor_id=manager.id,
+                event_type="workflow_stage_changed",
+                message="Этап аудита: договор не назначен",
+                payload_json={
+                    "previous_workflow_stage": previous_stage,
+                    "workflow_stage": audit_case.workflow_stage,
+                },
+            )
     await db.flush()
     await db.refresh(audit_case)
     record_audit_event(
@@ -1550,6 +1870,7 @@ async def assign_audit_responsible(
         audit_case,
         include_atoms=True,
         responsible=(responsible_name, responsible_email),
+        can_view_contract_reference=await _is_audit_team_member(manager, db),
     )
 
 
@@ -1622,7 +1943,12 @@ async def upload_new_audit_documents(
             )
             response_items.append(
                 AuditDocumentUploadItem(
-                    case=await _serialize_case(db, audit_case, include_atoms=True),
+                    case=await _serialize_case(
+                        db,
+                        audit_case,
+                        include_atoms=True,
+                        can_view_contract_reference=await _is_audit_team_member(manager, db),
+                    ),
                     document=_document_read(document, manager.full_name),
                 )
             )
@@ -2326,6 +2652,8 @@ async def commit_ai_atomization_attempt(
             canonical_run.atom_count = len(created_atoms)
             canonical_run.finished_at = datetime.now(timezone.utc)
     audit_case.status = "atomization"
+    if audit_case.workflow_stage != "unassigned":
+        audit_case.workflow_stage = "atomization"
     record_audit_event(
         db,
         case_id=case_id,

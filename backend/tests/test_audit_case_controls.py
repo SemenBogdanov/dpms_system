@@ -3,10 +3,16 @@
 import unittest
 
 from app.main import app
-from app.schemas.audit import AuditCaseDeleteRequest
+from app.models.audit import DEFAULT_AUDIT_CONTEXT
+from app.schemas.audit import AuditCaseCreate, AuditCaseDeleteRequest
 
 
 class AuditCaseControlTests(unittest.TestCase):
+    def test_new_case_uses_default_audit_context(self):
+        payload = AuditCaseCreate(title="Аудит ТЗ", digital_product="OPEC")
+
+        self.assertEqual(payload.notes, DEFAULT_AUDIT_CONTEXT)
+
     def test_delete_confirmation_is_normalized(self):
         payload = AuditCaseDeleteRequest(
             confirmation_code="  aud-0042 ",

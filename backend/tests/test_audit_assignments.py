@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from app.api.routes.audit import (
     _assignment_read,
+    _serialize_case,
     assign_audit_responsible,
     list_audit_assignments,
     replace_audit_assignment_cell,
@@ -160,6 +161,8 @@ class AuditAssignmentPersistenceTests(unittest.IsolatedAsyncioTestCase):
                 manager, assignee, audit_case = await self._load_or_create_fixture(db)
 
                 audit_case.responsible_user_id = None
+                audit_case.status = "draft"
+                audit_case.workflow_stage = "unassigned"
                 current = list(
                     (
                         await db.scalars(
@@ -190,6 +193,8 @@ class AuditAssignmentPersistenceTests(unittest.IsolatedAsyncioTestCase):
                 await db.refresh(audit_case)
 
                 self.assertEqual(audit_case.responsible_user_id, assignee.id)
+                self.assertEqual(audit_case.workflow_stage, "atomization")
+                self.assertEqual(audit_case.status, "atomization")
                 events = list(
                     (
                         await db.scalars(
@@ -204,6 +209,32 @@ class AuditAssignmentPersistenceTests(unittest.IsolatedAsyncioTestCase):
                 }
                 self.assertIn("assignment_created", matching)
                 self.assertIn("responsible_changed", matching)
+            finally:
+                await db.rollback()
+
+    async def test_contract_reference_is_redacted_outside_audit_team(self):
+        async with AsyncSessionLocal() as db:
+            try:
+                _, assignee, audit_case = await self._load_or_create_fixture(db)
+                audit_case.contract_reference_mask = "AB****42"
+                await db.flush()
+
+                hidden = await _serialize_case(
+                    db,
+                    audit_case,
+                    include_atoms=False,
+                    can_view_contract_reference=False,
+                )
+                visible = await _serialize_case(
+                    db,
+                    audit_case,
+                    include_atoms=False,
+                    can_view_contract_reference=True,
+                )
+
+                self.assertIsNone(hidden.contract_reference_mask)
+                self.assertEqual(visible.contract_reference_mask, "AB****42")
+                self.assertIsNotNone(assignee.id)
             finally:
                 await db.rollback()
 

@@ -139,6 +139,8 @@ export type AuditWorkflowStage =
   | 'recommission_pending'
   | 'ready'
 export type AuditAtomState = 'draft' | 'ready' | 'excluded'
+export type AuditAlphaResult = 'present' | 'not_present' | 'partial' | 'not_applicable' | 'needs_clarification'
+export type AuditCommissionResult = 'confirmed' | 'not_confirmed' | 'deferred' | 'not_applicable'
 export type AuditTeamRole = 'leader' | 'member'
 export type AuditDocumentKind = 'technical_spec' | 'atom_register' | 'audit_result' | 'protocol' | 'other'
 
@@ -160,10 +162,11 @@ export interface AuditAtom {
   source_row: number | null
   source_fingerprint: string | null
   import_batch_id: string | null
-  alpha_result: string | null
+  alpha_result: AuditAlphaResult | null
   alpha_result_raw: string | null
+  alpha_comment: string | null
   alpha_date: string | null
-  commission_result: string | null
+  commission_result: AuditCommissionResult | null
   commission_result_raw: string | null
   commission_date: string | null
   sort_order: number
@@ -236,11 +239,18 @@ export interface AuditAtomCreate {
   system_url?: string | null
   notes?: string | null
   state?: AuditAtomState
+  alpha_result?: AuditAlphaResult | null
   alpha_result_raw?: string | null
+  alpha_comment?: string | null
+  alpha_date?: string | null
+  commission_result?: AuditCommissionResult | null
   commission_result_raw?: string | null
+  commission_date?: string | null
 }
 
-export type AuditAtomUpdate = Partial<AuditAtomCreate>
+export type AuditAtomUpdate = Partial<AuditAtomCreate> & {
+  expected_updated_at: string
+}
 
 export interface AuditImportIssue {
   row_number: number

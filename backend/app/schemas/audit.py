@@ -3,7 +3,9 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.models.audit import DEFAULT_AUDIT_CONTEXT
 
 
 AuditCaseStatus = Literal["draft", "atomization", "ready", "archived"]
@@ -44,6 +46,7 @@ class AuditAtomBase(BaseModel):
     source_row: int | None = Field(None, ge=1)
     alpha_result: AuditAlphaResult | None = None
     alpha_result_raw: str | None = Field(None, max_length=500)
+    alpha_comment: str | None = None
     alpha_date: date | None = None
     commission_result: AuditCommissionResult | None = None
     commission_result_raw: str | None = Field(None, max_length=500)
@@ -60,6 +63,7 @@ class AuditAtomBase(BaseModel):
         "notes",
         "source_sheet",
         "alpha_result_raw",
+        "alpha_comment",
         "commission_result_raw",
         mode="before",
     )
@@ -78,6 +82,7 @@ class AuditAtomCreate(AuditAtomBase):
 
 
 class AuditAtomUpdate(BaseModel):
+    expected_updated_at: datetime
     item_code: str | None = Field(None, max_length=40)
     title: str | None = Field(None, min_length=1, max_length=500)
     digital_product: str | None = Field(None, min_length=1, max_length=255)
@@ -91,6 +96,7 @@ class AuditAtomUpdate(BaseModel):
     source_row: int | None = Field(None, ge=1)
     alpha_result: AuditAlphaResult | None = None
     alpha_result_raw: str | None = Field(None, max_length=500)
+    alpha_comment: str | None = None
     alpha_date: date | None = None
     commission_result: AuditCommissionResult | None = None
     commission_result_raw: str | None = Field(None, max_length=500)
@@ -108,6 +114,7 @@ class AuditAtomUpdate(BaseModel):
         "notes",
         "source_sheet",
         "alpha_result_raw",
+        "alpha_comment",
         "commission_result_raw",
         mode="before",
     )
@@ -118,6 +125,7 @@ class AuditAtomUpdate(BaseModel):
 
 class AuditAtomBulkStatusUpdate(BaseModel):
     atom_ids: list[UUID] = Field(..., min_length=1, max_length=1000)
+    expected_updated_at_by_atom: dict[UUID, datetime] = Field(..., min_length=1, max_length=1000)
     state: AuditAtomState
 
     @field_validator("atom_ids")
@@ -126,6 +134,12 @@ class AuditAtomBulkStatusUpdate(BaseModel):
         if len(set(values)) != len(values):
             raise ValueError("Атом выбран несколько раз")
         return values
+
+    @model_validator(mode="after")
+    def versions_match_atoms(self):
+        if set(self.expected_updated_at_by_atom) != set(self.atom_ids):
+            raise ValueError("Передайте актуальную версию каждого выбранного атома")
+        return self
 
 
 class AuditAtomBulkStatusRead(BaseModel):
@@ -155,6 +169,7 @@ class AuditAtomRead(BaseModel):
     import_batch_id: UUID | None = None
     alpha_result: str | None = None
     alpha_result_raw: str | None = None
+    alpha_comment: str | None = None
     alpha_date: date | None = None
     commission_result: str | None = None
     commission_result_raw: str | None = None
@@ -173,7 +188,7 @@ class AuditCaseCreate(BaseModel):
     contract_date: date | None = None
     status: AuditCaseStatus = "draft"
     workflow_stage: AuditWorkflowStage = "unassigned"
-    notes: str | None = None
+    notes: str | None = DEFAULT_AUDIT_CONTEXT
 
     @field_validator("title", "digital_product", "contract_reference", "notes", mode="before")
     @classmethod

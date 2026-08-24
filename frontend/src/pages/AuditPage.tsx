@@ -51,6 +51,7 @@ import {
 import { api, ApiError } from '@/api/client'
 import type {
   AuditAtom,
+  AuditAlphaResult,
   AuditAtomCreate,
   AuditAtomUpdate,
   AuditAIAtomDraft,
@@ -93,6 +94,8 @@ type DetailTab = 'materials' | 'atoms' | 'history'
 type WorkspaceView = 'dashboard' | 'registry' | 'assignments' | 'case' | 'team'
 type CaseDialogMode = 'create' | 'edit'
 type AtomDialogMode = 'create' | 'edit'
+type AuditStageFormValue = AuditWorkflowStage | 'archived'
+type AtomReviewMode = 'draft' | 'alpha'
 
 type AuditCaseSummaryLike = Partial<AuditCaseSummary> & UnknownRecord
 type AuditCaseDetailLike = Partial<AuditCaseDetail> & UnknownRecord
@@ -139,12 +142,33 @@ interface NormalizedAuditAtom {
   sourceEvidenceText: string | null
   sourceRefs: Array<{ source_unit_id: string; locator: string; excerpt: string }>
   status: string
+  alphaResult: AuditAlphaResult | null
+  alphaResultRaw: string | null
+  alphaComment: string | null
+  alphaDate: string | null
+  commissionResult: string | null
   legacyAlphaRef: string | null
   commissionRef: string | null
   systemUrl: string | null
   notes: string | null
   createdAt: string | null
   updatedAt: string | null
+}
+
+interface AtomReviewFormState {
+  title: string
+  sourceClause: string
+  notes: string
+  systemUrl: string
+  alphaComment: string
+}
+
+interface AtomReviewUndoState {
+  atomId: string
+  queueIndex: number
+  expectedUpdatedAt: string | null
+  payload: AuditAtomUpdatePayload
+  message: string
 }
 
 interface NormalizedAuditCaseDetail extends NormalizedAuditCaseSummary {
@@ -208,8 +232,7 @@ interface EditableAIModelComparisonDraft extends AuditAIModelComparisonDraft {
 interface CaseFormState {
   title: string
   productName: string
-  status: string
-  workflowStage: AuditWorkflowStage
+  stage: AuditStageFormValue
   summary: string
   contractReference: string
   contractDate: string
@@ -241,16 +264,9 @@ interface DialogShellProps {
   children: ReactNode
 }
 
-const CASE_STATUS_LABELS: Record<string, string> = {
-  draft: 'Черновик',
-  atomization: 'Атомизация',
-  ready: 'Готово',
-  archived: 'Архив',
-}
-
 const AUDIT_WORKFLOW_LABELS: Record<AuditWorkflowStage, string> = {
   unassigned: 'Договор не назначен',
-  atomization: 'Выполняется атомизация',
+  atomization: 'Атомизация',
   alpha_review: 'Выполняется альфа-проверка',
   commission_pending: 'Ожидает комиссии',
   fixes_required: 'Ожидает исправлений',
@@ -263,8 +279,16 @@ const AUDIT_WORKFLOW_ORDER = Object.keys(AUDIT_WORKFLOW_LABELS) as AuditWorkflow
 
 const ATOM_STATUS_LABELS: Record<string, string> = {
   draft: 'Черновик',
-  ready: 'Готов',
+  ready: 'Принят',
   excluded: 'Исключен',
+}
+
+const ALPHA_RESULT_LABELS: Record<string, string> = {
+  present: 'Есть в системе',
+  not_present: 'Нет в системе',
+  partial: 'Частично',
+  not_applicable: 'Не применимо',
+  needs_clarification: 'Нужно уточнить',
 }
 
 const AUDIT_EVENT_LABELS: Record<string, string> = {
@@ -275,6 +299,9 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   document_uploaded: 'Материал загружен',
   atom_created: 'Атом создан',
   atom_updated: 'Атом изменен',
+  atom_status_changed: 'Статус атома изменен',
+  atom_alpha_decision_changed: 'Решение альфа-проверки изменено',
+  alpha_review_started: 'Альфа-проверка начата',
   atom_imported: 'Атом импортирован',
   import_committed: 'Импорт подтвержден',
   ai_atomization_started: 'ИИ-атомизация запущена',
@@ -306,13 +333,13 @@ const AUDIT_DOCUMENT_KIND_LABELS: Record<AuditDocumentKind, string> = {
 
 const CASE_STATUS_ORDER = ['all', ...AUDIT_WORKFLOW_ORDER, 'archived']
 const ATOM_STATUS_ORDER = ['all', 'draft', 'ready', 'excluded']
+const DEFAULT_AUDIT_CONTEXT = 'Выполняется аудит каждого элемента сформированного и отработанного технического задания.'
 
 const EMPTY_CASE_FORM: CaseFormState = {
   title: '',
   productName: '',
-  status: 'draft',
-  workflowStage: 'unassigned',
-  summary: '',
+  stage: 'unassigned',
+  summary: DEFAULT_AUDIT_CONTEXT,
   contractReference: '',
   contractDate: '',
 }
@@ -329,6 +356,14 @@ const EMPTY_ATOM_FORM: AtomFormState = {
   commissionRef: '',
   systemUrl: '',
   notes: '',
+}
+
+const EMPTY_ATOM_REVIEW_FORM: AtomReviewFormState = {
+  title: '',
+  sourceClause: '',
+  notes: '',
+  systemUrl: '',
+  alphaComment: '',
 }
 
 function isRecord(value: unknown): value is UnknownRecord {
@@ -407,10 +442,6 @@ function humanizeToken(value: string): string {
     .replace(/^./, (char) => char.toUpperCase())
 }
 
-function formatCaseStatus(status: string): string {
-  return CASE_STATUS_LABELS[status] ?? humanizeToken(status)
-}
-
 function formatAuditWorkflowStage(stage: string): string {
   return AUDIT_WORKFLOW_LABELS[stage as AuditWorkflowStage] ?? humanizeToken(stage)
 }
@@ -425,6 +456,30 @@ function caseWorkflowTone(status: string, stage: string): string {
 
 function formatAtomStatus(status: string): string {
   return ATOM_STATUS_LABELS[status] ?? humanizeToken(status)
+}
+
+function formatAlphaResult(result: string | null): string {
+  if (!result) return 'Не проверен'
+  return ALPHA_RESULT_LABELS[result] ?? humanizeToken(result)
+}
+
+function alphaResultTone(result: string | null): string {
+  switch (result) {
+    case 'present':
+      return 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+    case 'not_present':
+      return 'border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300'
+    case 'partial':
+    case 'needs_clarification':
+      return 'border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200'
+    default:
+      return 'border-border bg-surface-soft text-muted-foreground'
+  }
+}
+
+function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return Boolean(target.closest('input, textarea, select, button, a, [contenteditable="true"]'))
 }
 
 function formatAuditEventType(type: string): string {
@@ -705,6 +760,11 @@ function normalizeAuditAtom(input: unknown): NormalizedAuditAtom | null {
       }]
     }),
     status: getString(source, 'status', 'state') ?? 'draft',
+    alphaResult: getString(source, 'alpha_result', 'alphaResult') as AuditAlphaResult | null,
+    alphaResultRaw: getString(source, 'alpha_result_raw', 'alphaResultRaw'),
+    alphaComment: getString(source, 'alpha_comment', 'alphaComment'),
+    alphaDate: getString(source, 'alpha_date', 'alphaDate'),
+    commissionResult: getString(source, 'commission_result', 'commissionResult'),
     legacyAlphaRef: getString(source, 'alpha_result_raw', 'alpha_result', 'legacy_alpha_reference', 'legacy_alpha_ref', 'alpha_reference'),
     commissionRef: getString(source, 'commission_result_raw', 'commission_result', 'commission_reference', 'commission_ref'),
     systemUrl: getString(source, 'system_url', 'url', 'full_url'),
@@ -1011,14 +1071,322 @@ function StatusPill({ label, toneClass }: { label: string; toneClass: string }) 
   )
 }
 
+interface AuditProgressCounts {
+  total: number
+  atomizationReviewed: number
+  alphaEligible: number
+  alphaReviewed: number
+  commissionReviewed: number
+  reviewCountsLoaded: boolean
+}
+
+type AuditSignalKind = 'danger' | 'attention' | 'progress' | 'success' | 'neutral'
+
+interface AuditOperationalSignal {
+  label: string
+  description: string
+  kind: AuditSignalKind
+}
+
+const MAIN_AUDIT_PROGRESS_STEPS = [
+  { id: 'assigned', label: 'Назначение' },
+  { id: 'atomization', label: 'Атомизация' },
+  { id: 'alpha_review', label: 'Альфа-проверка' },
+  { id: 'commission', label: 'Комиссия' },
+  { id: 'ready', label: 'Готов' },
+] as const
+
+const AUDIT_CORRECTION_STAGES: AuditWorkflowStage[] = [
+  'fixes_required',
+  'fixing',
+  'recommission_pending',
+]
+
+function auditProgressCounts(
+  item: NormalizedAuditCaseSummary,
+  detail: NormalizedAuditCaseDetail | null
+): AuditProgressCounts {
+  const atoms = detail?.atoms ?? []
+  const total = detail?.atomsTotal ?? item.atomsTotal
+  const drafts = detail?.atomsDraft ?? item.atomsDraft
+  const alphaEligible = detail?.atomsReady ?? item.atomsReady
+  return {
+    total,
+    atomizationReviewed: Math.max(0, total - drafts),
+    alphaEligible,
+    alphaReviewed: detail
+      ? atoms.filter((atom) => atom.status === 'ready' && Boolean(atom.alphaResult)).length
+      : 0,
+    commissionReviewed: detail
+      ? atoms.filter((atom) => atom.status === 'ready' && Boolean(atom.commissionResult)).length
+      : 0,
+    reviewCountsLoaded: Boolean(detail),
+  }
+}
+
+function auditOperationalSignal(
+  item: NormalizedAuditCaseSummary,
+  counts: AuditProgressCounts
+): AuditOperationalSignal {
+  if (item.status === 'archived') {
+    return {
+      label: 'Архив',
+      description: 'Работа с договором остановлена',
+      kind: 'neutral',
+    }
+  }
+  if (item.workflowStage === 'unassigned') {
+    return {
+      label: 'Договор не назначен',
+      description: 'Выберите ответственного и дату выполнения',
+      kind: 'danger',
+    }
+  }
+  if (item.workflowStage === 'atomization') {
+    if (counts.total === 0) {
+      return {
+        label: 'ТЗ не декомпозировано',
+        description: 'Сформируйте или загрузите реестр атомов',
+        kind: 'danger',
+      }
+    }
+    if (item.atomsDraft > 0) {
+      return {
+        label: `Не завершено · ${formatCountRu(item.atomsDraft, 'атом', 'атома', 'атомов')}`,
+        description: 'Проверка черновиков еще не завершена',
+        kind: 'attention',
+      }
+    }
+    if (counts.alphaEligible === 0) {
+      return {
+        label: 'Атомизация завершена без принятых атомов',
+        description: 'Для альфа-проверки нужно принять хотя бы один атом',
+        kind: 'attention',
+      }
+    }
+    return {
+      label: 'Атомизация завершена',
+      description: 'Реестр готов к альфа-проверке',
+      kind: 'success',
+    }
+  }
+  if (item.workflowStage === 'alpha_review') {
+    if (!counts.reviewCountsLoaded) {
+      return {
+        label: 'Загружаем альфа-проверку',
+        description: 'Получаем решения по принятым атомам',
+        kind: 'neutral',
+      }
+    }
+    const remaining = Math.max(0, counts.alphaEligible - counts.alphaReviewed)
+    return {
+      label: remaining > 0
+        ? `Альфа-проверка · осталось ${remaining}`
+        : 'Альфа-проверка завершена',
+      description: `Проверено ${counts.alphaReviewed} из ${counts.alphaEligible}`,
+      kind: remaining > 0 ? 'progress' : 'success',
+    }
+  }
+  if (item.workflowStage === 'commission_pending') {
+    return {
+      label: 'Ожидает комиссии',
+      description: 'Принятые атомы готовы к рассмотрению',
+      kind: 'progress',
+    }
+  }
+  if (item.workflowStage === 'fixes_required') {
+    return {
+      label: 'Ожидает исправлений',
+      description: 'Комиссия зафиксировала замечания',
+      kind: 'attention',
+    }
+  }
+  if (item.workflowStage === 'fixing') {
+    return {
+      label: 'Выполняются исправления',
+      description: 'Замечания комиссии находятся в работе',
+      kind: 'progress',
+    }
+  }
+  if (item.workflowStage === 'recommission_pending') {
+    return {
+      label: 'Ожидает повторной комиссии',
+      description: 'Исправления готовы к повторному рассмотрению',
+      kind: 'progress',
+    }
+  }
+  if (item.workflowStage === 'ready') {
+    return {
+      label: 'Аудит завершен',
+      description: 'Решения по реестру зафиксированы',
+      kind: 'success',
+    }
+  }
+  return {
+    label: caseWorkflowLabel(item.status, item.workflowStage),
+    description: 'Текущее состояние договора',
+    kind: 'neutral',
+  }
+}
+
+function auditMainProgressIndex(item: NormalizedAuditCaseSummary): number {
+  switch (item.workflowStage) {
+    case 'unassigned': return 0
+    case 'atomization': return 1
+    case 'alpha_review': return 2
+    case 'commission_pending':
+    case 'fixes_required':
+    case 'fixing':
+    case 'recommission_pending': return 3
+    case 'ready': return 4
+    default: return 0
+  }
+}
+
+function auditNextStageLabel(item: NormalizedAuditCaseSummary): string | null {
+  switch (item.workflowStage) {
+    case 'unassigned': return 'Атомизация'
+    case 'atomization': return 'Альфа-проверка'
+    case 'alpha_review': return 'Комиссия'
+    case 'commission_pending': return 'Решение комиссии'
+    case 'fixes_required': return 'Выполняются исправления'
+    case 'fixing': return 'Повторная комиссия'
+    case 'recommission_pending': return 'Решение комиссии'
+    default: return null
+  }
+}
+
+function AuditProcessTimeline({
+  item,
+  counts,
+}: {
+  item: NormalizedAuditCaseSummary
+  counts: AuditProgressCounts
+}) {
+  const currentIndex = auditMainProgressIndex(item)
+  const archived = item.status === 'archived'
+  const correctionStageIndex = AUDIT_CORRECTION_STAGES.indexOf(
+    item.workflowStage as AuditWorkflowStage
+  )
+  const nextStage = auditNextStageLabel(item)
+  const stepMeta = [
+    item.responsibleName ?? 'Не назначен',
+    `${counts.atomizationReviewed} из ${counts.total}`,
+    counts.reviewCountsLoaded ? `${counts.alphaReviewed} из ${counts.alphaEligible}` : 'Загружаем',
+    counts.reviewCountsLoaded ? `${counts.commissionReviewed} из ${counts.alphaEligible}` : 'Загружаем',
+    item.workflowStage === 'ready' ? 'Аудит завершен' : 'Финальный результат',
+  ]
+
+  return (
+    <div className="mt-5" role="group" aria-label="Прогресс аудита">
+      <div className="md:hidden">
+        <div className="flex items-start justify-between gap-4 text-xs">
+          <div>
+            <div className="text-muted-foreground">Текущий этап</div>
+            <div className="mt-1 font-medium text-foreground">
+              {caseWorkflowLabel(item.status, item.workflowStage)}
+            </div>
+          </div>
+          {nextStage && !archived ? (
+            <div className="text-right">
+              <div className="text-muted-foreground">Следующий этап</div>
+              <div className="mt-1 font-medium text-foreground">{nextStage}</div>
+            </div>
+          ) : null}
+        </div>
+        <div className="mt-3 grid grid-cols-5 gap-1" aria-label={archived ? 'Аудит находится в архиве' : `Этап ${currentIndex + 1} из 5`}>
+          {MAIN_AUDIT_PROGRESS_STEPS.map((step, index) => (
+            <span
+              key={step.id}
+              className={cn(
+                'h-1.5 rounded-full',
+                archived && 'bg-muted-foreground/30',
+                !archived && index < currentIndex && 'bg-primary',
+                !archived && index === currentIndex && item.workflowStage !== 'ready' && 'bg-primary ring-1 ring-primary/30 ring-offset-1 ring-offset-surface',
+                !archived && index === currentIndex && item.workflowStage === 'ready' && 'bg-emerald-500',
+                !archived && index > currentIndex && 'bg-muted'
+              )}
+            />
+          ))}
+        </div>
+        <div className="mt-2 text-[11px] text-muted-foreground">
+          {archived ? 'Процесс остановлен' : `Этап ${currentIndex + 1} из ${MAIN_AUDIT_PROGRESS_STEPS.length}`}
+        </div>
+      </div>
+
+      <div className="relative hidden md:block">
+        <div className="absolute left-[10%] right-[10%] top-4 h-1 overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn(
+              'h-full rounded-full transition-[width]',
+              archived ? 'bg-muted-foreground/35' : item.workflowStage === 'ready' ? 'bg-emerald-500' : 'bg-primary'
+            )}
+            style={{ width: `${archived ? 0 : (currentIndex / 4) * 100}%` }}
+          />
+        </div>
+        <div className="relative grid grid-cols-5">
+          {MAIN_AUDIT_PROGRESS_STEPS.map((step, index) => {
+            const completed = !archived && index < currentIndex
+            const active = !archived && index === currentIndex
+            const ready = active && item.workflowStage === 'ready'
+            return (
+              <div key={step.id} className="min-w-0 px-1 text-center">
+                <div
+                  className={cn(
+                    'mx-auto flex h-8 w-8 items-center justify-center rounded-full border-2 border-surface text-xs font-semibold shadow-[0_0_0_1px_hsl(var(--border))]',
+                    completed && 'bg-primary text-primary-foreground shadow-[0_0_0_1px_hsl(var(--primary))]',
+                    active && !ready && 'bg-primary/15 text-primary shadow-[0_0_0_2px_hsl(var(--primary))]',
+                    ready && 'bg-emerald-500 text-white shadow-[0_0_0_2px_rgb(16_185_129)]',
+                    !completed && !active && 'bg-surface-soft text-muted-foreground',
+                    archived && 'bg-surface-soft text-muted-foreground'
+                  )}
+                  aria-current={active ? 'step' : undefined}
+                >
+                  {completed || ready ? <CheckCircle2 className="h-4 w-4" /> : index + 1}
+                </div>
+                <div className={cn('mt-2 truncate text-xs font-medium', active ? 'text-foreground' : 'text-muted-foreground')}>
+                  {step.label}
+                </div>
+                <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={stepMeta[index]}>
+                  {stepMeta[index]}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {correctionStageIndex >= 0 && !archived ? (
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-1.5 border-t border-dashed border-border pt-3 text-[11px] text-muted-foreground">
+          {AUDIT_CORRECTION_STAGES.map((stage, index) => (
+            <div key={stage} className="contents">
+              {index > 0 ? <ChevronRight className="h-3.5 w-3.5" /> : null}
+              <span
+                className={cn(
+                  'rounded-md border border-border bg-surface-soft px-2 py-1',
+                  index < correctionStageIndex && 'border-primary/20 bg-primary/10 text-primary',
+                  index === correctionStageIndex && 'border-amber-500/30 bg-amber-500/10 font-medium text-amber-800 dark:text-amber-200'
+                )}
+              >
+                {formatAuditWorkflowStage(stage)}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function emptyCaseFormFromDetail(detail: NormalizedAuditCaseDetail | null): CaseFormState {
   if (!detail) return EMPTY_CASE_FORM
   return {
     title: detail.title,
     productName: detail.productMasked === '—' ? '' : detail.productMasked,
-    status: detail.status,
-    workflowStage: detail.workflowStage as AuditWorkflowStage,
-    summary: detail.summary ?? detail.notes ?? '',
+    stage: detail.status === 'archived'
+      ? 'archived'
+      : detail.workflowStage as AuditWorkflowStage,
+    summary: detail.summary ?? detail.notes ?? DEFAULT_AUDIT_CONTEXT,
     contractReference: '',
     contractDate: detail.contractDate ?? '',
   }
@@ -1041,6 +1409,17 @@ function emptyAtomFormFromAtom(atom: NormalizedAuditAtom | null): AtomFormState 
   }
 }
 
+function atomReviewFormFromAtom(atom: NormalizedAuditAtom | null): AtomReviewFormState {
+  if (!atom) return EMPTY_ATOM_REVIEW_FORM
+  return {
+    title: atom.title === 'Без названия' ? '' : atom.title,
+    sourceClause: atom.sourceClause === '—' ? '' : atom.sourceClause,
+    notes: atom.notes ?? '',
+    systemUrl: atom.systemUrl ?? '',
+    alphaComment: atom.alphaComment ?? '',
+  }
+}
+
 function serializeFormState(value: CaseFormState | AtomFormState): string {
   return JSON.stringify(value)
 }
@@ -1058,7 +1437,7 @@ export function AuditPage() {
   const [caseQuery, setCaseQuery] = useState('')
   const [caseStatusFilter, setCaseStatusFilter] = useState('all')
 
-  const [detail, setDetail] = useState<NormalizedAuditCaseDetail | null>(null)
+  const [loadedDetail, setDetail] = useState<NormalizedAuditCaseDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState<string | null>(null)
   const [detailTab, setDetailTab] = useState<DetailTab>('atoms')
@@ -1068,6 +1447,8 @@ export function AuditPage() {
   const [eventsError, setEventsError] = useState<string | null>(null)
   const [documents, setDocuments] = useState<AuditDocument[]>([])
   const [documentsLoading, setDocumentsLoading] = useState(false)
+  const caseBundleRequestRef = useRef(0)
+  const modelWorkspaceRequestRef = useRef(0)
 
   const [team, setTeam] = useState<AuditTeamMember[]>([])
   const [teamCandidates, setTeamCandidates] = useState<AuditTeamCandidate[]>([])
@@ -1096,6 +1477,7 @@ export function AuditPage() {
     user?.role === 'admin' ||
     user?.role === 'teamlead' ||
     team.some((member) => member.user_id === user?.id && member.role === 'leader')
+  const canViewContractReference = team.some((member) => member.user_id === user?.id)
 
   const [atomQuery, setAtomQuery] = useState('')
   const [atomStatusFilter, setAtomStatusFilter] = useState('all')
@@ -1104,9 +1486,24 @@ export function AuditPage() {
   const [selectedAtomIds, setSelectedAtomIds] = useState<string[]>([])
   const [bulkAtomState, setBulkAtomState] = useState<'draft' | 'ready' | 'excluded'>('ready')
   const [bulkAtomBusy, setBulkAtomBusy] = useState(false)
+  const [atomReviewMode, setAtomReviewMode] = useState<AtomReviewMode | null>(null)
+  const [atomReviewQueueIds, setAtomReviewQueueIds] = useState<string[]>([])
+  const [atomReviewIndex, setAtomReviewIndex] = useState(0)
+  const [atomReviewBusy, setAtomReviewBusy] = useState(false)
+  const [atomReviewError, setAtomReviewError] = useState<string | null>(null)
+  const [atomReviewNotice, setAtomReviewNotice] = useState<string | null>(null)
+  const [atomReviewEditOpen, setAtomReviewEditOpen] = useState(false)
+  const [atomReviewExceptionOpen, setAtomReviewExceptionOpen] = useState(false)
+  const [atomReviewForm, setAtomReviewForm] = useState<AtomReviewFormState>(EMPTY_ATOM_REVIEW_FORM)
+  const [atomReviewFormInitial, setAtomReviewFormInitial] = useState<AtomReviewFormState>(EMPTY_ATOM_REVIEW_FORM)
+  const [atomReviewUndo, setAtomReviewUndo] = useState<AtomReviewUndoState | null>(null)
+  const atomReviewSurfaceRef = useRef<HTMLDivElement>(null)
+  const atomReviewTitleRef = useRef<HTMLInputElement>(null)
+  const atomReviewCommentRef = useRef<HTMLTextAreaElement>(null)
 
   const [caseDialogOpen, setCaseDialogOpen] = useState(false)
   const [caseDialogMode, setCaseDialogMode] = useState<CaseDialogMode>('create')
+  const [editingCaseId, setEditingCaseId] = useState<string | null>(null)
   const [caseForm, setCaseForm] = useState<CaseFormState>(EMPTY_CASE_FORM)
   const [caseFormInitial, setCaseFormInitial] = useState<CaseFormState>(EMPTY_CASE_FORM)
   const [caseSaving, setCaseSaving] = useState(false)
@@ -1258,6 +1655,7 @@ export function AuditPage() {
   }, [])
 
   const loadCaseBundle = useCallback(async (caseId: string) => {
+    const requestId = ++caseBundleRequestRef.current
     setDetailLoading(true)
     setDetailError(null)
     setEventsError(null)
@@ -1276,6 +1674,7 @@ export function AuditPage() {
       if (!nextDetail) {
         throw new Error('Детали аудита не распознаны')
       }
+      if (requestId !== caseBundleRequestRef.current) return
       setDetail(nextDetail)
       if (eventsResult.ok) {
         const nextEvents = extractCollection(eventsResult.value, ['items', 'results', 'events', 'data'])
@@ -1297,14 +1696,17 @@ export function AuditPage() {
         setDocuments([])
       }
     } catch (error) {
+      if (requestId !== caseBundleRequestRef.current) return
       const message = error instanceof Error ? error.message : 'Не удалось загрузить аудит'
       setDetailError(message)
       setDetail(null)
       setEvents([])
       setDocuments([])
     } finally {
-      setDetailLoading(false)
-      setDocumentsLoading(false)
+      if (requestId === caseBundleRequestRef.current) {
+        setDetailLoading(false)
+        setDocumentsLoading(false)
+      }
     }
   }, [])
 
@@ -1324,8 +1726,10 @@ export function AuditPage() {
     const fromUrl = searchParams.get('case')
     return fromUrl || null
   }, [searchParams])
+  const detail = loadedDetail?.id === selectedCaseId ? loadedDetail : null
 
   const loadModelWorkspace = useCallback(async (caseId: string) => {
+    const requestId = ++modelWorkspaceRequestRef.current
     setModelWorkspaceLoading(true)
     setModelWorkspaceError(null)
     try {
@@ -1333,6 +1737,7 @@ export function AuditPage() {
         api.get<AuditAIModelRegistryList>(`/api/audit/cases/${caseId}/model-registries`),
         api.get<AuditAIModelComparison[]>(`/api/audit/cases/${caseId}/model-comparisons`),
       ])
+      if (requestId !== modelWorkspaceRequestRef.current) return []
       setModelRegistries(registryResult.items)
       setModelComparisons(comparisonResult)
       setSelectedModelRegistryIds((current) => {
@@ -1342,19 +1747,30 @@ export function AuditPage() {
       })
       return registryResult.items
     } catch (error) {
+      if (requestId !== modelWorkspaceRequestRef.current) return []
       setModelWorkspaceError(error instanceof Error ? error.message : 'Не удалось загрузить модельные реестры')
       return []
     } finally {
-      setModelWorkspaceLoading(false)
+      if (requestId === modelWorkspaceRequestRef.current) setModelWorkspaceLoading(false)
     }
   }, [])
 
   useEffect(() => {
+    setDetail((current) => current?.id === selectedCaseId ? current : null)
+    setEvents([])
+    setDocuments([])
+    setDetailError(null)
+    setEventsError(null)
+    setModelWorkspaceError(null)
+    setModelRegistries([])
+    setModelComparisons([])
+    setSelectedModelRegistryIds([])
     if (!selectedCaseId) {
-      setDetail(null)
-      setEvents([])
-      setModelRegistries([])
-      setModelComparisons([])
+      caseBundleRequestRef.current += 1
+      modelWorkspaceRequestRef.current += 1
+      setDetailLoading(false)
+      setDocumentsLoading(false)
+      setModelWorkspaceLoading(false)
       return
     }
     void loadCaseBundle(selectedCaseId)
@@ -1375,6 +1791,22 @@ export function AuditPage() {
     const available = new Set((detail?.atoms ?? []).map((atom) => atom.id))
     setSelectedAtomIds((current) => current.filter((id) => available.has(id)))
   }, [detail])
+
+  useEffect(() => {
+    setAtomReviewMode(null)
+    setAtomReviewQueueIds([])
+    setAtomReviewIndex(0)
+    setAtomReviewError(null)
+    setAtomReviewNotice(null)
+    setAtomReviewUndo(null)
+    setAtomReviewEditOpen(false)
+    setAtomReviewExceptionOpen(false)
+  }, [selectedCaseId])
+
+  useEffect(() => {
+    if (atomReviewEditOpen && atomReviewMode === 'draft') atomReviewTitleRef.current?.focus()
+    if (atomReviewExceptionOpen) atomReviewCommentRef.current?.focus()
+  }, [atomReviewEditOpen, atomReviewExceptionOpen, atomReviewMode])
 
   const caseCountsByStatus = useMemo(() => {
     return cases.reduce<Record<string, number>>((accumulator, current) => {
@@ -1402,14 +1834,14 @@ export function AuditPage() {
         item.code,
         item.title,
         item.productMasked,
-        item.contractMasked,
+        canViewContractReference ? item.contractMasked : '',
         item.ownerName ?? '',
       ]
         .join(' ')
         .toLowerCase()
       return haystack.includes(query)
     })
-  }, [caseQuery, caseStatusFilter, cases])
+  }, [canViewContractReference, caseQuery, caseStatusFilter, cases])
 
   const metrics = useMemo(() => {
     const totalCases = cases.length
@@ -1463,18 +1895,34 @@ export function AuditPage() {
   const assignmentFilteredCases = useMemo(() => {
     const query = assignmentQuery.trim().toLowerCase()
     if (!query) return cases
-    return cases.filter((item) => [item.code, item.title, item.productMasked, item.contractMasked]
+    return cases.filter((item) => [
+      item.code,
+      item.title,
+      item.productMasked,
+      canViewContractReference ? item.contractMasked : '',
+    ]
       .join(' ')
       .toLowerCase()
       .includes(query))
-  }, [assignmentQuery, cases])
+  }, [assignmentQuery, canViewContractReference, cases])
 
   const selectedCaseSummary = useMemo(
     () => detail ?? cases.find((item) => item.id === selectedCaseId) ?? null,
     [cases, detail, selectedCaseId]
   )
+  const selectedCaseProgress = useMemo(
+    () => selectedCaseSummary ? auditProgressCounts(selectedCaseSummary, detail) : null,
+    [detail, selectedCaseSummary]
+  )
+  const selectedCaseSignal = useMemo(
+    () => selectedCaseSummary && selectedCaseProgress
+      ? auditOperationalSignal(selectedCaseSummary, selectedCaseProgress)
+      : null,
+    [selectedCaseProgress, selectedCaseSummary]
+  )
   const canEditSelectedAtoms = Boolean(
-    selectedCaseSummary &&
+    detail &&
+      selectedCaseSummary &&
       selectedCaseSummary.status !== 'archived' &&
       (canManage || selectedCaseSummary.responsibleUserId === user?.id)
   )
@@ -1659,6 +2107,32 @@ export function AuditPage() {
     () => detail?.atoms.find((atom) => atom.id === selectedAtomId) ?? null,
     [detail, selectedAtomId]
   )
+  const atomReviewCurrent = useMemo(() => {
+    const atomId = atomReviewQueueIds[atomReviewIndex]
+    return detail?.atoms.find((atom) => atom.id === atomId) ?? null
+  }, [atomReviewIndex, atomReviewQueueIds, detail])
+  const atomReviewComplete = Boolean(
+    atomReviewMode && atomReviewIndex >= atomReviewQueueIds.length
+  )
+  const atomReviewFormDirty = useMemo(
+    () => JSON.stringify(atomReviewForm) !== JSON.stringify(atomReviewFormInitial),
+    [atomReviewForm, atomReviewFormInitial]
+  )
+  const alphaUnreviewedCount = useMemo(
+    () => (detail?.atoms ?? []).filter((atom) => atom.status === 'ready' && !atom.alphaResult).length,
+    [detail]
+  )
+  const alphaReviewedCount = useMemo(
+    () => (detail?.atoms ?? []).filter((atom) => atom.status === 'ready' && Boolean(atom.alphaResult)).length,
+    [detail]
+  )
+
+  useEffect(() => {
+    if (!atomReviewCurrent || atomReviewEditOpen || atomReviewExceptionOpen) return
+    const nextForm = atomReviewFormFromAtom(atomReviewCurrent)
+    setAtomReviewForm(nextForm)
+    setAtomReviewFormInitial(nextForm)
+  }, [atomReviewCurrent, atomReviewEditOpen, atomReviewExceptionOpen])
 
   const caseFormDirty = useMemo(
     () => serializeFormState(caseForm) !== serializeFormState(caseFormInitial),
@@ -2287,6 +2761,7 @@ export function AuditPage() {
 
   const openCreateCaseDialog = () => {
     setCaseDialogMode('create')
+    setEditingCaseId(null)
     setCaseForm(EMPTY_CASE_FORM)
     setCaseFormInitial(EMPTY_CASE_FORM)
     setCaseDialogOpen(true)
@@ -2305,6 +2780,7 @@ export function AuditPage() {
     if (!detail) return
     const nextForm = emptyCaseFormFromDetail(detail)
     setCaseDialogMode('edit')
+    setEditingCaseId(detail.id)
     setCaseForm(nextForm)
     setCaseFormInitial(nextForm)
     setCaseDialogOpen(true)
@@ -2331,6 +2807,337 @@ export function AuditPage() {
     setAtomDialogOpen(true)
   }
 
+  const mergeReviewedAtom = (saved: NormalizedAuditAtom) => {
+    setDetail((current) => {
+      if (!current) return current
+      const atoms = current.atoms.map((atom) => atom.id === saved.id ? saved : atom)
+      return {
+        ...current,
+        atoms,
+        atomsTotal: atoms.length,
+        atomsReady: atoms.filter((atom) => atom.status === 'ready').length,
+        atomsDraft: atoms.filter((atom) => atom.status === 'draft').length,
+        atomsExcluded: atoms.filter((atom) => atom.status === 'excluded').length,
+        alphaPassed: atoms.filter((atom) => atom.alphaResult === 'present').length,
+        commissionPassed: atoms.filter((atom) => atom.commissionResult === 'confirmed').length,
+        updatedAt: saved.updatedAt ?? current.updatedAt,
+      }
+    })
+    setSelectedAtomId(saved.id)
+  }
+
+  const resetAtomReviewPanels = () => {
+    setAtomReviewEditOpen(false)
+    setAtomReviewExceptionOpen(false)
+    const nextForm = atomReviewFormFromAtom(atomReviewCurrent)
+    setAtomReviewForm(nextForm)
+    setAtomReviewFormInitial(nextForm)
+  }
+
+  const closeAtomReview = () => {
+    if (atomReviewBusy) return
+    setAtomReviewMode(null)
+    setAtomReviewQueueIds([])
+    setAtomReviewIndex(0)
+    setAtomReviewError(null)
+    setAtomReviewNotice(null)
+    setAtomReviewUndo(null)
+    setAtomReviewEditOpen(false)
+    setAtomReviewExceptionOpen(false)
+    setAtomReviewForm(EMPTY_ATOM_REVIEW_FORM)
+    setAtomReviewFormInitial(EMPTY_ATOM_REVIEW_FORM)
+    void loadCases()
+    if (selectedCaseId) void loadCaseBundle(selectedCaseId)
+  }
+
+  const requestCloseAtomReview = () => {
+    if (atomReviewBusy) return
+    if (atomReviewEditOpen || atomReviewExceptionOpen) {
+      if (atomReviewFormDirty) {
+        setAtomReviewError('Сохраните изменения или явно отмените редактирование.')
+        return
+      }
+      resetAtomReviewPanels()
+      return
+    }
+    closeAtomReview()
+  }
+
+  const openAtomReview = async (mode: AtomReviewMode) => {
+    if (!detail || !selectedCaseId || !canEditSelectedAtoms) return
+    setAtomReviewError(null)
+    setAtomReviewNotice(null)
+    let reviewDetail = detail
+    if (mode === 'alpha') {
+      if (detail.atomsDraft > 0) {
+        toast.error(`Сначала проверьте черновики: осталось ${detail.atomsDraft}`)
+        return
+      }
+      try {
+        const response = await api.post<unknown>(`/api/audit/cases/${selectedCaseId}/alpha-review/start`, {})
+        const normalized = normalizeAuditCaseDetail(response)
+        if (normalized) {
+          reviewDetail = normalized
+          setDetail(normalized)
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Не удалось начать альфа-проверку')
+        return
+      }
+    }
+    const queueIds = reviewDetail.atoms
+      .filter((atom) => mode === 'draft'
+        ? atom.status === 'draft'
+        : atom.status === 'ready' && !atom.alphaResult)
+      .map((atom) => atom.id)
+    if (queueIds.length === 0) {
+      toast.success(mode === 'draft' ? 'Все черновики уже проверены' : 'Альфа-проверка уже заполнена')
+      return
+    }
+    const firstAtom = reviewDetail.atoms.find((atom) => atom.id === queueIds[0]) ?? null
+    const nextForm = atomReviewFormFromAtom(firstAtom)
+    setAtomReviewMode(mode)
+    setAtomReviewQueueIds(queueIds)
+    setAtomReviewIndex(0)
+    setAtomReviewForm(nextForm)
+    setAtomReviewFormInitial(nextForm)
+    setAtomReviewUndo(null)
+    setAtomReviewEditOpen(false)
+    setAtomReviewExceptionOpen(false)
+  }
+
+  const applyAtomReviewPatch = async ({
+    payload,
+    previousPayload,
+    notice,
+    advance,
+  }: {
+    payload: AuditAtomUpdatePayload
+    previousPayload: AuditAtomUpdatePayload
+    notice: string
+    advance: boolean
+  }) => {
+    if (!selectedCaseId || !atomReviewCurrent || atomReviewBusy) return
+    setAtomReviewBusy(true)
+    setAtomReviewError(null)
+    const queueIndex = atomReviewIndex
+    try {
+      const response = await api.patch<AuditAtom>(
+        `/api/audit/cases/${selectedCaseId}/atoms/${atomReviewCurrent.id}`,
+        {
+          ...payload,
+          expected_updated_at: atomReviewCurrent.updatedAt,
+        }
+      )
+      const saved = normalizeAuditAtom(response)
+      if (!saved) throw new Error('Сервер вернул некорректные данные атома')
+      mergeReviewedAtom(saved)
+      setAtomReviewUndo({
+        atomId: saved.id,
+        queueIndex,
+        expectedUpdatedAt: saved.updatedAt,
+        payload: previousPayload,
+        message: notice,
+      })
+      setAtomReviewNotice(notice)
+      setAtomReviewEditOpen(false)
+      setAtomReviewExceptionOpen(false)
+      if (advance) setAtomReviewIndex((current) => current + 1)
+      if (advance && queueIndex + 1 >= atomReviewQueueIds.length) void loadCases()
+    } catch (error) {
+      setAtomReviewError(error instanceof Error ? error.message : 'Не удалось сохранить решение')
+    } finally {
+      setAtomReviewBusy(false)
+    }
+  }
+
+  const acceptCurrentReviewAtom = () => {
+    if (!atomReviewCurrent || !atomReviewMode) return
+    if (atomReviewMode === 'draft') {
+      void applyAtomReviewPatch({
+        payload: { state: 'ready' },
+        previousPayload: { state: atomReviewCurrent.status as 'draft' | 'ready' | 'excluded' },
+        notice: `${atomReviewCurrent.itemCode} принят`,
+        advance: true,
+      })
+      return
+    }
+    void applyAtomReviewPatch({
+      payload: { alpha_result: 'present', alpha_date: localISODate() },
+      previousPayload: {
+        alpha_result: atomReviewCurrent.alphaResult,
+        alpha_comment: atomReviewCurrent.alphaComment,
+        alpha_date: atomReviewCurrent.alphaDate,
+      },
+      notice: `${atomReviewCurrent.itemCode}: наличие подтверждено`,
+      advance: true,
+    })
+  }
+
+  const excludeCurrentReviewAtom = () => {
+    if (!atomReviewCurrent || atomReviewMode !== 'draft') return
+    void applyAtomReviewPatch({
+      payload: { state: 'excluded' },
+      previousPayload: { state: atomReviewCurrent.status as 'draft' | 'ready' | 'excluded' },
+      notice: `${atomReviewCurrent.itemCode} исключен`,
+      advance: true,
+    })
+  }
+
+  const submitAlphaException = (result: 'not_present' | 'needs_clarification') => {
+    if (!atomReviewCurrent || atomReviewMode !== 'alpha') return
+    if (!atomReviewForm.alphaComment.trim()) {
+      setAtomReviewError('Для отрицательного результата или уточнения добавьте комментарий.')
+      atomReviewCommentRef.current?.focus()
+      return
+    }
+    void applyAtomReviewPatch({
+      payload: {
+        alpha_result: result,
+        alpha_comment: atomReviewForm.alphaComment.trim(),
+        alpha_date: localISODate(),
+        system_url: nullIfEmpty(atomReviewForm.systemUrl),
+      },
+      previousPayload: {
+        alpha_result: atomReviewCurrent.alphaResult,
+        alpha_comment: atomReviewCurrent.alphaComment,
+        alpha_date: atomReviewCurrent.alphaDate,
+        system_url: atomReviewCurrent.systemUrl,
+      },
+      notice: result === 'not_present'
+        ? `${atomReviewCurrent.itemCode}: элемент не найден`
+        : `${atomReviewCurrent.itemCode}: требуется уточнение`,
+      advance: true,
+    })
+  }
+
+  const saveAtomReviewEdit = () => {
+    if (!atomReviewCurrent || !atomReviewMode) return
+    if (atomReviewMode === 'draft' && !atomReviewForm.title.trim()) {
+      setAtomReviewError('Введите название атома.')
+      atomReviewTitleRef.current?.focus()
+      return
+    }
+    const payload: AuditAtomUpdatePayload = atomReviewMode === 'draft'
+      ? {
+          title: atomReviewForm.title.trim(),
+          source_clause: nullIfEmpty(atomReviewForm.sourceClause),
+          notes: nullIfEmpty(atomReviewForm.notes),
+          system_url: nullIfEmpty(atomReviewForm.systemUrl),
+          state: 'ready',
+        }
+      : { system_url: nullIfEmpty(atomReviewForm.systemUrl) }
+    void applyAtomReviewPatch({
+      payload,
+      previousPayload: atomReviewMode === 'draft'
+        ? {
+            title: atomReviewCurrent.title,
+            source_clause: atomReviewCurrent.sourceClause === '—' ? null : atomReviewCurrent.sourceClause,
+            notes: atomReviewCurrent.notes,
+            system_url: atomReviewCurrent.systemUrl,
+            state: atomReviewCurrent.status as 'draft' | 'ready' | 'excluded',
+          }
+        : { system_url: atomReviewCurrent.systemUrl },
+      notice: atomReviewMode === 'draft'
+        ? `${atomReviewCurrent.itemCode} исправлен и принят`
+        : `${atomReviewCurrent.itemCode}: ссылка обновлена`,
+      advance: atomReviewMode === 'draft',
+    })
+  }
+
+  const undoLastAtomReviewDecision = async () => {
+    if (!selectedCaseId || !atomReviewUndo || atomReviewBusy) return
+    const atom = detail?.atoms.find((item) => item.id === atomReviewUndo.atomId)
+    if (!atom) return
+    if (!atomReviewUndo.expectedUpdatedAt) {
+      setAtomReviewError('Версия последнего решения недоступна. Обновите данные.')
+      setAtomReviewUndo(null)
+      return
+    }
+    setAtomReviewBusy(true)
+    setAtomReviewError(null)
+    try {
+      const response = await api.patch<AuditAtom>(
+        `/api/audit/cases/${selectedCaseId}/atoms/${atom.id}`,
+        {
+          ...atomReviewUndo.payload,
+          expected_updated_at: atomReviewUndo.expectedUpdatedAt,
+        }
+      )
+      const restored = normalizeAuditAtom(response)
+      if (!restored) throw new Error('Сервер вернул некорректные данные атома')
+      mergeReviewedAtom(restored)
+      setAtomReviewIndex(atomReviewUndo.queueIndex)
+      setAtomReviewNotice(`Отменено: ${atomReviewUndo.message}`)
+      setAtomReviewUndo(null)
+    } catch (error) {
+      setAtomReviewError(error instanceof Error ? error.message : 'Не удалось отменить последнее решение')
+      if (error instanceof ApiError && error.status === 409) setAtomReviewUndo(null)
+    } finally {
+      setAtomReviewBusy(false)
+    }
+  }
+
+  const showAtomReviewEdit = () => {
+    if (!atomReviewCurrent || atomReviewBusy) return
+    const nextForm = atomReviewFormFromAtom(atomReviewCurrent)
+    setAtomReviewForm(nextForm)
+    setAtomReviewFormInitial(nextForm)
+    setAtomReviewError(null)
+    setAtomReviewExceptionOpen(false)
+    setAtomReviewEditOpen(true)
+  }
+
+  const showAtomReviewException = () => {
+    if (!atomReviewCurrent || atomReviewMode !== 'alpha' || atomReviewBusy) return
+    const nextForm = atomReviewFormFromAtom(atomReviewCurrent)
+    setAtomReviewForm(nextForm)
+    setAtomReviewFormInitial(nextForm)
+    setAtomReviewError(null)
+    setAtomReviewEditOpen(false)
+    setAtomReviewExceptionOpen(true)
+  }
+
+  const showPreviousReviewAtom = () => {
+    if (atomReviewBusy || atomReviewIndex === 0) return
+    resetAtomReviewPanels()
+    setAtomReviewError(null)
+    setAtomReviewIndex((current) => current - 1)
+  }
+
+  const handleAtomReviewKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!atomReviewMode || atomReviewBusy) return
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+      if (isEditableKeyboardTarget(event.target)) return
+      event.preventDefault()
+      void undoLastAtomReviewDecision()
+      return
+    }
+    if (atomReviewEditOpen || atomReviewExceptionOpen) {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault()
+        if (atomReviewEditOpen) saveAtomReviewEdit()
+        else submitAlphaException('not_present')
+      }
+      return
+    }
+    if (isEditableKeyboardTarget(event.target) || atomReviewComplete) return
+    if (event.key === ' ' || event.key === 'ArrowRight') {
+      event.preventDefault()
+      acceptCurrentReviewAtom()
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      if (atomReviewMode === 'draft') excludeCurrentReviewAtom()
+      else showAtomReviewException()
+    } else if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      showPreviousReviewAtom()
+    } else if (event.key.toLowerCase() === 'e') {
+      event.preventDefault()
+      showAtomReviewEdit()
+    }
+  }
+
   const refreshSelected = async () => {
     const nextCases = await loadCases()
     if (!selectedCaseId) return
@@ -2342,6 +3149,10 @@ export function AuditPage() {
 
   const saveCase = async () => {
     if (!canManage) return
+    if (caseDialogMode === 'edit' && (!detail || !editingCaseId || editingCaseId !== selectedCaseId)) {
+      toast.error('Выбран другой договор. Откройте редактирование заново.')
+      return
+    }
     if (!caseForm.title.trim()) {
       toast.error('Введите название аудита')
       return
@@ -2354,13 +3165,24 @@ export function AuditPage() {
     try {
       const basePayload: UnknownRecord = {
         title: caseForm.title.trim(),
-        status: caseForm.status.trim() || 'draft',
-        workflow_stage: caseForm.workflowStage,
         digital_product: caseForm.productName.trim(),
         notes: nullIfEmpty(caseForm.summary),
         contract_date: nullIfEmpty(caseForm.contractDate),
       }
-      if (caseForm.contractReference.trim()) {
+      if (caseDialogMode === 'create') {
+        basePayload.status = 'draft'
+        basePayload.workflow_stage = 'unassigned'
+      } else if (caseForm.stage === 'archived') {
+        basePayload.status = 'archived'
+      } else {
+        basePayload.workflow_stage = caseForm.stage
+        basePayload.status = caseForm.stage === 'ready'
+          ? 'ready'
+          : caseForm.stage === 'unassigned' && (detail?.atomsTotal ?? 0) === 0
+            ? 'draft'
+            : 'atomization'
+      }
+      if (canViewContractReference && caseForm.contractReference.trim()) {
         basePayload.contract_reference = caseForm.contractReference.trim()
       }
       const payload =
@@ -2371,12 +3193,12 @@ export function AuditPage() {
       const response =
         caseDialogMode === 'create'
           ? await api.post<unknown>('/api/audit/cases', payload)
-          : await api.patch<unknown>(`/api/audit/cases/${selectedCaseId}`, payload)
+          : await api.patch<unknown>(`/api/audit/cases/${editingCaseId}`, payload)
 
       const savedId =
         normalizeAuditCaseDetail(response)?.id ??
         normalizeAuditCaseSummary(response)?.id ??
-        selectedCaseId
+        editingCaseId ?? selectedCaseId
       const nextCases = await loadCases()
       if (savedId && nextCases.some((item) => item.id === savedId)) {
         const nextParams = new URLSearchParams(searchParams)
@@ -2397,7 +3219,7 @@ export function AuditPage() {
   }
 
   const saveAtom = async () => {
-    if (!canManage || !selectedCaseId) return
+    if (!canEditSelectedAtoms || !selectedCaseId || !detail) return
     if (!atomForm.title.trim()) {
       toast.error('Введите название атома')
       return
@@ -2425,6 +3247,14 @@ export function AuditPage() {
         atomDialogMode === 'create'
           ? (basePayload as AuditAtomCreatePayload)
           : (basePayload as AuditAtomUpdatePayload)
+
+      if (atomDialogMode === 'edit') {
+        const editingAtom = detail?.atoms.find((atom) => atom.id === editingAtomId)
+        if (!editingAtom?.updatedAt) {
+          throw new Error('Версия атома устарела. Обновите данные и повторите изменение.')
+        }
+        payload.expected_updated_at = editingAtom.updatedAt
+      }
 
       const response =
         atomDialogMode === 'create'
@@ -2676,10 +3506,23 @@ export function AuditPage() {
 
   const updateSelectedAtomStatuses = async () => {
     if (!selectedCaseId || selectedAtomIds.length === 0 || bulkAtomBusy) return
+    const selectedAtoms = selectedAtomIds
+      .map((atomId) => detail?.atoms.find((atom) => atom.id === atomId) ?? null)
+      .filter((atom): atom is NormalizedAuditAtom => Boolean(atom))
+    if (
+      selectedAtoms.length !== selectedAtomIds.length
+      || selectedAtoms.some((atom) => !atom.updatedAt)
+    ) {
+      toast.error('Один из атомов уже изменился. Обновите реестр и повторите действие.')
+      return
+    }
     setBulkAtomBusy(true)
     try {
       const result = await api.patch<{ updated_count: number }>(`/api/audit/cases/${selectedCaseId}/atoms/bulk-status`, {
         atom_ids: selectedAtomIds,
+        expected_updated_at_by_atom: Object.fromEntries(
+          selectedAtoms.map((atom) => [atom.id, atom.updatedAt])
+        ),
         state: bulkAtomState,
       })
       setSelectedAtomIds([])
@@ -2867,10 +3710,6 @@ export function AuditPage() {
                   <Sparkles className="h-4 w-4" />
                   Сформировать реестр с ИИ
                 </button>
-                <button type="button" onClick={openCreateAtomDialog} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-foreground hover:bg-muted xl:justify-start">
-                  <Plus className="h-4 w-4" />
-                  Добавить атом вручную
-                </button>
                 {user?.role === 'admin' && selectedCaseSummary.atomsTotal > 0 ? (
                   <button type="button" onClick={() => void downloadAtomExport()} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-foreground hover:bg-muted xl:justify-start">
                     <Download className="h-4 w-4" />
@@ -2885,10 +3724,6 @@ export function AuditPage() {
                 <button type="button" onClick={() => openResponsibleDialog(selectedCaseSummary)} className="inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-foreground hover:bg-muted xl:justify-start">
                   <UserPlus className="h-4 w-4 shrink-0" />
                   <span className="truncate">{selectedCaseSummary.responsibleName ?? 'Назначить ответственного'}</span>
-                </button>
-                <button type="button" onClick={openEditCaseDialog} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium text-foreground hover:bg-muted xl:justify-start">
-                  <Pencil className="h-4 w-4" />
-                  Редактировать договор
                 </button>
                 {selectedCaseSummary.status === 'archived' ? (
                   <button
@@ -2973,7 +3808,9 @@ export function AuditPage() {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs text-muted-foreground">{item.code}</span><StatusPill label={caseWorkflowLabel(item.status, item.workflowStage)} toneClass={caseWorkflowTone(item.status, item.workflowStage)} /></div>
                   <div className="mt-2 truncate text-sm font-semibold text-foreground">{item.productMasked}</div>
-                  <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{item.contractMasked}</div>
+                  {canViewContractReference ? (
+                    <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{item.contractMasked}</div>
+                  ) : null}
                 </div>
                 <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
               </div>
@@ -3214,7 +4051,7 @@ export function AuditPage() {
                           <p className="min-w-0 truncate text-sm text-muted-foreground" title={item.title}>{item.title}</p>
                         </div>
                         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                          <span className="font-mono">{item.contractMasked}</span>
+                          {canViewContractReference ? <span className="font-mono">{item.contractMasked}</span> : null}
                           <span>от {formatDateOnly(item.contractDate)}</span>
                         </div>
                       </div>
@@ -3293,47 +4130,202 @@ export function AuditPage() {
             </div>
           ) : (
             <div>
-              <div className="border-b border-border px-4 py-4 sm:px-5">
-                <button type="button" onClick={() => setWorkspaceView('registry')} className="mb-3 inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
-                  <ArrowLeft className="h-4 w-4" />
-                  Реестр
-                </button>
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-sm font-semibold text-muted-foreground">{selectedCaseSummary?.code ?? 'AUD-—'}</span>
-                      <StatusPill label={caseWorkflowLabel(selectedCaseSummary?.status ?? 'draft', selectedCaseSummary?.workflowStage ?? 'unassigned')} toneClass={caseWorkflowTone(selectedCaseSummary?.status ?? 'draft', selectedCaseSummary?.workflowStage ?? 'unassigned')} />
+              <div className="border-b border-border">
+                <div className="px-4 pb-4 pt-3 sm:px-5">
+                  <button type="button" onClick={() => setWorkspaceView('registry')} className="inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
+                    <ArrowLeft className="h-4 w-4" />
+                    Реестр
+                  </button>
+
+                  <div className="mt-1 grid grid-cols-2 lg:grid-cols-[minmax(0,1.2fr)_minmax(15rem,.8fr)_minmax(17rem,.9fr)]">
+                    <div className="col-span-2 min-w-0 border-b border-border py-3 lg:col-span-1 lg:border-b-0 lg:pr-5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-sm font-semibold text-muted-foreground">{selectedCaseSummary?.code ?? 'AUD-—'}</span>
+                        <StatusPill label={caseWorkflowLabel(selectedCaseSummary?.status ?? 'draft', selectedCaseSummary?.workflowStage ?? 'unassigned')} toneClass={caseWorkflowTone(selectedCaseSummary?.status ?? 'draft', selectedCaseSummary?.workflowStage ?? 'unassigned')} />
+                      </div>
+                      <div className="mt-3 flex min-w-0 items-center gap-2">
+                        <h2 className="min-w-0 truncate text-xl font-semibold text-foreground sm:text-2xl" title={selectedCaseSummary?.productMasked}>
+                          {selectedCaseSummary?.productMasked ?? 'Аудит'}
+                        </h2>
+                        {canManage ? (
+                          <button
+                            type="button"
+                            onClick={openEditCaseDialog}
+                            disabled={!detail || detailLoading}
+                            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border bg-surface-soft text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-wait disabled:opacity-50"
+                            aria-label="Редактировать договор"
+                            title="Редактировать договор"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        ) : null}
+                      </div>
+                      <p className="mt-2 flex min-w-0 flex-wrap gap-x-1 text-sm text-muted-foreground">
+                        <span>Аудит:</span>
+                        <span className="min-w-0 text-foreground">{selectedCaseSummary?.title ?? 'Карточка аудита'}</span>
+                      </p>
                     </div>
-                    <h2 className="mt-2 text-xl font-semibold text-foreground">{selectedCaseSummary?.productMasked ?? 'Аудит'}</h2>
-                    <p className="mt-1 text-sm text-muted-foreground">{selectedCaseSummary?.title ?? 'Карточка аудита'}</p>
-                  </div>
-                  <div className={cn('inline-flex items-center gap-2 text-sm font-medium', selectedCaseSummary ? atomizationSignal(selectedCaseSummary).toneClass : 'text-muted-foreground')}>
-                    {selectedCaseSummary && caseNeedsAtomization(selectedCaseSummary) ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-                    {selectedCaseSummary ? atomizationSignal(selectedCaseSummary).label : 'Загружаем состояние'}
+
+                    <dl className="min-w-0 py-3 pr-3 lg:border-l lg:border-border lg:px-5">
+                      <dt className="text-[11px] font-medium uppercase text-muted-foreground">
+                        {canViewContractReference ? 'Договор' : 'Дата договора'}
+                      </dt>
+                      {canViewContractReference ? (
+                        <dd className="mt-2 truncate font-mono text-base font-semibold text-foreground" title={selectedCaseSummary?.contractMasked}>
+                          {selectedCaseSummary?.contractMasked ?? '—'}
+                        </dd>
+                      ) : null}
+                      <dd className={cn('text-sm text-muted-foreground', canViewContractReference ? 'mt-1' : 'mt-2 font-medium text-foreground')}>
+                        {formatDateOnly(selectedCaseSummary?.contractDate ?? null)}
+                      </dd>
+                    </dl>
+
+                    <dl className="min-w-0 border-l border-border py-3 pl-3 lg:pl-5">
+                      <div className="flex min-w-0 items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <dt className="text-[11px] font-medium uppercase text-muted-foreground">Ответственный</dt>
+                          <dd className="mt-2 truncate text-base font-semibold text-foreground" title={selectedCaseSummary?.responsibleName ?? undefined}>
+                            {selectedCaseSummary?.responsibleName ?? 'Не назначен'}
+                          </dd>
+                          {selectedCaseSummary?.responsibleEmail ? (
+                            <dd className="mt-1 truncate text-xs text-muted-foreground" title={selectedCaseSummary.responsibleEmail}>
+                              {selectedCaseSummary.responsibleEmail}
+                            </dd>
+                          ) : null}
+                        </div>
+                        {canManage && selectedCaseSummary ? (
+                          <button
+                            type="button"
+                            onClick={() => openResponsibleDialog(selectedCaseSummary)}
+                            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-border bg-surface-soft text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                            aria-label={selectedCaseSummary.responsibleName ? 'Изменить ответственного' : 'Назначить ответственного'}
+                            title={selectedCaseSummary.responsibleName ? 'Изменить ответственного' : 'Назначить ответственного'}
+                          >
+                            <UserPlus className="h-4 w-4" />
+                          </button>
+                        ) : null}
+                      </div>
+                    </dl>
                   </div>
                 </div>
 
-                <dl className="mt-4 grid gap-x-5 gap-y-3 border-y border-border py-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
-                  <div className="min-w-0"><dt className="text-xs text-muted-foreground">Договор</dt><dd className="mt-1 truncate font-mono text-foreground" title={selectedCaseSummary?.contractMasked}>{selectedCaseSummary?.contractMasked ?? '—'}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Дата договора</dt><dd className="mt-1 text-foreground">{formatDateOnly(selectedCaseSummary?.contractDate ?? null)}</dd></div>
-                  <div className="min-w-0"><dt className="text-xs text-muted-foreground">Ответственный</dt><dd className="mt-1 truncate text-foreground" title={selectedCaseSummary?.responsibleName ?? undefined}>{selectedCaseSummary?.responsibleName ?? 'Не назначен'}</dd></div>
-                  <div><dt className="text-xs text-muted-foreground">Обновлено</dt><dd className="mt-1 text-foreground">{formatDateTime(selectedCaseSummary?.updatedAt ?? null)}</dd></div>
-                </dl>
-
-                {selectedCaseSummary?.atomsTotal === 0 && selectedCaseSummary.status !== 'archived' ? (
-                  <div className="mt-4 flex items-start gap-3 border-l-2 border-rose-500 bg-rose-500/5 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
-                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                    <div><div className="font-medium">Техническое задание еще не декомпозировано</div><div className="mt-1 text-xs">Реестр атомов по этому договору не загружен.</div></div>
+                <div className="border-t border-border bg-surface-soft/35 px-4 py-4 sm:px-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <div
+                        className={cn(
+                          'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border',
+                          selectedCaseSignal?.kind === 'danger' && 'border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300',
+                          selectedCaseSignal?.kind === 'attention' && 'border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200',
+                          selectedCaseSignal?.kind === 'progress' && 'border-primary/25 bg-primary/10 text-primary',
+                          selectedCaseSignal?.kind === 'success' && 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+                          selectedCaseSignal?.kind === 'neutral' && 'border-border bg-surface text-muted-foreground'
+                        )}
+                      >
+                        {selectedCaseSignal?.kind === 'success' ? (
+                          <CheckCircle2 className="h-4 w-4" />
+                        ) : selectedCaseSignal?.kind === 'progress' ? (
+                          <Clock3 className="h-4 w-4" />
+                        ) : (
+                          <AlertTriangle className="h-4 w-4" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-base font-semibold text-foreground">
+                          Состояние работы: <span className={cn(
+                            selectedCaseSignal?.kind === 'danger' && 'text-rose-700 dark:text-rose-300',
+                            selectedCaseSignal?.kind === 'attention' && 'text-amber-800 dark:text-amber-200',
+                            selectedCaseSignal?.kind === 'progress' && 'text-primary',
+                            selectedCaseSignal?.kind === 'success' && 'text-emerald-700 dark:text-emerald-300',
+                            selectedCaseSignal?.kind === 'neutral' && 'text-muted-foreground'
+                          )}>{selectedCaseSignal?.label ?? 'Загружаем состояние'}</span>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">{selectedCaseSignal?.description ?? 'Получаем данные договора'}</p>
+                        {canEditSelectedAtoms && detail ? (
+                          <div className="mt-3 md:hidden">
+                            {detail.atomsDraft > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => void openAtomReview('draft')}
+                                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                              >
+                                <CheckCircle2 className="h-4 w-4" />
+                                Проверить черновики
+                              </button>
+                            ) : detail.atomsReady > 0 && alphaUnreviewedCount > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => void openAtomReview('alpha')}
+                                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                              >
+                                <Search className="h-4 w-4" />
+                                Альфа-проверка
+                              </button>
+                            ) : detail.atomsTotal === 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => openImportDialog(selectedCaseId)}
+                                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                              >
+                                <Upload className="h-4 w-4" />
+                                Загрузить реестр атомов
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="hidden shrink-0 text-left text-xs text-muted-foreground sm:block sm:text-right">
+                      <div className="font-medium text-foreground">Обновлено</div>
+                      <div className="mt-1 tabular-nums">{formatDateTime(selectedCaseSummary?.updatedAt ?? null)}</div>
+                    </div>
                   </div>
-                ) : null}
 
-                <div className="mt-4 grid grid-cols-2 divide-x divide-y divide-border border border-border text-sm sm:grid-cols-4 sm:divide-y-0">
-                  <div className="px-3 py-2"><div className="text-xs text-muted-foreground">Атомов</div><div className="mt-1 font-semibold tabular-nums text-foreground">{detail?.atomsTotal ?? 0}</div></div>
-                  <div className="px-3 py-2"><div className="text-xs text-muted-foreground">Черновых атомов</div><div className="mt-1 font-semibold tabular-nums text-foreground">{detail?.atomsDraft ?? 0}</div></div>
-                  <div className="px-3 py-2"><div className="text-xs text-muted-foreground">Альфа-проверка</div><div className="mt-1 font-semibold tabular-nums text-foreground">{detail?.alphaPassed ?? 0} / {detail?.atomsTotal ?? 0}</div></div>
-                  <div className="px-3 py-2"><div className="text-xs text-muted-foreground">Комиссия</div><div className="mt-1 font-semibold tabular-nums text-foreground">{detail?.commissionPassed ?? 0} / {detail?.atomsTotal ?? 0}</div></div>
+                  {selectedCaseSummary && selectedCaseProgress ? (
+                    <AuditProcessTimeline item={selectedCaseSummary} counts={selectedCaseProgress} />
+                  ) : null}
+
+                  {selectedCaseProgress ? (
+                    <div className="mt-4 hidden grid-cols-2 gap-y-4 border-t border-border pt-4 text-sm md:grid lg:grid-cols-4 lg:divide-x lg:divide-border">
+                      <div className="min-w-0 lg:pr-4">
+                        <div className="text-xs text-muted-foreground">Атомов всего</div>
+                        <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">{selectedCaseProgress.total}</div>
+                      </div>
+                      <div className="min-w-0 lg:px-4">
+                        <div className="text-xs text-muted-foreground">Атомизация</div>
+                        <div className={cn('mt-1 text-lg font-semibold tabular-nums', selectedCaseProgress.total > 0 && selectedCaseProgress.atomizationReviewed === selectedCaseProgress.total ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-800 dark:text-amber-200')}>
+                          {selectedCaseProgress.atomizationReviewed} / {selectedCaseProgress.total} · {progressPercent(selectedCaseProgress.atomizationReviewed, selectedCaseProgress.total)}%
+                        </div>
+                      </div>
+                      <div className="min-w-0 lg:px-4">
+                        <div className="text-xs text-muted-foreground">Альфа-проверка</div>
+                        <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">
+                          {selectedCaseProgress.reviewCountsLoaded
+                            ? `${selectedCaseProgress.alphaReviewed} / ${selectedCaseProgress.alphaEligible} · ${progressPercent(selectedCaseProgress.alphaReviewed, selectedCaseProgress.alphaEligible)}%`
+                            : 'Загружаем'}
+                        </div>
+                      </div>
+                      <div className="min-w-0 lg:pl-4">
+                        <div className="text-xs text-muted-foreground">Комиссия</div>
+                        <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">
+                          {selectedCaseProgress.reviewCountsLoaded
+                            ? `${selectedCaseProgress.commissionReviewed} / ${selectedCaseProgress.alphaEligible} · ${progressPercent(selectedCaseProgress.commissionReviewed, selectedCaseProgress.alphaEligible)}%`
+                            : 'Загружаем'}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {detail?.summary ? (
+                    <>
+                      <p className="mt-4 hidden max-w-4xl whitespace-pre-wrap border-t border-border pt-3 text-sm text-muted-foreground md:block">{detail.summary}</p>
+                      <details className="mt-3 border-t border-border pt-3 text-sm md:hidden">
+                        <summary className="cursor-pointer font-medium text-foreground">Контекст аудита</summary>
+                        <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{detail.summary}</p>
+                      </details>
+                    </>
+                  ) : null}
                 </div>
-                {detail?.summary ? <p className="mt-3 max-w-4xl whitespace-pre-wrap text-sm text-muted-foreground">{detail.summary}</p> : null}
               </div>
 
               <div
@@ -3392,8 +4384,52 @@ export function AuditPage() {
                 hidden={detailTab !== 'atoms'}
                 className="px-4 py-4 sm:px-5"
               >
+                <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="text-base font-semibold text-foreground">Реестр атомов</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Принято: {detail?.atomsReady ?? 0} · черновиков: {detail?.atomsDraft ?? 0} · альфа: {alphaReviewedCount}/{(detail?.atoms ?? []).filter((atom) => atom.status === 'ready').length}
+                    </p>
+                  </div>
+                  {canEditSelectedAtoms ? (
+                    <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                      {(detail?.atomsDraft ?? 0) > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => void openAtomReview('draft')}
+                          className="hidden min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 md:inline-flex"
+                        >
+                          <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                          Проверить черновики
+                        </button>
+                      ) : null}
+                      {(detail?.atomsReady ?? 0) > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => void openAtomReview('alpha')}
+                          disabled={(detail?.atomsDraft ?? 0) > 0 || alphaUnreviewedCount === 0}
+                          className="hidden min-h-11 items-center justify-center gap-2 rounded-md border border-primary/30 bg-surface px-3 text-sm font-medium text-primary transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:border-border disabled:text-muted-foreground disabled:opacity-60 md:inline-flex"
+                          title={(detail?.atomsDraft ?? 0) > 0 ? 'Сначала проверьте все черновики' : alphaUnreviewedCount === 0 ? 'Альфа-проверка заполнена' : 'Начать последовательную альфа-проверку'}
+                        >
+                          <Search className="h-4 w-4" aria-hidden="true" />
+                          Альфа-проверка
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={openCreateAtomDialog}
+                        className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-border bg-surface text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                        aria-label="Добавить атом вручную"
+                        title="Добавить атом вручную"
+                      >
+                        <Plus className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+
                 {(detail?.atomsTotal ?? 0) > 0 ? (
-                <div className="flex flex-col gap-3 border-b border-border pb-4 lg:flex-row lg:items-end">
+                <div className="mt-4 flex flex-col gap-3 border-b border-border pb-4 lg:flex-row lg:items-end">
                   <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm font-medium text-foreground">
                     Поиск по атомам
                     <div className="flex min-h-11 items-center gap-2 rounded-md border border-border bg-surface px-3">
@@ -3468,7 +4504,7 @@ export function AuditPage() {
                       <span className="text-xs text-muted-foreground">Выбрано: {selectedAtomIds.length}</span>
                       <select value={bulkAtomState} onChange={(event) => setBulkAtomState(event.target.value as 'draft' | 'ready' | 'excluded')} disabled={bulkAtomBusy} className="min-h-10 rounded-md border border-border bg-surface px-3 text-sm text-foreground">
                         <option value="draft">Черновик</option>
-                        <option value="ready">Готов</option>
+                        <option value="ready">Принят</option>
                         <option value="excluded">Исключен</option>
                       </select>
                       <button type="button" onClick={() => void updateSelectedAtomStatuses()} disabled={bulkAtomBusy || selectedAtomIds.length === 0} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50">
@@ -3960,6 +4996,264 @@ export function AuditPage() {
       </div>
 
       <DialogShell
+        open={Boolean(atomReviewMode)}
+        title={atomReviewMode === 'alpha' ? 'Альфа-проверка атомов' : 'Проверка черновиков атомов'}
+        description={selectedCaseSummary ? `${selectedCaseSummary.code} · ${selectedCaseSummary.productMasked}` : undefined}
+        sizeClassName="max-w-5xl"
+        busy={atomReviewBusy}
+        initialFocusRef={atomReviewSurfaceRef}
+        onRequestClose={requestCloseAtomReview}
+        footer={
+          atomReviewComplete ? (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <button
+                type="button"
+                onClick={showPreviousReviewAtom}
+                disabled={atomReviewBusy || atomReviewQueueIds.length === 0}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border bg-surface px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
+              >
+                <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                Вернуться к последнему
+              </button>
+              <button type="button" onClick={closeAtomReview} className="inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground hover:opacity-90">
+                Закрыть проверку
+              </button>
+            </div>
+          ) : atomReviewEditOpen ? (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+              <button type="button" onClick={resetAtomReviewPanels} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-surface px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
+                Отменить изменения
+              </button>
+              <button type="button" onClick={saveAtomReviewEdit} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50" aria-keyshortcuts="Control+Enter Meta+Enter">
+                {atomReviewBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+                {atomReviewMode === 'draft' ? 'Сохранить и принять' : 'Сохранить ссылку'}
+              </button>
+            </div>
+          ) : atomReviewExceptionOpen ? (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+              <button type="button" onClick={resetAtomReviewPanels} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-surface px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
+                Отмена
+              </button>
+              <button type="button" onClick={() => submitAlphaException('needs_clarification')} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center rounded-md border border-amber-500/30 bg-amber-500/10 px-4 text-sm font-medium text-amber-900 hover:bg-amber-500/15 dark:text-amber-200 disabled:opacity-50">
+                Нужно уточнить
+              </button>
+              <button type="button" onClick={() => submitAlphaException('not_present')} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-rose-600 px-4 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-50" aria-keyshortcuts="Control+Enter Meta+Enter">
+                {atomReviewBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <X className="h-4 w-4" aria-hidden="true" />}
+                Нет в системе
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
+              <button
+                type="button"
+                onClick={showPreviousReviewAtom}
+                disabled={atomReviewBusy || atomReviewIndex === 0}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-40"
+                aria-keyshortcuts="ArrowLeft"
+                title="Предыдущий атом"
+              >
+                <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                Назад
+              </button>
+              <button
+                type="button"
+                onClick={showAtomReviewEdit}
+                disabled={atomReviewBusy}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                aria-keyshortcuts="E"
+                title={atomReviewMode === 'draft' ? 'Исправить атом' : 'Добавить ссылку на элемент'}
+              >
+                <Pencil className="h-4 w-4" aria-hidden="true" />
+                {atomReviewMode === 'draft' ? 'Исправить' : 'Ссылка'}
+              </button>
+              <button
+                type="button"
+                onClick={atomReviewMode === 'draft' ? excludeCurrentReviewAtom : showAtomReviewException}
+                disabled={atomReviewBusy}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 text-sm font-medium text-rose-700 hover:bg-rose-500/15 dark:text-rose-300 disabled:opacity-50"
+                aria-keyshortcuts="ArrowDown"
+                title={atomReviewMode === 'draft' ? 'Исключить атом' : 'Зафиксировать отрицательный результат'}
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+                {atomReviewMode === 'draft' ? 'Исключить' : 'Нет / уточнить'}
+              </button>
+              <button
+                type="button"
+                onClick={acceptCurrentReviewAtom}
+                disabled={atomReviewBusy}
+                className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                aria-keyshortcuts="Space ArrowRight"
+                title={atomReviewMode === 'draft' ? 'Принять атом и перейти дальше' : 'Подтвердить наличие и перейти дальше'}
+              >
+                {atomReviewBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <CheckCircle2 className="h-4 w-4" aria-hidden="true" />}
+                {atomReviewMode === 'draft' ? 'Принять' : 'Есть в системе'}
+              </button>
+            </div>
+          )
+        }
+      >
+        <div
+          ref={atomReviewSurfaceRef}
+          tabIndex={-1}
+          onKeyDown={handleAtomReviewKeyDown}
+          className="focus-visible:outline-none"
+        >
+          <div className="border-b border-border pb-4">
+            <div className="flex items-center justify-between gap-4 text-sm">
+              <span className="font-medium text-foreground">
+                {atomReviewComplete
+                  ? 'Проверка завершена'
+                  : `${atomReviewIndex + 1} из ${atomReviewQueueIds.length}`}
+              </span>
+              <span className="tabular-nums text-muted-foreground">
+                {atomReviewMode === 'draft'
+                  ? `Принято ${detail?.atomsReady ?? 0}, исключено ${detail?.atomsExcluded ?? 0}`
+                  : `Проверено ${alphaReviewedCount}, осталось ${alphaUnreviewedCount}`}
+              </span>
+            </div>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+              <div
+                className="h-full rounded-full bg-primary transition-[width] duration-200 motion-reduce:transition-none"
+                style={{ width: `${atomReviewQueueIds.length > 0 ? Math.min(100, Math.round((atomReviewIndex / atomReviewQueueIds.length) * 100)) : 100}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="min-h-6 py-3" aria-live="polite" aria-atomic="true">
+            {atomReviewError ? (
+              <div className="flex flex-col gap-2 border-l-2 border-rose-500 bg-rose-500/5 px-3 py-2 text-sm text-rose-700 dark:text-rose-300 sm:flex-row sm:items-center sm:justify-between">
+                <span>{atomReviewError}</span>
+                {selectedCaseId ? (
+                  <button type="button" onClick={() => { setAtomReviewUndo(null); void loadCaseBundle(selectedCaseId) }} className="min-h-10 shrink-0 rounded-md border border-rose-500/30 px-3 font-medium hover:bg-rose-500/10">Обновить данные</button>
+                ) : null}
+              </div>
+            ) : atomReviewNotice ? (
+              <div className="flex flex-col gap-2 border-l-2 border-emerald-500 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300 sm:flex-row sm:items-center sm:justify-between">
+                <span>{atomReviewNotice}</span>
+                {atomReviewUndo ? (
+                  <button type="button" onClick={() => void undoLastAtomReviewDecision()} disabled={atomReviewBusy} className="min-h-10 shrink-0 rounded-md border border-emerald-500/30 px-3 font-medium hover:bg-emerald-500/10 disabled:opacity-50" aria-keyshortcuts="Control+Z Meta+Z">
+                    Отменить последнее
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          {atomReviewComplete ? (
+            <div className="py-12 text-center">
+              <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600 dark:text-emerald-300" aria-hidden="true" />
+              <h3 className="mt-4 text-lg font-semibold text-foreground">
+                {atomReviewMode === 'draft' ? 'Черновики разобраны' : 'Альфа-проверка заполнена'}
+              </h3>
+              <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
+                Все решения этой сессии сохранены. К предыдущему атому можно вернуться до закрытия окна.
+              </p>
+            </div>
+          ) : atomReviewCurrent ? (
+            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_260px]">
+              <section className="min-w-0" aria-labelledby="atom-review-title">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-xs font-semibold text-primary">{atomReviewCurrent.itemCode}</span>
+                  <StatusPill label={formatAtomStatus(atomReviewCurrent.status)} toneClass={atomStatusTone(atomReviewCurrent.status)} />
+                  {atomReviewMode === 'alpha' ? <StatusPill label={formatAlphaResult(atomReviewCurrent.alphaResult)} toneClass={alphaResultTone(atomReviewCurrent.alphaResult)} /> : null}
+                </div>
+                <h3 id="atom-review-title" className="mt-3 break-words text-xl font-semibold text-foreground text-pretty">
+                  {atomReviewCurrent.title}
+                </h3>
+
+                {atomReviewEditOpen ? (
+                  <div className="mt-5 grid gap-4 border-t border-border pt-5 sm:grid-cols-2">
+                    {atomReviewMode === 'draft' ? (
+                      <>
+                        <label className="flex flex-col gap-1 text-sm font-medium text-foreground sm:col-span-2">
+                          Название атома
+                          <input ref={atomReviewTitleRef} name="atom-review-title" autoComplete="off" value={atomReviewForm.title} onChange={(event) => setAtomReviewForm((current) => ({ ...current, title: event.target.value }))} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30" />
+                        </label>
+                        <label className="flex flex-col gap-1 text-sm font-medium text-foreground sm:col-span-2">
+                          Пункт технического задания
+                          <input name="atom-review-source-clause" autoComplete="off" value={atomReviewForm.sourceClause} onChange={(event) => setAtomReviewForm((current) => ({ ...current, sourceClause: event.target.value }))} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30" />
+                        </label>
+                        <label className="flex flex-col gap-1 text-sm font-medium text-foreground sm:col-span-2">
+                          Комментарий
+                          <textarea name="atom-review-notes" autoComplete="off" rows={3} value={atomReviewForm.notes} onChange={(event) => setAtomReviewForm((current) => ({ ...current, notes: event.target.value }))} className="min-h-24 rounded-md border border-border bg-surface px-3 py-3 text-base text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30" />
+                        </label>
+                      </>
+                    ) : null}
+                    <label className="flex flex-col gap-1 text-sm font-medium text-foreground sm:col-span-2">
+                      {atomReviewMode === 'draft' ? 'Ссылка на элемент в системе' : 'Ссылка на проверенный экран'}
+                      <input name="atom-review-system-url" type="url" inputMode="url" autoComplete="off" value={atomReviewForm.systemUrl} onChange={(event) => setAtomReviewForm((current) => ({ ...current, systemUrl: event.target.value }))} placeholder="https://example.ru/…" className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30" />
+                    </label>
+                  </div>
+                ) : atomReviewExceptionOpen ? (
+                  <div className="mt-5 grid gap-4 border-t border-border pt-5">
+                    <label className="flex flex-col gap-1 text-sm font-medium text-foreground">
+                      Почему элемент не найден или требует уточнения
+                      <textarea ref={atomReviewCommentRef} name="atom-review-alpha-comment" autoComplete="off" rows={4} value={atomReviewForm.alphaComment} onChange={(event) => setAtomReviewForm((current) => ({ ...current, alphaComment: event.target.value }))} placeholder="Кратко зафиксируйте результат проверки…" className="min-h-28 rounded-md border border-border bg-surface px-3 py-3 text-base text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30" />
+                    </label>
+                    <label className="flex flex-col gap-1 text-sm font-medium text-foreground">
+                      Ссылка на проверенный экран <span className="font-normal text-muted-foreground">(необязательно)</span>
+                      <input name="atom-review-alpha-url" type="url" inputMode="url" autoComplete="off" value={atomReviewForm.systemUrl} onChange={(event) => setAtomReviewForm((current) => ({ ...current, systemUrl: event.target.value }))} placeholder="https://example.ru/…" className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30" />
+                    </label>
+                  </div>
+                ) : (
+                  <div className="mt-5 space-y-5">
+                    <div className="border-l-2 border-primary pl-4">
+                      <div className="text-xs font-medium uppercase text-muted-foreground">Пункт технического задания</div>
+                      <p className="mt-2 break-words text-base font-medium text-foreground">{atomReviewCurrent.sourceClause}</p>
+                    </div>
+                    <div className="border-t border-border pt-5">
+                      <div className="text-xs font-medium uppercase text-muted-foreground">Текстовое основание</div>
+                      {atomReviewCurrent.sourceRefs.length > 0 ? (
+                        <div className="mt-3 space-y-4">
+                          {atomReviewCurrent.sourceRefs.map((source) => (
+                            <div key={`${atomReviewCurrent.id}-${source.source_unit_id}-${source.locator}`}>
+                              <div className="font-mono text-xs text-muted-foreground">{source.locator}</div>
+                              <p className="mt-1 whitespace-pre-wrap break-words text-base leading-7 text-foreground">{source.excerpt || 'Текст основания отсутствует.'}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-3 whitespace-pre-wrap break-words text-base leading-7 text-foreground">{atomReviewCurrent.sourceEvidenceText ?? 'Текстовое основание не найдено.'}</p>
+                      )}
+                    </div>
+                    {atomReviewCurrent.notes ? (
+                      <div className="border-t border-border pt-4">
+                        <div className="text-xs font-medium uppercase text-muted-foreground">Комментарий к атому</div>
+                        <p className="mt-2 whitespace-pre-wrap break-words text-sm text-foreground">{atomReviewCurrent.notes}</p>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </section>
+
+              <aside className="border-t border-border pt-4 text-sm lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
+                <dl className="space-y-4">
+                  <div><dt className="text-xs text-muted-foreground">Цифровой продукт</dt><dd className="mt-1 break-words font-medium text-foreground">{atomReviewCurrent.digitalProduct}</dd></div>
+                  <div><dt className="text-xs text-muted-foreground">Объект</dt><dd className="mt-1 break-words text-foreground">{atomReviewCurrent.objectType}</dd></div>
+                  <div><dt className="text-xs text-muted-foreground">Вид работ</dt><dd className="mt-1 break-words text-foreground">{atomReviewCurrent.workType}</dd></div>
+                  {atomReviewMode === 'alpha' ? (
+                    <>
+                      <div><dt className="text-xs text-muted-foreground">Последний результат</dt><dd className="mt-1 text-foreground">{formatAlphaResult(atomReviewCurrent.alphaResult)}</dd></div>
+                      <div><dt className="text-xs text-muted-foreground">Дата проверки</dt><dd className="mt-1 text-foreground">{formatDateOnly(atomReviewCurrent.alphaDate)}</dd></div>
+                      {atomReviewCurrent.alphaComment ? <div><dt className="text-xs text-muted-foreground">Комментарий</dt><dd className="mt-1 break-words text-foreground">{atomReviewCurrent.alphaComment}</dd></div> : null}
+                    </>
+                  ) : null}
+                  {atomReviewCurrent.systemUrl ? (
+                    <div>
+                      <dt className="text-xs text-muted-foreground">Реальная система</dt>
+                      <dd className="mt-1"><a href={atomReviewCurrent.systemUrl} target="_blank" rel="noreferrer" className="inline-flex min-h-11 max-w-full items-center gap-2 break-all text-primary hover:underline"><ExternalLink className="h-4 w-4 shrink-0" aria-hidden="true" />Открыть элемент</a></dd>
+                    </div>
+                  ) : null}
+                </dl>
+              </aside>
+            </div>
+          ) : (
+            <div className="py-10 text-center text-sm text-muted-foreground">Атом больше недоступен. Обновите данные.</div>
+          )}
+        </div>
+      </DialogShell>
+
+      <DialogShell
         open={assignmentDialogOpen}
         title={`Назначения · ${formatDateOnly(assignmentTargetDate)}`}
         description={assignmentTargetMember ? `${assignmentTargetMember.full_name}: выберите договоры для работы в этот день.` : 'Выберите договоры для ячейки календаря.'}
@@ -4020,7 +5314,9 @@ export function AuditPage() {
                         ) : null}
                       </span>
                       <span className="mt-1.5 block truncate text-sm font-medium text-foreground" title={item.title}>{item.productMasked} · {item.title}</span>
-                      <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">{item.contractMasked}</span>
+                      {canViewContractReference ? (
+                        <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">{item.contractMasked}</span>
+                      ) : null}
                     </span>
                   </label>
                 )
@@ -4228,9 +5524,9 @@ export function AuditPage() {
           <label className="flex flex-col gap-1 text-sm font-medium text-foreground">
             Этап аудита
             <select
-              value={caseForm.workflowStage}
+              value={caseForm.stage}
               disabled={caseDialogMode === 'create'}
-              onChange={(event) => setCaseForm((current) => ({ ...current, workflowStage: event.target.value as AuditWorkflowStage }))}
+              onChange={(event) => setCaseForm((current) => ({ ...current, stage: event.target.value as AuditStageFormValue }))}
               className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-70 sm:text-sm"
             >
               {AUDIT_WORKFLOW_ORDER.map((stage) => (
@@ -4238,40 +5534,26 @@ export function AuditPage() {
                   {formatAuditWorkflowStage(stage)}
                 </option>
               ))}
+              {caseDialogMode === 'edit' ? <option value="archived">Архив</option> : null}
             </select>
             <span className="text-xs font-normal text-muted-foreground">
-              Новый договор получает этап автоматически после назначения.
+              Назначение автоматически переводит договор в «Атомизацию». Архив доступен только для чтения.
             </span>
           </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-foreground">
-            Состояние карточки
-            <select
-              value={caseForm.status}
-              onChange={(event) => setCaseForm((current) => ({ ...current, status: event.target.value }))}
-              className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary sm:text-sm"
-            >
-              {['draft', 'atomization', 'ready', 'archived'].map((status) => (
-                <option key={status} value={status}>
-                  {formatCaseStatus(status)}
-                </option>
-              ))}
-            </select>
-            <span className="text-xs font-normal text-muted-foreground">
-              Техническое состояние черновика, готовности или архива.
-            </span>
-          </label>
-          <label className="flex flex-col gap-1 text-sm font-medium text-foreground sm:col-span-2">
-            Номер договора <span className="font-normal text-muted-foreground">(необязательно)</span>
-            <input
-              value={caseForm.contractReference}
-              onChange={(event) => setCaseForm((current) => ({ ...current, contractReference: event.target.value }))}
-              placeholder={caseDialogMode === 'edit' ? 'Оставьте пустым, если менять не нужно' : 'Номер или код договора'}
-              className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary sm:text-sm"
-            />
-            <span className="text-xs font-normal text-muted-foreground">
-              Только справочная метка карточки. Runtime использует выбранный документ и его SHA-256.
-            </span>
-          </label>
+          {canViewContractReference ? (
+            <label className="flex flex-col gap-1 text-sm font-medium text-foreground">
+              Номер договора <span className="font-normal text-muted-foreground">(необязательно)</span>
+              <input
+                value={caseForm.contractReference}
+                onChange={(event) => setCaseForm((current) => ({ ...current, contractReference: event.target.value }))}
+                placeholder={caseDialogMode === 'edit' ? 'Оставьте пустым, если менять не нужно' : 'Номер или код договора'}
+                className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary sm:text-sm"
+              />
+              <span className="text-xs font-normal text-muted-foreground">
+                Доступен только участникам команды аудита и не используется при обработке документа.
+              </span>
+            </label>
+          ) : null}
           <label className="flex flex-col gap-1 text-sm font-medium text-foreground">
             Дата договора
             <input

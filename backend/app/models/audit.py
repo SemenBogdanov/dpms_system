@@ -9,6 +9,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models import Base
 
 
+DEFAULT_AUDIT_CONTEXT = (
+    "Выполняется аудит каждого элемента сформированного и отработанного технического задания."
+)
+
+
 class AuditCase(Base):
     """Audit case grouped around one contract reference."""
 
@@ -59,7 +64,12 @@ class AuditCase(Base):
         server_default="unassigned",
         index=True,
     )
-    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        default=DEFAULT_AUDIT_CONTEXT,
+        server_default=DEFAULT_AUDIT_CONTEXT,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -519,6 +529,7 @@ class AuditAtom(Base):
     )
     alpha_result: Mapped[str | None] = mapped_column(String(40), nullable=True)
     alpha_result_raw: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    alpha_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     alpha_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     commission_result: Mapped[str | None] = mapped_column(String(40), nullable=True)
     commission_result_raw: Mapped[str | None] = mapped_column(String(500), nullable=True)

@@ -1115,6 +1115,8 @@ async def commit_audit_model_comparison(
         canonical_run.atom_count = len(created_atoms)
         canonical_run.finished_at = datetime.now(timezone.utc)
     audit_case.status = "atomization"
+    if audit_case.workflow_stage != "unassigned":
+        audit_case.workflow_stage = "atomization"
     db.add(
         AuditEvent(
             case_id=case_id,

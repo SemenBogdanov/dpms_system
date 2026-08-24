@@ -195,6 +195,7 @@ def build_audit_atom_export(audit_case: AuditCase, atoms: list[AuditAtom]) -> by
         "Статус",
         "Ссылка на объект в системе",
         "Наличие объекта в системе",
+        "Комментарий альфа-проверки",
         "Дата альфа-проверки",
         "Решение комиссии",
         "Дата комиссии",
@@ -231,6 +232,7 @@ def build_audit_atom_export(audit_case: AuditCase, atoms: list[AuditAtom]) -> by
             atom.state,
             atom.system_url,
             atom.alpha_result_raw or atom.alpha_result,
+            getattr(atom, "alpha_comment", None),
             atom.alpha_date,
             atom.commission_result_raw or atom.commission_result,
             atom.commission_date,
@@ -1383,6 +1385,23 @@ async def commit_audit_import(
         )
         if case.status in {"draft", "ready"}:
             case.status = "atomization"
+        if group_created and case.workflow_stage not in {"unassigned", "atomization"}:
+            previous_stage = case.workflow_stage
+            case.workflow_stage = "atomization"
+            case.status = "atomization"
+            record_audit_event(
+                db,
+                case_id=case.id,
+                actor_id=user.id,
+                import_batch_id=batch.id,
+                event_type="workflow_stage_changed",
+                message="Новые атомы вернули аудит к этапу атомизации",
+                payload_json={
+                    "previous_workflow_stage": previous_stage,
+                    "workflow_stage": case.workflow_stage,
+                    "fields": ["atom_imported"],
+                },
+            )
         await db.flush()
         await db.refresh(case)
         commit_cases.append(

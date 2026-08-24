@@ -269,7 +269,49 @@ async def verify_head_schema(database_url: URL) -> None:
                     text("SELECT version_num FROM alembic_version")
                 )
             ).scalar_one()
-            assert revision == "072_audit_multi_model"
+            assert revision == "074_audit_atom_review"
+            audit_context_default = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT column_default
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'audit_cases'
+                          AND column_name = 'notes'
+                        """
+                    )
+                )
+            ).scalar_one()
+            assert "Выполняется аудит каждого элемента" in audit_context_default
+            alpha_comment_type = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT data_type
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'audit_atoms'
+                          AND column_name = 'alpha_comment'
+                        """
+                    )
+                )
+            ).scalar_one()
+            assert alpha_comment_type == "text"
+            review_article = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT title, body
+                        FROM knowledge_articles
+                        WHERE id = 'b381c747-d1b5-4b65-8fcc-d2e441b0f506'
+                          AND slug = 'audit-sequential-atom-review'
+                        """
+                    )
+                )
+            ).one()
+            assert review_article.title == "Аудит: быстрая проверка атомов"
+            assert "Стрелку вправо" in review_article.body
             admin_audit_index = (
                 await connection.execute(
                     text(
