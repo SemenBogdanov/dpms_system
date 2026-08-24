@@ -229,6 +229,159 @@ test('contract header keeps the audit identity, process and controls scannable',
   await page.screenshot({ path: testInfo.outputPath('audit-contract-header.png') })
 })
 
+test('one AI model registry can populate the working atom table', async ({ page }, testInfo) => {
+  const state = newState()
+  state.atoms = []
+  const registryId = '77777777-7777-4777-8777-777777777777'
+  const comparisonId = '88888888-8888-4888-8888-888888888888'
+  const modelAtomCount = 140
+  let selectedRegistryIds: string[] = []
+  let comparisonCreated = false
+
+  const modelItems = Array.from({ length: modelAtomCount }, (_, index) => {
+    const number = index + 1
+    const sourceRef = {
+      source_unit_id: `source-${number}`,
+      locator: `ТЗ, раздел 2.${number}`,
+      excerpt: `Система должна отображать элемент ${number}.`,
+    }
+    return {
+      id: `registry-item-${number}`,
+      title: number === 1 ? 'Экран списка заявок' : `Элемент ${number}`,
+      digital_product: 'OPEC',
+      work_type: 'Разработка',
+      object_type: 'Экран',
+      source_clause: sourceRef.locator,
+      notes: null,
+      confidence_percent: 91,
+      sort_order: number * 10,
+      source_refs: [sourceRef],
+    }
+  })
+  const registry = {
+    id: registryId,
+    case_id: caseId,
+    canonical_run_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    provider_config_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    provider_config_version: 1,
+    provider_name: 'ROX-1',
+    model_name: 'test-model',
+    atom_count: modelAtomCount,
+    coverage_summary: {},
+    warnings: [],
+    items: modelItems,
+    created_at: '2026-08-24T08:00:00Z',
+  }
+  const comparison = {
+    id: comparisonId,
+    case_id: caseId,
+    canonical_run_id: registry.canonical_run_id,
+    status: 'draft_ready' as 'draft_ready' | 'committed',
+    config_version: 1,
+    registry_ids: [registryId],
+    registry_snapshot: [],
+    drafts: modelItems.map((item, index) => ({
+      id: `comparison-draft-${index + 1}`,
+      title: item.title,
+      digital_product: item.digital_product,
+      work_type: item.work_type,
+      object_type: item.object_type,
+      source_clause: item.source_clause,
+      notes: item.notes,
+      confidence_percent: item.confidence_percent,
+      agreement_count: 1,
+      registry_count: 1,
+      review_status: 'pending',
+      sort_order: item.sort_order,
+      source_refs: item.source_refs,
+      model_variants: [{
+        registry_id: registryId,
+        registry_item_id: item.id,
+        provider_name: registry.provider_name,
+        model_name: registry.model_name,
+        title: item.title,
+        object_type: item.object_type,
+        work_type: item.work_type,
+        confidence_percent: item.confidence_percent,
+      }],
+    })),
+    created_at: '2026-08-24T08:01:00Z',
+    committed_at: null as string | null,
+  }
+
+  await page.addInitScript(() => localStorage.setItem('dpms_token', 'audit-review-test-token'))
+  await page.route('**/api/**', async (route: Route) => {
+    const request = route.request()
+    const method = request.method()
+    const path = new URL(request.url()).pathname
+    const respond = async (body: unknown, status = 200) => route.fulfill({
+      status,
+      contentType: 'application/json',
+      body: JSON.stringify(body),
+    })
+    if (path === '/api/auth/me') return respond(testUser)
+    if (path === '/api/messages/summary') return respond({ direct_count: 0, important_count: 0 })
+    if (path === '/api/audit/cases' && method === 'GET') {
+      const summary: Partial<ReturnType<typeof casePayload>> = { ...casePayload(state) }
+      delete summary.atoms
+      return respond([summary])
+    }
+    if (path === `/api/audit/cases/${caseId}` && method === 'GET') return respond(casePayload(state))
+    if (path === `/api/audit/cases/${caseId}/events` && method === 'GET') return respond([])
+    if (path === `/api/audit/cases/${caseId}/documents` && method === 'GET') return respond([])
+    if (path === `/api/audit/cases/${caseId}/model-registries` && method === 'GET') return respond({ items: [registry] })
+    if (path === `/api/audit/cases/${caseId}/model-comparisons` && method === 'GET') {
+      return respond(comparisonCreated ? [comparison] : [])
+    }
+    if (path === `/api/audit/cases/${caseId}/model-comparisons` && method === 'POST') {
+      const body = JSON.parse(request.postData() || '{}') as { registry_ids?: string[] }
+      selectedRegistryIds = body.registry_ids ?? []
+      comparisonCreated = true
+      return respond(comparison, 201)
+    }
+    if (path === `/api/audit/cases/${caseId}/model-comparisons/${comparisonId}/commit` && method === 'POST') {
+      state.atoms = modelItems.map((item, index) => atom(
+        `working-atom-${index + 1}`,
+        `ITEM-${String(index + 1).padStart(3, '0')}`,
+        item.title,
+        index + 1
+      ))
+      comparison.status = 'committed'
+      comparison.committed_at = '2026-08-24T08:02:00Z'
+      return respond({
+        comparison_id: comparisonId,
+        case_id: caseId,
+        atoms_created: modelAtomCount,
+        atom_ids: state.atoms.map((item) => item.id),
+        already_committed: false,
+      })
+    }
+    if (path === '/api/audit/team' && method === 'GET') {
+      return respond([{ id: '55555555-5555-4555-8555-555555555555', user_id: userId, full_name: testUser.full_name, email: testUser.email, role: 'leader', is_active: true, audit_enabled: true, added_by_id: null, created_at: '2026-08-24T08:00:00Z' }])
+    }
+    if (path === '/api/audit/team/candidates' && method === 'GET') return respond([])
+    if (path.startsWith('/api/client-events')) return respond({})
+    return respond(method === 'GET' ? [] : {})
+  })
+
+  await page.goto(`/audit?view=case&case=${caseId}`)
+  await expect(page.getByRole('heading', { name: 'Модельный реестр готов' })).toBeVisible()
+  await expect(page.getByText(`ИИ сформировал ${modelAtomCount} атомов.`, { exact: false })).toBeVisible()
+  await page.getByRole('button', { name: 'Подготовить рабочий реестр' }).last().click()
+
+  const dialog = page.getByRole('dialog', { name: 'Подготовка рабочего реестра' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByLabel('Название атома').first()).toHaveValue('Экран списка заявок')
+  expect(selectedRegistryIds).toEqual([registryId])
+  await dialog.getByRole('button', { name: 'Записать рабочий реестр' }).click()
+
+  await expect(dialog).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Проверить черновики' })).toBeVisible()
+  await expect(page.locator('input[aria-label="Выбрать атом ITEM-001"]:visible')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Проверить черновики' }).scrollIntoViewIfNeeded()
+  await page.screenshot({ path: testInfo.outputPath('single-model-working-registry.png') })
+})
+
 test('late detail response cannot replace the currently selected contract', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('dpms_token', 'audit-review-test-token'))
   const base = casePayload(newState())

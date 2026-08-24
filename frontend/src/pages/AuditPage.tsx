@@ -1936,6 +1936,18 @@ export function AuditPage() {
       (canManage || selectedCaseSummary.responsibleUserId === user?.id)
   )
   const workingAtomRegistryExists = (detail?.atomsTotal ?? 0) > 0
+  const selectedModelAtomCount = useMemo(() => {
+    const selected = new Set(selectedModelRegistryIds)
+    return modelRegistries.reduce(
+      (total, registry) => total + (selected.has(registry.id) ? registry.atom_count : 0),
+      0
+    )
+  }, [modelRegistries, selectedModelRegistryIds])
+  const draftReadyModelComparison = useMemo(
+    () => modelComparisons.find((item) => item.status === 'draft_ready') ?? null,
+    [modelComparisons]
+  )
+  const isSingleModelDraft = (modelComparison?.registry_ids.length ?? 0) === 1
   const aiEligibleDocuments = useMemo(
     () => documents.filter((document) => {
       if (document.kind !== 'technical_spec') return false
@@ -2592,18 +2604,18 @@ export function AuditPage() {
     setComparisonDialogOpen(true)
   }
 
-  const runModelComparison = async () => {
-    if (!selectedCaseId || selectedModelRegistryIds.length < 2 || comparisonBusy) return
+  const runModelComparison = async (registryIds = selectedModelRegistryIds) => {
+    if (!selectedCaseId || registryIds.length < 1 || comparisonBusy) return
     setComparisonBusy(true)
     setComparisonError(null)
     try {
       const result = await api.post<AuditAIModelComparison>(`/api/audit/cases/${selectedCaseId}/model-comparisons`, {
-        registry_ids: selectedModelRegistryIds,
+        registry_ids: registryIds,
       })
       setModelComparisons((current) => [result, ...current.filter((item) => item.id !== result.id)])
       showModelComparison(result)
     } catch (error) {
-      setModelWorkspaceError(error instanceof Error ? error.message : 'Не удалось сравнить модельные реестры')
+      setModelWorkspaceError(error instanceof Error ? error.message : 'Не удалось подготовить рабочий реестр')
     } finally {
       setComparisonBusy(false)
     }
@@ -2631,7 +2643,7 @@ export function AuditPage() {
     if (!selectedCaseId || !modelComparison || comparisonBusy) return
     const included = comparisonDrafts.filter((draft) => draft.included)
     if (included.length === 0) {
-      setComparisonError('Выберите хотя бы один атом генерального реестра')
+      setComparisonError('Выберите хотя бы один атом рабочего реестра')
       return
     }
     if (included.some((draft) => !draft.title.trim() || !draft.digital_product.trim())) {
@@ -2662,9 +2674,9 @@ export function AuditPage() {
       setComparisonDrafts([])
       await Promise.all([loadCases(), loadCaseBundle(selectedCaseId), loadModelWorkspace(selectedCaseId)])
       setDetailTab('atoms')
-      toast.success(`В генеральный реестр записано атомов: ${result.atoms_created}`)
+      toast.success(`В рабочий реестр записано атомов: ${result.atoms_created}`)
     } catch (error) {
-      setComparisonError(error instanceof Error ? error.message : 'Не удалось опубликовать генеральный реестр')
+      setComparisonError(error instanceof Error ? error.message : 'Не удалось опубликовать рабочий реестр')
     } finally {
       setComparisonBusy(false)
     }
@@ -4535,7 +4547,7 @@ export function AuditPage() {
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>
                         <h3 id="model-registries-title" className="text-sm font-semibold text-foreground">Модельные реестры</h3>
-                        <p className="mt-1 text-xs text-muted-foreground">Независимые результаты сохранены отдельно. Генеральный список появляется только после ручного сравнения.</p>
+                        <p className="mt-1 text-xs text-muted-foreground">Выберите один результат для подготовки рабочего реестра или несколько для сравнительного анализа.</p>
                       </div>
                       {canEditSelectedAtoms ? (
                         <div className="flex flex-wrap gap-2">
@@ -4543,15 +4555,19 @@ export function AuditPage() {
                             <Sparkles className="h-4 w-4" />
                             Запустить другую модель
                           </button>
-                          {modelComparisons.find((item) => item.status === 'draft_ready') ? (
-                            <button type="button" onClick={() => showModelComparison(modelComparisons.find((item) => item.status === 'draft_ready')!)} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-primary px-3 text-sm font-medium text-primary hover:bg-primary/5">
+                          {draftReadyModelComparison ? (
+                            <button type="button" onClick={() => showModelComparison(draftReadyModelComparison)} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-primary px-3 text-sm font-medium text-primary hover:bg-primary/5">
                               <Boxes className="h-4 w-4" />
-                              {workingAtomRegistryExists ? 'Открыть сравнение' : 'Продолжить сравнение'}
+                              {workingAtomRegistryExists
+                                ? 'Открыть анализ'
+                                : draftReadyModelComparison.registry_ids.length === 1
+                                  ? 'Продолжить подготовку'
+                                  : 'Продолжить сравнение'}
                             </button>
                           ) : null}
-                          <button type="button" onClick={() => void runModelComparison()} disabled={comparisonBusy || selectedModelRegistryIds.length < 2} className="inline-flex min-h-10 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">
+                          <button type="button" onClick={() => void runModelComparison()} disabled={comparisonBusy || selectedModelRegistryIds.length < 1} className="inline-flex min-h-10 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">
                             {comparisonBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Boxes className="h-4 w-4" />}
-                            Запустить сравнительный анализ
+                            {selectedModelRegistryIds.length === 1 ? 'Подготовить рабочий реестр' : 'Сравнить выбранные'}
                           </button>
                         </div>
                       ) : null}
@@ -4609,22 +4625,51 @@ export function AuditPage() {
                     {detailError}
                   </div>
                 ) : (detail?.atomsTotal ?? 0) === 0 ? (
-                  <div className="mt-2 border-l-2 border-rose-500 bg-rose-500/5 px-5 py-8">
-                    <div className="flex items-start gap-3">
-                      <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-600 dark:text-rose-300" />
-                      <div>
-                        <h3 className="text-base font-semibold text-foreground">Реестр атомов еще не загружен</h3>
-                        <p className="mt-1 text-sm text-muted-foreground">Договор находится в черновике и ожидает декомпозиции технического задания.</p>
+                  modelRegistries.length > 0 ? (
+                    <div className="mt-2 border-l-2 border-primary bg-primary/5 px-5 py-6">
+                      <div className="flex items-start gap-3">
+                        <ClipboardList className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+                        <div className="min-w-0">
+                          <h3 className="text-base font-semibold text-foreground">Модельный реестр готов</h3>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            ИИ сформировал {selectedModelAtomCount || modelRegistries.reduce((total, registry) => total + registry.atom_count, 0)} атомов. Проверьте состав и запишите его в рабочий реестр договора.
+                          </p>
+                        </div>
                       </div>
+                      {canEditSelectedAtoms ? (
+                        <div className="mt-4 flex flex-wrap gap-2 pl-8">
+                          <button
+                            type="button"
+                            onClick={() => draftReadyModelComparison
+                              ? showModelComparison(draftReadyModelComparison)
+                              : void runModelComparison()}
+                            disabled={comparisonBusy || selectedModelRegistryIds.length < 1}
+                            className="inline-flex min-h-11 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {comparisonBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardList className="h-4 w-4" />}
+                            {draftReadyModelComparison ? 'Продолжить подготовку' : 'Подготовить рабочий реестр'}
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
-                    {canEditSelectedAtoms ? (
-                      <div className="mt-4 flex flex-wrap gap-2 pl-8">
-                        <button type="button" onClick={() => void downloadAtomTemplate()} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted"><FileDown className="h-4 w-4" />Скачать Excel-шаблон</button>
-                        <button type="button" onClick={() => selectedCaseId && openImportDialog(selectedCaseId)} className="inline-flex min-h-11 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90"><Upload className="h-4 w-4" />Загрузить реестр атомов</button>
-                        <button type="button" onClick={() => void openAIAtomizationDialog()} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-primary/30 bg-surface px-3 text-sm font-medium text-primary hover:bg-primary/5"><Sparkles className="h-4 w-4" />Сформировать реестр с ИИ</button>
+                  ) : (
+                    <div className="mt-2 border-l-2 border-rose-500 bg-rose-500/5 px-5 py-8">
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-rose-600 dark:text-rose-300" />
+                        <div>
+                          <h3 className="text-base font-semibold text-foreground">Реестр атомов еще не загружен</h3>
+                          <p className="mt-1 text-sm text-muted-foreground">Договор находится в черновике и ожидает декомпозиции технического задания.</p>
+                        </div>
                       </div>
-                    ) : null}
-                  </div>
+                      {canEditSelectedAtoms ? (
+                        <div className="mt-4 flex flex-wrap gap-2 pl-8">
+                          <button type="button" onClick={() => void downloadAtomTemplate()} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted"><FileDown className="h-4 w-4" />Скачать Excel-шаблон</button>
+                          <button type="button" onClick={() => selectedCaseId && openImportDialog(selectedCaseId)} className="inline-flex min-h-11 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90"><Upload className="h-4 w-4" />Загрузить реестр атомов</button>
+                          <button type="button" onClick={() => void openAIAtomizationDialog()} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-primary/30 bg-surface px-3 text-sm font-medium text-primary hover:bg-primary/5"><Sparkles className="h-4 w-4" />Сформировать реестр с ИИ</button>
+                        </div>
+                      ) : null}
+                    </div>
+                  )
                 ) : filteredAtoms.length === 0 ? (
                   <div className="mt-4 rounded-md border border-dashed border-border bg-surface-soft px-6 py-12 text-center">
                     <Boxes className="mx-auto h-8 w-8 text-muted-foreground" />
@@ -6229,10 +6274,14 @@ export function AuditPage() {
 
       <DialogShell
         open={comparisonDialogOpen}
-        title="Сравнительный анализ моделей"
+        title={isSingleModelDraft ? 'Подготовка рабочего реестра' : 'Сравнительный анализ моделей'}
         description={workingAtomRegistryExists
-          ? 'Сравните независимые результаты моделей. Уже опубликованный рабочий реестр не будет изменен или перезаписан.'
-          : 'Проверьте расхождения, отредактируйте итоговые формулировки и только затем запишите генеральный реестр.'}
+          ? isSingleModelDraft
+            ? 'Просмотрите сохраненный результат модели. Уже опубликованный рабочий реестр не будет изменен или перезаписан.'
+            : 'Сравните независимые результаты моделей. Уже опубликованный рабочий реестр не будет изменен или перезаписан.'
+          : isSingleModelDraft
+            ? 'Проверьте атомы и их основания. После подтверждения они появятся в рабочей таблице договора как черновики.'
+            : 'Проверьте расхождения, отредактируйте итоговые формулировки и только затем запишите генеральный реестр.'}
         sizeClassName="max-w-6xl"
         busy={comparisonBusy}
         onRequestClose={closeComparisonDialog}
@@ -6240,15 +6289,15 @@ export function AuditPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-xs text-muted-foreground">
               {workingAtomRegistryExists
-                ? 'Сравнение сохранено отдельно. Текущий рабочий реестр остается без изменений.'
-                : `Выбрано ${comparisonDrafts.filter((draft) => draft.included).length} из ${comparisonDrafts.length}. Все исходные модельные варианты сохраняются.`}
+                ? 'Анализ сохранен отдельно. Текущий рабочий реестр остается без изменений.'
+                : `Выбрано ${comparisonDrafts.filter((draft) => draft.included).length} из ${comparisonDrafts.length}. Исходный результат модели сохраняется.`}
             </span>
             <div className="flex flex-col gap-2 sm:flex-row">
               <button type="button" onClick={closeComparisonDialog} disabled={comparisonBusy} className="inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-surface px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">{workingAtomRegistryExists ? 'Закрыть' : 'Отмена'}</button>
               {!workingAtomRegistryExists ? (
                 <button type="button" onClick={() => void commitModelComparison()} disabled={comparisonBusy || comparisonDrafts.every((draft) => !draft.included)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50">
                   {comparisonBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                  Записать генеральный реестр
+                  {isSingleModelDraft ? 'Записать рабочий реестр' : 'Записать генеральный реестр'}
                 </button>
               ) : null}
             </div>
@@ -6261,13 +6310,23 @@ export function AuditPage() {
           ) : null}
           {modelComparison ? (
             <div className="grid gap-3 sm:grid-cols-3">
-              <MetricTile label="Модельных реестров" value={String(modelComparison.registry_ids.length)} />
-              <MetricTile label="Итоговых кандидатов" value={String(comparisonDrafts.length)} tone="primary" />
-              <MetricTile label="Полное согласие" value={String(comparisonDrafts.filter((draft) => draft.agreement_count === draft.registry_count).length)} tone="success" />
+              <MetricTile label={isSingleModelDraft ? 'Источник' : 'Модельных реестров'} value={isSingleModelDraft ? '1 модель' : String(modelComparison.registry_ids.length)} />
+              <MetricTile label={isSingleModelDraft ? 'Атомов к проверке' : 'Итоговых кандидатов'} value={String(comparisonDrafts.length)} tone="primary" />
+              <MetricTile
+                label={isSingleModelDraft ? 'С текстовым основанием' : 'Полное согласие'}
+                value={String(isSingleModelDraft
+                  ? comparisonDrafts.filter((draft) => draft.source_refs.length > 0).length
+                  : comparisonDrafts.filter((draft) => draft.agreement_count === draft.registry_count).length)}
+                tone="success"
+              />
             </div>
           ) : null}
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
-            <p className="text-xs text-muted-foreground">Согласие показывает, сколько независимых реестров содержат сопоставимый атом. Оно не заменяет решение аудитора.</p>
+            <p className="text-xs text-muted-foreground">
+              {isSingleModelDraft
+                ? 'Результат ИИ не считается принятым автоматически. Аудитор выбирает состав рабочего реестра.'
+                : 'Согласие показывает, сколько независимых реестров содержат сопоставимый атом. Оно не заменяет решение аудитора.'}
+            </p>
             {!workingAtomRegistryExists ? (
               <label className="inline-flex min-h-10 items-center gap-2 text-sm font-medium text-foreground">
                 <input type="checkbox" checked={comparisonDrafts.length > 0 && comparisonDrafts.every((draft) => draft.included)} onChange={(event) => setComparisonDrafts((current) => current.map((draft) => ({ ...draft, included: event.target.checked })))} className="h-5 w-5 rounded border-input text-primary focus:ring-primary" />
@@ -6279,12 +6338,12 @@ export function AuditPage() {
             {comparisonDrafts.map((draft, index) => (
               <section key={draft.id} className={cn('px-3 py-4 sm:px-4', !draft.included && 'bg-muted/35 opacity-70')}>
                 <div className="flex items-start gap-3">
-                  <input type="checkbox" checked={draft.included} onChange={(event) => updateComparisonDraft(draft.id, 'included', event.target.checked)} disabled={workingAtomRegistryExists} className="mt-1 h-5 w-5 shrink-0 rounded border-input text-primary focus:ring-primary disabled:opacity-60" aria-label={`Включить генеральный атом ${index + 1}`} />
+                  <input type="checkbox" checked={draft.included} onChange={(event) => updateComparisonDraft(draft.id, 'included', event.target.checked)} disabled={workingAtomRegistryExists} className="mt-1 h-5 w-5 shrink-0 rounded border-input text-primary focus:ring-primary disabled:opacity-60" aria-label={`Включить атом ${index + 1} в рабочий реестр`} />
                   <div className="min-w-0 flex-1 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="font-mono text-xs text-muted-foreground">Кандидат {index + 1}</span>
+                      <span className="font-mono text-xs text-muted-foreground">{isSingleModelDraft ? 'Атом' : 'Кандидат'} {index + 1}</span>
                       <span className={cn('rounded px-2 py-1 text-xs font-medium', draft.agreement_count === draft.registry_count ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200')}>
-                        Согласие {draft.agreement_count}/{draft.registry_count}
+                        {isSingleModelDraft ? 'Результат модели' : `Согласие ${draft.agreement_count}/${draft.registry_count}`}
                       </span>
                     </div>
                     <div className="grid gap-3 lg:grid-cols-2">
@@ -6316,7 +6375,7 @@ export function AuditPage() {
                       </div>
                     </div>
                     <details className="text-xs text-muted-foreground">
-                      <summary className="cursor-pointer font-medium text-primary">Варианты моделей ({draft.model_variants.length})</summary>
+                      <summary className="cursor-pointer font-medium text-primary">{isSingleModelDraft ? 'Исходный вариант модели' : `Варианты моделей (${draft.model_variants.length})`}</summary>
                       <div className="mt-2 divide-y divide-border border-y border-border">
                         {draft.model_variants.map((variant) => (
                           <div key={variant.registry_item_id} className="grid gap-1 py-2 sm:grid-cols-[minmax(10rem,0.4fr)_minmax(0,1fr)]">

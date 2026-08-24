@@ -9,6 +9,9 @@ import unittest
 from uuid import uuid4
 import zipfile
 
+from pydantic import ValidationError
+
+from app.schemas.audit_ai import AuditAIModelComparisonStart
 from app.services.audit_import import build_audit_atom_export
 from app.services.audit_model_comparison import build_model_comparison
 
@@ -100,11 +103,33 @@ class AuditModelComparisonTests(unittest.TestCase):
         self.assertEqual(unique.title, "Экспорт результата проверки")
         self.assertEqual(len(unique.model_variants), 1)
 
-    def test_comparison_requires_two_registries(self):
-        with self.assertRaisesRegex(ValueError, "как минимум два"):
-            build_model_comparison([
-                _registry(provider_name="Одна", model_name="single", items=[], minute=1)
-            ])
+    def test_single_registry_builds_reviewable_working_draft(self):
+        item = _item(
+            title="Карточка договора",
+            source_unit_id="p-7",
+            locator="п. 7",
+            excerpt="Система отображает карточку договора.",
+            sort_order=10,
+            confidence=89,
+        )
+        registry = _registry(provider_name="Одна", model_name="single", items=[item], minute=1)
+
+        drafts = build_model_comparison([registry])
+
+        self.assertEqual(len(drafts), 1)
+        self.assertEqual(drafts[0].registry_count, 1)
+        self.assertEqual(drafts[0].agreement_count, 1)
+        self.assertEqual(len(drafts[0].model_variants), 1)
+        self.assertEqual(drafts[0].source_refs[0]["excerpt"], "Система отображает карточку договора.")
+
+    def test_comparison_request_accepts_one_registry_and_rejects_empty_selection(self):
+        registry_id = uuid4()
+
+        request = AuditAIModelComparisonStart(registry_ids=[registry_id])
+
+        self.assertEqual(request.registry_ids, [registry_id])
+        with self.assertRaises(ValidationError):
+            AuditAIModelComparisonStart(registry_ids=[])
 
     def test_export_contains_general_registry_and_textual_evidence(self):
         audit_case = SimpleNamespace(case_number="AUD-0042")

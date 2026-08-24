@@ -922,7 +922,7 @@ async def create_audit_model_comparison(
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error))
     if not generated:
-        raise HTTPException(status_code=422, detail="В выбранных реестрах нет атомов для сравнения")
+        raise HTTPException(status_code=422, detail="В выбранных модельных реестрах нет атомов")
     first = registries[0]
     comparison = AuditAIModelComparison(
         case_id=case_id,
@@ -964,10 +964,15 @@ async def create_audit_model_comparison(
             case_id=case_id,
             actor_id=user.id,
             event_type="ai_model_comparison_ready",
-            message="Сформирован черновик генерального реестра атомов",
+            message=(
+                "Сформирован черновик рабочего реестра атомов"
+                if len(registries) == 1
+                else "Сформирован черновик генерального реестра атомов"
+            ),
             payload_json={
                 "comparison_id": str(comparison.id),
                 "registry_ids": [str(registry.id) for registry in registries],
+                "registry_count": len(registries),
                 "draft_count": len(generated),
             },
         )
@@ -1019,6 +1024,9 @@ async def commit_audit_model_comparison(
     )
     if comparison is None:
         raise HTTPException(status_code=404, detail="Сравнительный анализ не найден")
+    single_registry = len(comparison.registry_ids_json or []) == 1
+    registry_label = "Рабочий" if single_registry else "Генеральный"
+    registry_source_label = "рабочего" if single_registry else "генерального"
     commit_key = sha256(f"audit-model-comparison:{user.id}:{body.request_id}".encode("utf-8")).hexdigest()
     drafts = list(
         (
@@ -1035,7 +1043,7 @@ async def commit_audit_model_comparison(
     )
     if comparison.status == "committed":
         if comparison.commit_key_hash != commit_key:
-            raise HTTPException(status_code=409, detail="Генеральный реестр уже опубликован")
+            raise HTTPException(status_code=409, detail=f"{registry_label} реестр уже опубликован")
         atom_ids = list(
             (
                 await db.scalars(
@@ -1076,7 +1084,10 @@ async def commit_audit_model_comparison(
         )
     submitted_by_id = {item.id: item for item in body.drafts}
     if set(submitted_by_id) != {draft.id for draft in drafts}:
-        raise HTTPException(status_code=422, detail="Передайте решение по каждому генеральному атому")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Передайте решение по каждому атому: {registry_label.lower()} реестр должен быть проверен полностью",
+        )
     first_item_code = await generate_next_item_code(db, case_id)
     try:
         next_number = int(first_item_code.rsplit("-", 1)[1])
@@ -1105,7 +1116,7 @@ async def commit_audit_model_comparison(
             source_refs_json=list(draft.source_refs_json or []),
             notes=draft.notes,
             state="draft",
-            source_sheet="Генеральный ИИ-реестр",
+            source_sheet=f"{registry_label} ИИ-реестр",
             source_fingerprint=draft.source_fingerprint,
             sort_order=next_number * 10,
             ai_comparison_draft_id=draft.id,
@@ -1122,7 +1133,7 @@ async def commit_audit_model_comparison(
                 atom_id=atom.id,
                 actor_id=user.id,
                 event_type="atom_created",
-                message=f"Из генерального ИИ-реестра создан атом {atom.item_code}",
+                message=f"Из {registry_source_label} ИИ-реестра создан атом {atom.item_code}",
                 payload_json={"item_code": atom.item_code, "title": atom.title},
             )
         )
@@ -1145,7 +1156,7 @@ async def commit_audit_model_comparison(
             case_id=case_id,
             actor_id=user.id,
             event_type="ai_model_comparison_committed",
-            message="Генеральный реестр атомов проверен и опубликован",
+            message=f"{registry_label} реестр атомов проверен и опубликован",
             payload_json={
                 "comparison_id": str(comparison.id),
                 "atom_count": len(created_atoms),

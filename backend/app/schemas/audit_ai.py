@@ -260,7 +260,7 @@ class AuditAIModelRegistryList(BaseModel):
 
 
 class AuditAIModelComparisonStart(BaseModel):
-    registry_ids: list[UUID] = Field(..., min_length=2, max_length=12)
+    registry_ids: list[UUID] = Field(..., min_length=1, max_length=12)
 
     @field_validator("registry_ids")
     @classmethod

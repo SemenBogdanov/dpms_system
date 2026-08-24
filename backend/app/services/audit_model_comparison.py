@@ -1,4 +1,4 @@
-"""Deterministic cross-model reconciliation for audit atom proposals."""
+"""Deterministic preparation and reconciliation of audit atom proposals."""
 
 from __future__ import annotations
 
@@ -91,11 +91,11 @@ def evidence_text(source_refs: list[dict]) -> str | None:
 
 
 def build_model_comparison(registries: list[object]) -> list[ModelComparisonDraft]:
-    """Group independent proposals while preserving every provider/model variant."""
+    """Build a review draft from one registry or reconcile multiple registries."""
 
     registry_count = len(registries)
-    if registry_count < 2:
-        raise ValueError("Для сравнения нужны как минимум два модельных реестра")
+    if registry_count < 1:
+        raise ValueError("Выберите хотя бы один модельный реестр")
     entries: list[tuple[object, object]] = []
     for registry in sorted(registries, key=lambda item: (item.created_at, str(item.id))):
         for item in sorted(registry.items, key=lambda row: (row.sort_order, str(row.id))):
