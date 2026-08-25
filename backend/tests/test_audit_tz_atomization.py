@@ -157,6 +157,49 @@ class CanonicalAuditAtomizationTests(unittest.TestCase):
         self.assertIn("каждого", payload["correction"]["required_fix"])
         self.assertNotIn("previous_response", payload["correction"])
 
+    def test_atom_can_reference_every_unit_in_full_batch(self):
+        units = [
+            source_unit(index, f"Фрагмент {index}: часть одного проверяемого элемента")
+            for index in range(1, 33)
+        ]
+        batch = build_source_batches(prompt_packet(units))[0]
+        unit_ids = [item["source_unit_id"] for item in units]
+
+        messages = build_batch_messages(batch, 1)
+        prompt_payload = json.loads(messages[1]["content"])
+        result = validate_batch_result(
+            {
+                "atoms": [
+                    {
+                        "local_id": "A1",
+                        "title": "Составной проверяемый элемент",
+                        "object_type": "Другое",
+                        "work_type": None,
+                        "notes": None,
+                        "source_unit_ids": unit_ids,
+                        "anchor_source_unit_id": unit_ids[0],
+                        "confidence": 0.9,
+                    }
+                ],
+                "coverage": [
+                    {
+                        "source_unit_id": unit_id,
+                        "disposition": "ATOMIZED" if index == 0 else "DUPLICATE",
+                        "reason": "Опорный фрагмент" if index == 0 else "Дополняет тот же элемент",
+                    }
+                    for index, unit_id in enumerate(unit_ids)
+                ],
+                "warnings": [],
+            },
+            batch,
+        )
+
+        self.assertEqual(len(result.atoms[0]["source_unit_ids"]), 32)
+        self.assertEqual(
+            prompt_payload["output_constraints"]["max_source_unit_ids_per_atom"],
+            32,
+        )
+
     def test_validated_batches_create_semantic_drafts_not_one_atom_per_fragment(self):
         units = [
             source_unit(1, "Экран содержит реестр обращений."),

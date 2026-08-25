@@ -69,6 +69,7 @@ type MockState = {
   workflowStage: 'atomization' | 'alpha_review'
   patchCalls: number
   failNextPatch: boolean
+  runtimeRun: Record<string, unknown> | null
 }
 
 function atom(id: string, code: string, title: string, order: number): Atom {
@@ -152,6 +153,36 @@ async function installApiMock(page: Page, state: MockState) {
 
     if (path === '/api/auth/me') return respond(testUser)
     if (path === '/api/messages/summary') return respond({ direct_count: 0, important_count: 0 })
+    if (path === '/api/audit/statistics' && method === 'GET') {
+      return respond({
+        date_from: '2026-07-26',
+        date_to: '2026-08-24',
+        trend: [
+          { date: '2026-08-20', verified_count: 2, cumulative_verified_count: 31 },
+          { date: '2026-08-21', verified_count: 4, cumulative_verified_count: 35 },
+          { date: '2026-08-22', verified_count: 1, cumulative_verified_count: 36 },
+          { date: '2026-08-23', verified_count: 3, cumulative_verified_count: 39 },
+          { date: '2026-08-24', verified_count: 5, cumulative_verified_count: 44 },
+        ],
+        contracts: {
+          total: 12,
+          in_progress: 8,
+          alpha_review_completed: 5,
+          alpha_commission_completed: 3,
+          beta_commission_completed: 2,
+        },
+        atoms: {
+          total: 140,
+          excluded: 7,
+          verified: 96,
+          alpha_review_completed: 75,
+          alpha_review_needs_work: 8,
+          alpha_commission_completed: 52,
+          alpha_commission_needs_work: 6,
+          beta_commission_completed: 41,
+        },
+      })
+    }
     if (path === '/api/audit/cases' && method === 'GET') {
       const summary: Partial<ReturnType<typeof casePayload>> = { ...casePayload(state) }
       delete summary.atoms
@@ -159,13 +190,75 @@ async function installApiMock(page: Page, state: MockState) {
     }
     if (path === `/api/audit/cases/${caseId}` && method === 'GET') return respond(casePayload(state))
     if (path === `/api/audit/cases/${caseId}/events` && method === 'GET') return respond([])
-    if (path === `/api/audit/cases/${caseId}/documents` && method === 'GET') return respond([])
+    if (path === `/api/audit/cases/${caseId}/documents` && method === 'GET') {
+      return respond(state.runtimeRun ? [{
+        id: '99999999-9999-4999-8999-999999999999',
+        case_id: caseId,
+        uploaded_by_id: userId,
+        uploaded_by_name: testUser.full_name,
+        kind: 'technical_spec',
+        display_name: 'Техническое задание.docx',
+        original_filename: 'technical-specification.docx',
+        content_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        size_bytes: 120000,
+        sha256: 'a'.repeat(64),
+        created_at: '2026-08-24T08:00:00Z',
+      }] : [])
+    }
     if (path === `/api/audit/cases/${caseId}/model-registries` && method === 'GET') return respond({ items: [] })
     if (path === `/api/audit/cases/${caseId}/model-comparisons` && method === 'GET') return respond([])
     if (path === '/api/audit/team' && method === 'GET') {
       return respond([{ id: '55555555-5555-4555-8555-555555555555', user_id: userId, full_name: testUser.full_name, email: testUser.email, role: 'leader', is_active: true, audit_enabled: true, added_by_id: null, created_at: '2026-08-24T08:00:00Z' }])
     }
     if (path === '/api/audit/team/candidates' && method === 'GET') return respond([])
+    if (path === '/api/audit/ai-atomization/skills' && method === 'GET') {
+      return respond({ items: state.runtimeRun ? [{
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        skill_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        slug: 'audit-tz',
+        name: 'Аудит ТЗ',
+        description: null,
+        version: '0.3.0',
+        schema_version: '1.0',
+        content_sha256: 'b'.repeat(64),
+        source_filename: 'audit-tz.skill',
+        package_format: 'trusted_skill_archive',
+        package_manifest: {},
+        runtime_status: 'ready',
+        runtime_ready: true,
+        runtime_checked_at: '2026-08-24T08:00:00Z',
+        runtime_error_code: null,
+        runtime_selftest: {},
+        is_trusted_archive: true,
+        is_enabled: true,
+        is_active: true,
+        created_at: '2026-08-24T08:00:00Z',
+        activated_at: '2026-08-24T08:00:00Z',
+      }] : [] })
+    }
+    if (path === '/api/audit/ai-providers' && method === 'GET') {
+      return respond({ items: state.runtimeRun ? [{
+        id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        display_name: 'ROX test',
+        model_name: 'test-model',
+        config_version: 1,
+      }] : [] })
+    }
+    if (path === `/api/audit/cases/${caseId}/canonical-preflight/runs` && method === 'GET') {
+      return respond({ items: state.runtimeRun ? [state.runtimeRun] : [] })
+    }
+    if (state.runtimeRun && path === `/api/audit/cases/${caseId}/canonical-preflight/runs/${state.runtimeRun.id}` && method === 'GET') {
+      return respond(state.runtimeRun)
+    }
+    if (state.runtimeRun && path.endsWith('/atomization/resume') && method === 'POST') {
+      Object.assign(state.runtimeRun, {
+        status: 'atomization_queued',
+        current_phase: 'atomization_queued',
+        pause_requested: false,
+        paused_at: null,
+      })
+      return respond(state.runtimeRun, 202)
+    }
     if (path === `/api/audit/cases/${caseId}/alpha-review/start` && method === 'POST') {
       state.workflowStage = 'alpha_review'
       return respond(casePayload(state))
@@ -192,6 +285,25 @@ async function installApiMock(page: Page, state: MockState) {
   })
 }
 
+test('audit statistics combines daily progress with contract and atom stages', async ({ page }, testInfo) => {
+  const state = newState()
+  await installApiMock(page, state)
+  await page.goto('/audit?view=dashboard&stats_days=30')
+
+  await expect(page.getByRole('heading', { name: 'Статистика аудита' })).toBeVisible()
+  await expect(page.getByRole('img', { name: 'График подтверждённых атомов по дням и накопительным итогом' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Договоры', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Атомы', exact: true })).toBeVisible()
+  await expect(page.getByText('96 / 140', { exact: true })).toBeVisible()
+  await expect(page.getByText('Исключённые атомы не входят в знаменатель: 7.')).toBeVisible()
+
+  await page.getByRole('button', { name: '14 дней' }).click()
+  await expect(page).toHaveURL(/stats_days=14/)
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+  expect(overflow).toBeLessThanOrEqual(1)
+  await page.screenshot({ path: testInfo.outputPath('audit-statistics.png'), fullPage: true })
+})
+
 function newState(): MockState {
   return {
     atoms: [
@@ -201,6 +313,7 @@ function newState(): MockState {
     workflowStage: 'atomization',
     patchCalls: 0,
     failNextPatch: false,
+    runtimeRun: null,
   }
 }
 
@@ -227,6 +340,49 @@ test('contract header keeps the audit identity, process and controls scannable',
   expect(overflow).toBeLessThanOrEqual(1)
   await progress.scrollIntoViewIfNeeded()
   await page.screenshot({ path: testInfo.outputPath('audit-contract-header.png') })
+})
+
+test('paused AI atomization exposes saved progress and resumes from checkpoint', async ({ page }) => {
+  const state = newState()
+  state.runtimeRun = {
+    id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    case_id: caseId,
+    document_id: '99999999-9999-4999-8999-999999999999',
+    skill_version_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    skill_name: 'Аудит ТЗ',
+    skill_version: '0.3.0',
+    status: 'paused',
+    current_phase: 'atomization_paused',
+    source_unit_count: 120,
+    warning_count: 0,
+    atom_count: 0,
+    completed_batch_count: 4,
+    total_batch_count: 9,
+    safe_summary: {},
+    error_code: null,
+    artifacts: [],
+    external_ai_called: true,
+    ai_attempt_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+    pause_requested: false,
+    priority: 0,
+    paused_at: '2026-08-24T08:10:00Z',
+    created_at: '2026-08-24T08:00:00Z',
+    started_at: '2026-08-24T08:01:00Z',
+    finished_at: null,
+  }
+  await openAudit(page, state)
+
+  await page.getByRole('button', { name: 'Сформировать реестр с ИИ' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Атомизация технического задания' })
+  await expect(
+    dialog.getByText('Сохранено пакетов: 4 из 9. Возобновление продолжит с этого места'),
+  ).toBeVisible()
+  const resumeButton = dialog.getByRole('button', { name: 'Продолжить' })
+  await expect(resumeButton).toBeVisible()
+  await resumeButton.click()
+
+  await expect(dialog.getByRole('button', { name: 'Атомизация в очереди' })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Приостановить' })).toBeVisible()
 })
 
 test('one AI model registry can populate the working atom table', async ({ page }, testInfo) => {

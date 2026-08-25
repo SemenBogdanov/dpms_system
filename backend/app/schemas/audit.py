@@ -267,6 +267,39 @@ class AuditCaseRead(AuditCaseListItem):
     atoms: list[AuditAtomRead] = Field(default_factory=list)
 
 
+class AuditVerificationTrendPoint(BaseModel):
+    date: date
+    verified_count: int = 0
+    cumulative_verified_count: int = 0
+
+
+class AuditContractStatistics(BaseModel):
+    total: int = 0
+    in_progress: int = 0
+    alpha_review_completed: int = 0
+    alpha_commission_completed: int = 0
+    beta_commission_completed: int = 0
+
+
+class AuditAtomStatistics(BaseModel):
+    total: int = 0
+    excluded: int = 0
+    verified: int = 0
+    alpha_review_completed: int = 0
+    alpha_review_needs_work: int = 0
+    alpha_commission_completed: int = 0
+    alpha_commission_needs_work: int = 0
+    beta_commission_completed: int = 0
+
+
+class AuditStatisticsRead(BaseModel):
+    date_from: date
+    date_to: date
+    trend: list[AuditVerificationTrendPoint] = Field(default_factory=list)
+    contracts: AuditContractStatistics
+    atoms: AuditAtomStatistics
+
+
 class AuditResponsibleUpdate(BaseModel):
     user_id: UUID | None = None
 

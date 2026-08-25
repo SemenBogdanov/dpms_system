@@ -18,7 +18,7 @@ MAX_BATCH_SOURCE_UNITS = 32
 MAX_BATCH_SOURCE_CHARS = 18_000
 MAX_BATCH_ATOMS = 40
 MAX_TOTAL_ATOMS = 400
-MAX_SOURCE_REFS_PER_ATOM = 20
+MAX_SOURCE_REFS_PER_ATOM = MAX_BATCH_SOURCE_UNITS
 MAX_STORED_EXCERPT_CHARS = 600
 
 _COVERAGE_DISPOSITIONS = {
@@ -364,7 +364,10 @@ def build_source_batches(prompt_packet: dict) -> list[CanonicalSourceBatch]:
 
 _CORRECTION_GUIDANCE = {
     "invalid_model_json": "Верни один валидный JSON-объект без Markdown и пояснений.",
-    "invalid_model_schema": "Строго соблюдай переданную JSON-схему, обязательные поля и допустимые значения.",
+    "invalid_model_schema": (
+        "Строго соблюдай переданную JSON-схему, обязательные поля и допустимые значения. "
+        f"В source_unit_ids одного атома допускается не более {MAX_SOURCE_REFS_PER_ATOM} уникальных ссылок."
+    ),
     "coverage_gap": "Добавь ровно одно coverage-решение для каждого переданного source_unit_id.",
     "duplicate_coverage": "Каждый source_unit_id должен встречаться в coverage ровно один раз.",
     "coverage_atom_mismatch": "Каждый anchor_source_unit_id атома должен иметь disposition ATOMIZED.",
@@ -380,11 +383,12 @@ def build_batch_messages(
     *,
     correction_code: str | None = None,
 ) -> list[dict[str, str]]:
-    system = """Ты выполняешь техническую атомизацию ТЗ цифрового продукта.
+    system = f"""Ты выполняешь техническую атомизацию ТЗ цифрового продукта.
 Атом — один самостоятельно демонстрируемый и проверяемый элемент продукта: экран, вкладка, форма, реестр, таблица, фильтр, показатель, отчет, действие пользователя, уведомление, интеграция или отдельное наблюдаемое поведение.
 Не превращай заголовки, определения, реквизиты, общие организационные фразы и каждое предложение в отдельный атом. Объединяй неразделимые детали одного элемента и разделяй только то, что можно проверить независимо.
 Не придумывай функциональность. Каждый атом должен иметь короткое однозначное название, тип объекта и ссылки только на переданные source_unit_id.
 Для атома выбери один anchor_source_unit_id. Дополнительные фрагменты можно указать в source_unit_ids как основание. Только anchor получает coverage ATOMIZED; поясняющие фрагменты обычно получают DUPLICATE или NON_REQUIREMENT с понятной причиной.
+Один атом может ссылаться максимум на {MAX_SOURCE_REFS_PER_ATOM} уникальных source_unit_id текущего пакета; anchor_source_unit_id обязательно входит в этот список.
 Каждый переданный фрагмент обязан получить ровно одно coverage-решение. Верни только JSON без Markdown."""
     payload = {
         "protocol": "dpms-canonical-audit-atomization-v1",
@@ -411,6 +415,14 @@ def build_batch_messages(
                 }
             ],
             "warnings": ["string"],
+        },
+        "output_constraints": {
+            "top_level_fields": ["atoms", "coverage", "warnings"],
+            "max_atoms": MAX_BATCH_ATOMS,
+            "max_source_unit_ids_per_atom": MAX_SOURCE_REFS_PER_ATOM,
+            "source_unit_ids_must_be_unique": True,
+            "anchor_must_be_in_source_unit_ids": True,
+            "coverage_rows_must_equal_source_units": len(batch.outbound_units),
         },
     }
     guidance = _CORRECTION_GUIDANCE.get(correction_code or "")

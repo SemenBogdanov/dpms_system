@@ -9,7 +9,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -19,6 +19,7 @@ from app.api.routes.audit import (
     _ensure_case_atom_editor,
     _get_case_or_404,
     _serialize_ai_attempt,
+    require_audit_manager,
     require_audit_workspace_member,
 )
 from app.config import settings
@@ -237,6 +238,12 @@ async def _serialize_run(db: AsyncSession, run_id: UUID) -> AuditTZRunRead:
     attempt = await db.scalar(
         select(AuditAIAtomizationAttempt).where(AuditAIAtomizationAttempt.canonical_run_id == run.id)
     )
+    atomization_job = await db.scalar(
+        select(AuditTZRuntimeJob).where(
+            AuditTZRuntimeJob.run_id == run.id,
+            AuditTZRuntimeJob.kind == "atomization",
+        )
+    )
     artifacts = list(
         (
             await db.scalars(
@@ -273,6 +280,11 @@ async def _serialize_run(db: AsyncSession, run_id: UUID) -> AuditTZRunRead:
         ],
         external_ai_called=run.external_ai_called,
         ai_attempt_id=attempt.id if attempt is not None else None,
+        pause_requested=bool(
+            atomization_job is not None and atomization_job.pause_requested_at is not None
+        ),
+        priority=int(atomization_job.priority or 0) if atomization_job is not None else 0,
+        paused_at=atomization_job.paused_at if atomization_job is not None else None,
         created_at=run.created_at,
         started_at=run.started_at,
         finished_at=run.finished_at,
@@ -463,6 +475,7 @@ async def preview_canonical_atomization(
         "preflight_pass",
         "atomization_queued",
         "atomizing",
+        "paused",
         "draft_ready",
         "committed",
     } and not atomization_retry:
@@ -542,6 +555,7 @@ async def start_canonical_atomization(
         "preflight_pass",
         "atomization_queued",
         "atomizing",
+        "paused",
         "draft_ready",
         "committed",
     } and not atomization_retry:
@@ -671,6 +685,10 @@ async def start_canonical_atomization(
         job.lease_token = None
         job.lease_expires_at = None
         job.worker_id = None
+        job.pause_requested_at = None
+        job.paused_at = None
+        job.pause_requested_by_id = None
+        job.priority = 0
         job.error_code = None
         job.finished_at = None
     else:
@@ -731,6 +749,197 @@ async def start_canonical_atomization(
                 "provider_name": provider.display_name,
                 "model_name": provider.model_name,
                 "resumed_batch_count": run.completed_batch_count,
+            },
+        )
+    )
+    await db.flush()
+    return await _serialize_run(db, run.id)
+
+
+async def _locked_atomization_run_and_job(
+    db: AsyncSession,
+    *,
+    case_id: UUID,
+    run_id: UUID,
+) -> tuple[AuditTZRun, AuditTZRuntimeJob]:
+    job = await db.scalar(
+        select(AuditTZRuntimeJob)
+        .join(AuditTZRun, AuditTZRun.id == AuditTZRuntimeJob.run_id)
+        .where(
+            AuditTZRuntimeJob.run_id == run_id,
+            AuditTZRuntimeJob.kind == "atomization",
+            AuditTZRun.case_id == case_id,
+        )
+        .with_for_update(of=AuditTZRuntimeJob)
+    )
+    if job is None:
+        run_exists = await db.scalar(
+            select(AuditTZRun.id).where(AuditTZRun.id == run_id, AuditTZRun.case_id == case_id)
+        )
+        if run_exists is None:
+            raise HTTPException(status_code=404, detail="Запуск canonical runtime не найден")
+        raise HTTPException(status_code=409, detail="Задание ИИ-атомизации ещё не создано")
+    run = await db.scalar(
+        select(AuditTZRun)
+        .where(AuditTZRun.id == run_id, AuditTZRun.case_id == case_id)
+        .with_for_update()
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="Запуск canonical runtime не найден")
+    return run, job
+
+
+@router.post(
+    "/cases/{case_id}/canonical-preflight/runs/{run_id}/atomization/pause",
+    response_model=AuditTZRunRead,
+)
+async def pause_canonical_atomization(
+    case_id: UUID,
+    run_id: UUID,
+    user: User = Depends(require_audit_workspace_member),
+    db: AsyncSession = Depends(get_db),
+):
+    audit_case = await _get_case_or_404(db, case_id)
+    await _ensure_case_atom_editor(audit_case, user, db)
+    run, job = await _locked_atomization_run_and_job(db, case_id=case_id, run_id=run_id)
+    if job.status == "paused":
+        return await _serialize_run(db, run.id)
+    if job.status not in {"queued", "running"}:
+        raise HTTPException(status_code=409, detail="Этот запуск уже нельзя приостановить")
+
+    now = datetime.now(timezone.utc)
+    if job.status == "queued":
+        job.status = "paused"
+        job.paused_at = now
+        job.pause_requested_at = None
+        run.status = "paused"
+        run.current_phase = "atomization_paused"
+        message = "ИИ-атомизация приостановлена до начала следующего пакета"
+        event_type = "audit_tz_atomization_paused"
+    else:
+        job.pause_requested_at = now
+        run.current_phase = "atomization_pause_requested"
+        message = "Запрошена остановка ИИ-атомизации после текущего пакета"
+        event_type = "audit_tz_atomization_pause_requested"
+    job.pause_requested_by_id = user.id
+    db.add(
+        AuditEvent(
+            case_id=case_id,
+            actor_id=user.id,
+            event_type=event_type,
+            message=message,
+            payload_json={
+                "runtime_run_id": str(run.id),
+                "completed_batch_count": run.completed_batch_count,
+                "total_batch_count": run.total_batch_count,
+            },
+        )
+    )
+    await db.flush()
+    return await _serialize_run(db, run.id)
+
+
+@router.post(
+    "/cases/{case_id}/canonical-preflight/runs/{run_id}/atomization/resume",
+    response_model=AuditTZRunRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def resume_canonical_atomization(
+    case_id: UUID,
+    run_id: UUID,
+    user: User = Depends(require_audit_workspace_member),
+    db: AsyncSession = Depends(get_db),
+):
+    audit_case = await _get_case_or_404(db, case_id)
+    await _ensure_case_atom_editor(audit_case, user, db)
+    run, job = await _locked_atomization_run_and_job(db, case_id=case_id, run_id=run_id)
+    if job.status == "queued" and job.pause_requested_at is None:
+        return await _serialize_run(db, run.id)
+    if job.status == "running" and job.pause_requested_at is None:
+        return await _serialize_run(db, run.id)
+    if job.status not in {"paused", "running"}:
+        raise HTTPException(status_code=409, detail="Этот запуск уже нельзя возобновить")
+
+    now = datetime.now(timezone.utc)
+    if job.status == "paused":
+        job.status = "queued"
+        job.available_at = now
+        job.lease_token = None
+        job.lease_expires_at = None
+        job.worker_id = None
+        job.finished_at = None
+        run.status = "atomization_queued"
+        run.current_phase = "atomization_queued"
+    else:
+        run.status = "atomizing"
+        run.current_phase = "atomizing"
+    job.pause_requested_at = None
+    job.paused_at = None
+    job.pause_requested_by_id = None
+    run.error_code = None
+    run.finished_at = None
+    db.add(
+        AuditEvent(
+            case_id=case_id,
+            actor_id=user.id,
+            event_type="audit_tz_atomization_resumed",
+            message="ИИ-атомизация возобновлена с сохранённого пакета",
+            payload_json={
+                "runtime_run_id": str(run.id),
+                "completed_batch_count": run.completed_batch_count,
+                "total_batch_count": run.total_batch_count,
+            },
+        )
+    )
+    await db.flush()
+    return await _serialize_run(db, run.id)
+
+
+@router.post(
+    "/cases/{case_id}/canonical-preflight/runs/{run_id}/atomization/prioritize",
+    response_model=AuditTZRunRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def prioritize_canonical_atomization(
+    case_id: UUID,
+    run_id: UUID,
+    user: User = Depends(require_audit_manager),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_case_or_404(db, case_id)
+    run, job = await _locked_atomization_run_and_job(db, case_id=case_id, run_id=run_id)
+    if job.status not in {"queued", "paused", "running"}:
+        raise HTTPException(status_code=409, detail="Для завершённого запуска приоритет не применяется")
+
+    await db.execute(
+        update(AuditTZRuntimeJob)
+        .where(
+            AuditTZRuntimeJob.kind == "atomization",
+            AuditTZRuntimeJob.status.in_(["queued", "paused", "running"]),
+            AuditTZRuntimeJob.id != job.id,
+        )
+        .values(priority=0)
+        .execution_options(synchronize_session=False)
+    )
+    job.priority = 100
+    if job.status == "paused":
+        job.status = "queued"
+        job.available_at = datetime.now(timezone.utc)
+        job.paused_at = None
+        job.pause_requested_at = None
+        job.pause_requested_by_id = None
+        run.status = "atomization_queued"
+        run.current_phase = "atomization_queued"
+    db.add(
+        AuditEvent(
+            case_id=case_id,
+            actor_id=user.id,
+            event_type="audit_tz_atomization_prioritized",
+            message="ИИ-атомизация выбрана следующей в очереди",
+            payload_json={
+                "runtime_run_id": str(run.id),
+                "completed_batch_count": run.completed_batch_count,
+                "total_batch_count": run.total_batch_count,
             },
         )
     )

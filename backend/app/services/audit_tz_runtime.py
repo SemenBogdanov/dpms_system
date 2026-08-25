@@ -369,6 +369,33 @@ async def _recover_stale_jobs(db: AsyncSession, now: datetime) -> None:
         ).all()
     )
     for job in stale:
+        if job.kind == "atomization" and getattr(job, "pause_requested_at", None) is not None:
+            job.status = "paused"
+            job.paused_at = now
+            job.pause_requested_at = None
+            job.lease_token = None
+            job.lease_expires_at = None
+            job.worker_id = None
+            job.finished_at = None
+            run = await db.get(AuditTZRun, job.run_id) if job.run_id else None
+            if run is not None:
+                run.status = "paused"
+                run.current_phase = "atomization_paused"
+                run.finished_at = None
+                db.add(
+                    AuditEvent(
+                        case_id=run.case_id,
+                        actor_id=getattr(job, "pause_requested_by_id", None),
+                        event_type="audit_tz_atomization_paused",
+                        message="ИИ-атомизация приостановлена после восстановления worker lease",
+                        payload_json={
+                            "runtime_run_id": str(run.id),
+                            "completed_batch_count": run.completed_batch_count,
+                            "total_batch_count": run.total_batch_count,
+                        },
+                    )
+                )
+            continue
         job.lease_token = None
         job.lease_expires_at = None
         job.worker_id = None
@@ -433,7 +460,12 @@ async def claim_runtime_job(db: AsyncSession, worker_id: str) -> ClaimedRuntimeJ
             AuditTZRuntimeJob.status == "queued",
             AuditTZRuntimeJob.available_at <= now,
         )
-        .order_by(AuditTZRuntimeJob.created_at.asc(), AuditTZRuntimeJob.id.asc())
+        .order_by(
+            AuditTZRuntimeJob.priority.desc(),
+            AuditTZRuntimeJob.available_at.asc(),
+            AuditTZRuntimeJob.created_at.asc(),
+            AuditTZRuntimeJob.id.asc(),
+        )
         .with_for_update(skip_locked=True)
         .limit(1)
     )
@@ -445,6 +477,8 @@ async def claim_runtime_job(db: AsyncSession, worker_id: str) -> ClaimedRuntimeJ
     job.lease_token = lease_token
     job.lease_expires_at = now + timedelta(seconds=max(30, settings.AUDIT_TZ_WORKER_LEASE_SECONDS))
     job.worker_id = worker_id[:80]
+    job.priority = 0
+    job.paused_at = None
     job.started_at = job.started_at or now
     job.error_code = None
     if job.run_id is not None:
@@ -511,6 +545,75 @@ async def _renew_job_lease(db_factory, job_id: UUID, lease_token: str) -> None:
             seconds=max(30, settings.AUDIT_TZ_WORKER_LEASE_SECONDS)
         )
         await db.commit()
+
+
+async def _pause_atomization_if_requested(
+    db_factory,
+    job_id: UUID,
+    lease_token: str,
+) -> bool:
+    """Cooperatively stop only after the latest model result is durable."""
+
+    async with db_factory() as db:
+        job = await db.scalar(
+            select(AuditTZRuntimeJob)
+            .where(
+                AuditTZRuntimeJob.id == job_id,
+                AuditTZRuntimeJob.status == "running",
+                AuditTZRuntimeJob.lease_token == lease_token,
+            )
+            .with_for_update()
+        )
+        if job is None:
+            raise AuditTZRuntimeError("worker_lease_lost", "Worker потерял право продолжать атомизацию")
+        if job.pause_requested_at is None:
+            return False
+        run = await db.get(AuditTZRun, job.run_id) if job.run_id else None
+        if run is None:
+            raise AuditTZRuntimeError("runtime_context_missing", "Контекст атомизации не найден")
+
+        _mark_atomization_paused(
+            db,
+            job,
+            run,
+            message="ИИ-атомизация приостановлена; обработанные пакеты сохранены",
+        )
+        await db.commit()
+        return True
+
+
+def _mark_atomization_paused(
+    db: AsyncSession,
+    job: AuditTZRuntimeJob,
+    run: AuditTZRun,
+    *,
+    message: str,
+) -> None:
+    actor_id = job.pause_requested_by_id
+    now = _now()
+    job.status = "paused"
+    job.paused_at = now
+    job.pause_requested_at = None
+    job.lease_token = None
+    job.lease_expires_at = None
+    job.worker_id = None
+    job.finished_at = None
+    run.status = "paused"
+    run.current_phase = "atomization_paused"
+    run.finished_at = None
+    db.add(
+        AuditEvent(
+            case_id=run.case_id,
+            actor_id=actor_id,
+            event_type="audit_tz_atomization_paused",
+            message=message,
+            payload_json={
+                "runtime_run_id": str(run.id),
+                "completed_batch_count": run.completed_batch_count,
+                "total_batch_count": run.total_batch_count,
+            },
+        )
+    )
 
 
 async def process_skill_selftest(job_id: UUID, lease_token: str, db_factory) -> None:
@@ -1135,10 +1238,15 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
             )
             await db.commit()
 
+        if await _pause_atomization_if_requested(db_factory, job_id, lease_token):
+            return
+
         result_by_index = {item.batch_index: item for item in batch_results}
         for batch in batches:
             if batch.index in result_by_index:
                 continue
+            if await _pause_atomization_if_requested(db_factory, job_id, lease_token):
+                return
             await _renew_job_lease(db_factory, job_id, lease_token)
             async with db_factory() as db:
                 active_job = await db.scalar(
@@ -1186,6 +1294,12 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
                 }
                 await db.commit()
 
+            if await _pause_atomization_if_requested(db_factory, job_id, lease_token):
+                return
+
+        if await _pause_atomization_if_requested(db_factory, job_id, lease_token):
+            return
+
         assembled = assemble_atomization_result(
             prompt_packet,
             [result_by_index[index] for index in sorted(result_by_index)],
@@ -1214,6 +1328,12 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
         await _fail_atomization(job_id, lease_token, db_factory, error_code=error.code)
         return
     except AuditTZRuntimeError as error:
+        if error.retryable and await _pause_atomization_if_requested(
+            db_factory,
+            job_id,
+            lease_token,
+        ):
+            return
         if error.retryable and await _reschedule_atomization(
             job_id,
             lease_token,
@@ -1225,6 +1345,30 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
         return
 
     async with db_factory() as db:
+        active_job = await db.scalar(
+            select(AuditTZRuntimeJob)
+            .where(
+                AuditTZRuntimeJob.id == job_id,
+                AuditTZRuntimeJob.status == "running",
+                AuditTZRuntimeJob.lease_token == lease_token,
+            )
+            .with_for_update()
+        )
+        if active_job is None:
+            return
+        if active_job.pause_requested_at is not None:
+            paused_run = await db.get(AuditTZRun, run_id)
+            if paused_run is None:
+                await db.rollback()
+                return
+            _mark_atomization_paused(
+                db,
+                active_job,
+                paused_run,
+                message="ИИ-атомизация приостановлена перед фиксацией реестра; обработанные пакеты сохранены",
+            )
+            await db.commit()
+            return
         job = await _complete_job(db, job_id, lease_token, status="succeeded")
         run = await db.get(AuditTZRun, run_id)
         attempt = await db.scalar(

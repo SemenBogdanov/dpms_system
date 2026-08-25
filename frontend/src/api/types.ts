@@ -491,7 +491,7 @@ export interface AuditTZRun {
   skill_version_id: string
   skill_name: string
   skill_version: string
-  status: 'queued' | 'running' | 'preflight_pass' | 'atomization_queued' | 'atomizing' | 'draft_ready' | 'committed' | 'blocked' | 'failed'
+  status: 'queued' | 'running' | 'preflight_pass' | 'atomization_queued' | 'atomizing' | 'paused' | 'draft_ready' | 'committed' | 'blocked' | 'failed'
   current_phase: string
   source_unit_count: number
   warning_count: number
@@ -503,9 +503,45 @@ export interface AuditTZRun {
   artifacts: AuditTZArtifact[]
   external_ai_called: boolean
   ai_attempt_id: string | null
+  pause_requested: boolean
+  priority: number
+  paused_at: string | null
   created_at: string
   started_at: string | null
   finished_at: string | null
+}
+
+export interface AuditVerificationTrendPoint {
+  date: string
+  verified_count: number
+  cumulative_verified_count: number
+}
+
+export interface AuditContractStatistics {
+  total: number
+  in_progress: number
+  alpha_review_completed: number
+  alpha_commission_completed: number
+  beta_commission_completed: number
+}
+
+export interface AuditAtomStatistics {
+  total: number
+  excluded: number
+  verified: number
+  alpha_review_completed: number
+  alpha_review_needs_work: number
+  alpha_commission_completed: number
+  alpha_commission_needs_work: number
+  beta_commission_completed: number
+}
+
+export interface AuditStatistics {
+  date_from: string
+  date_to: string
+  trend: AuditVerificationTrendPoint[]
+  contracts: AuditContractStatistics
+  atoms: AuditAtomStatistics
 }
 
 export interface AuditTZAtomizationPreview {

@@ -12,6 +12,17 @@ import {
 import { useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
+  Bar,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import {
   AlertTriangle,
   ArrowLeft,
   BarChart3,
@@ -19,6 +30,7 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
+  ChevronsUp,
   CheckCircle2,
   ClipboardList,
   Clock3,
@@ -35,7 +47,9 @@ import {
   Loader2,
   Lock,
   Paperclip,
+  Pause,
   Pencil,
+  Play,
   Plus,
   RefreshCcw,
   Save,
@@ -79,6 +93,7 @@ import type {
   AuditDocumentKind,
   AuditEvent,
   AuditImportPreview,
+  AuditStatistics,
   AuditTeamCandidate,
   AuditTeamMember,
   AuditTeamRole,
@@ -379,7 +394,12 @@ function canonicalRunLabel(run: AuditTZRun): string {
       ? 'Ожидаем автоматический повтор'
       : 'Атомизация в очереди'
   }
-  if (run.status === 'atomizing') return 'ИИ анализирует ТЗ'
+  if (run.status === 'atomizing') {
+    return run.pause_requested || run.current_phase === 'atomization_pause_requested'
+      ? 'Останавливаем после текущего пакета'
+      : 'ИИ анализирует ТЗ'
+  }
+  if (run.status === 'paused') return 'ИИ-атомизация приостановлена'
   if (run.status === 'draft_ready') return 'Черновик атомов готов'
   if (run.status === 'committed') return 'Атомы записаны в реестр'
   if (run.status === 'blocked') return 'Обработка остановлена'
@@ -521,6 +541,14 @@ function formatDateOnly(value: string | null): string {
   if (!value) return '—'
   const date = new Date(`${value.slice(0, 10)}T00:00:00`)
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString('ru-RU')
+}
+
+const AUDIT_NUMBER_FORMAT = new Intl.NumberFormat('ru-RU')
+
+function formatStatisticsDay(value: string): string {
+  const date = new Date(`${value.slice(0, 10)}T00:00:00`)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleDateString('ru-RU', { day: '2-digit', month: 'short' })
 }
 
 function localISODate(value = new Date()): string {
@@ -1072,6 +1100,43 @@ function MetricTile({
   )
 }
 
+function StatisticsRow({
+  label,
+  value,
+  total,
+  detail,
+  tone = 'primary',
+}: {
+  label: string
+  value: number
+  total: number
+  detail?: string
+  tone?: 'primary' | 'success' | 'warning' | 'danger' | 'neutral'
+}) {
+  const percent = progressPercent(value, total)
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-t border-border py-3 first:border-t-0">
+      <div className="min-w-0">
+        <div className="text-sm font-medium text-foreground">{label}</div>
+        {detail ? <div className="mt-0.5 text-xs text-muted-foreground">{detail}</div> : null}
+      </div>
+      <div className="text-right tabular-nums">
+        <div className={cn(
+          'text-sm font-semibold',
+          tone === 'success' && 'text-emerald-700 dark:text-emerald-300',
+          tone === 'warning' && 'text-amber-800 dark:text-amber-200',
+          tone === 'danger' && 'text-rose-700 dark:text-rose-300',
+          tone === 'primary' && 'text-primary',
+          tone === 'neutral' && 'text-foreground'
+        )}>
+          {AUDIT_NUMBER_FORMAT.format(value)} / {AUDIT_NUMBER_FORMAT.format(total)}
+        </div>
+        <div className="mt-0.5 text-xs text-muted-foreground">{percent}%</div>
+      </div>
+    </div>
+  )
+}
+
 function StatusPill({ label, toneClass }: { label: string; toneClass: string }) {
   return (
     <span className={cn('inline-flex items-center rounded-md border px-2 py-1 text-xs font-medium', toneClass)}>
@@ -1439,12 +1504,20 @@ export function AuditPage() {
   const workspaceView = (['dashboard', 'registry', 'assignments', 'case', 'team'].includes(searchParams.get('view') ?? '')
     ? searchParams.get('view')
     : 'dashboard') as WorkspaceView
+  const requestedStatisticsDays = Number(searchParams.get('stats_days'))
+  const statisticsDays = [14, 30, 90].includes(requestedStatisticsDays)
+    ? requestedStatisticsDays
+    : 30
 
   const [cases, setCases] = useState<NormalizedAuditCaseSummary[]>([])
   const [casesLoading, setCasesLoading] = useState(true)
   const [casesError, setCasesError] = useState<string | null>(null)
   const [caseQuery, setCaseQuery] = useState('')
   const [caseStatusFilter, setCaseStatusFilter] = useState('all')
+  const [statistics, setStatistics] = useState<AuditStatistics | null>(null)
+  const [statisticsLoading, setStatisticsLoading] = useState(false)
+  const [statisticsError, setStatisticsError] = useState<string | null>(null)
+  const statisticsRequestRef = useRef(0)
 
   const [loadedDetail, setDetail] = useState<NormalizedAuditCaseDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -1587,6 +1660,23 @@ export function AuditPage() {
   const [comparisonDrafts, setComparisonDrafts] = useState<EditableAIModelComparisonDraft[]>([])
   const [comparisonBusy, setComparisonBusy] = useState(false)
   const [comparisonError, setComparisonError] = useState<string | null>(null)
+
+  const loadStatistics = useCallback(async (days: number) => {
+    const requestId = ++statisticsRequestRef.current
+    setStatisticsLoading(true)
+    setStatisticsError(null)
+    try {
+      const payload = await api.get<AuditStatistics>(`/api/audit/statistics?days=${days}`)
+      if (requestId !== statisticsRequestRef.current) return
+      setStatistics(payload)
+    } catch (error) {
+      if (requestId !== statisticsRequestRef.current) return
+      setStatistics(null)
+      setStatisticsError(error instanceof Error ? error.message : 'Не удалось загрузить статистику аудита')
+    } finally {
+      if (requestId === statisticsRequestRef.current) setStatisticsLoading(false)
+    }
+  }, [])
 
   const loadCases = useCallback(async () => {
     setCasesLoading(true)
@@ -1731,6 +1821,10 @@ export function AuditPage() {
     if (workspaceView === 'assignments') void loadAssignments()
   }, [loadAssignments, workspaceView])
 
+  useEffect(() => {
+    if (workspaceView === 'dashboard') void loadStatistics(statisticsDays)
+  }, [loadStatistics, statisticsDays, workspaceView])
+
   const selectedCaseId = useMemo(() => {
     const fromUrl = searchParams.get('case')
     return fromUrl || null
@@ -1851,25 +1945,6 @@ export function AuditPage() {
       return haystack.includes(query)
     })
   }, [canViewContractReference, caseQuery, caseStatusFilter, cases])
-
-  const metrics = useMemo(() => {
-    const totalCases = cases.length
-    const activeCases = cases.filter((item) => !['done', 'archived'].includes(item.status)).length
-    const casesNeedingAtomization = cases.filter(caseNeedsAtomization).length
-    const atomizedCases = cases.filter((item) => item.atomsTotal > 0).length
-    const atomsTotal = cases.reduce((sum, item) => sum + item.atomsTotal, 0)
-    const alphaPassed = cases.reduce((sum, item) => sum + item.alphaPassed, 0)
-    const commissionPassed = cases.reduce((sum, item) => sum + item.commissionPassed, 0)
-    return {
-      totalCases,
-      activeCases,
-      casesNeedingAtomization,
-      atomizedCases,
-      atomsTotal,
-      alphaPassed,
-      commissionPassed,
-    }
-  }, [cases])
 
   const assignmentRangeDays = useMemo(
     () => Math.max(1, Math.min(92, inclusiveDateRangeDays(assignmentRangeStart, assignmentRangeEnd))),
@@ -2204,6 +2279,14 @@ export function AuditPage() {
     setSearchParams(nextParams)
   }
 
+  const setStatisticsPeriod = (days: number) => {
+    const nextParams = new URLSearchParams(searchParams)
+    nextParams.set('view', 'dashboard')
+    nextParams.set('stats_days', String(days))
+    nextParams.delete('case')
+    setSearchParams(nextParams)
+  }
+
   const selectCase = (caseId: string) => {
     const nextParams = new URLSearchParams(searchParams)
     nextParams.set('case', caseId)
@@ -2470,6 +2553,39 @@ export function AuditPage() {
       setAiAtomizationError(error instanceof Error ? error.message : 'Не удалось запустить атомизацию ТЗ')
       setCanonicalAtomizationPreview(null)
       setAiTransferConfirmed(false)
+    } finally {
+      setAiAtomizationBusy(false)
+    }
+  }
+
+  const controlCanonicalAtomization = async (
+    action: 'pause' | 'resume' | 'prioritize'
+  ) => {
+    if (!selectedCaseId || !canonicalRun || aiAtomizationBusy) return
+    setAiAtomizationBusy(true)
+    setAiAtomizationError(null)
+    try {
+      const result = await api.post<AuditTZRun>(
+        `/api/audit/cases/${selectedCaseId}/canonical-preflight/runs/${canonicalRun.id}/atomization/${action}`,
+        {}
+      )
+      setCanonicalRun(result)
+      if (action === 'pause') {
+        toast.success(result.pause_requested
+          ? 'Остановка выполнится после сохранения текущего пакета'
+          : 'ИИ-атомизация приостановлена')
+      } else if (action === 'resume') {
+        toast.success('ИИ-атомизация продолжится с сохранённого пакета')
+      } else {
+        toast.success('Договор выбран следующим в очереди')
+      }
+    } catch (error) {
+      const fallback = action === 'pause'
+        ? 'Не удалось приостановить ИИ-атомизацию'
+        : action === 'resume'
+          ? 'Не удалось возобновить ИИ-атомизацию'
+          : 'Не удалось изменить приоритет очереди'
+      setAiAtomizationError(error instanceof Error ? error.message : fallback)
     } finally {
       setAiAtomizationBusy(false)
     }
@@ -3771,73 +3887,132 @@ export function AuditPage() {
 
       <div className="min-w-0 space-y-4">
       {workspaceView === 'dashboard' ? (
-      <section className="rounded-lg border border-border bg-surface px-4 py-4 shadow-sm sm:px-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+      <section className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm" aria-labelledby="audit-statistics-title">
+        <div className="flex flex-col gap-4 px-4 py-4 sm:px-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-foreground">Состояние аудита</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Сводка по загруженным договорам и этапам проверки</p>
+            <h2 id="audit-statistics-title" className="text-xl font-semibold text-foreground">Статистика аудита</h2>
+            <p className="mt-1 text-sm text-muted-foreground">Динамика проверки и прохождение договоров по этапам</p>
           </div>
           <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-            {canManage ? (
-              <>
+            <div className="inline-flex rounded-md border border-border bg-surface-soft p-1" aria-label="Период статистики">
+              {[14, 30, 90].map((days) => (
                 <button
+                  key={days}
                   type="button"
-                  onClick={() => setWorkspaceView('registry')}
-                  className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border bg-surface-soft px-4 text-sm font-medium text-foreground transition hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                  onClick={() => setStatisticsPeriod(days)}
+                  aria-pressed={statisticsDays === days}
+                  className={cn(
+                    'min-h-9 rounded px-3 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
+                    statisticsDays === days
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                  )}
                 >
-                  <ClipboardList className="h-4 w-4" />
-                  Открыть реестр
+                  {days} дней
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setDocumentDialogOpen(true)}
-                  className="inline-flex min-h-11 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                >
-                  <Plus className="h-4 w-4" />
-                  Новый документ
-                </button>
-              </>
-            ) : (
-              <div className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border bg-surface-soft px-4 text-sm font-medium text-muted-foreground">
-                <Lock className="h-4 w-4" />
-                Только просмотр
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-5">
-          <MetricTile label="Договоров" value={String(metrics.totalCases)} hint={`${metrics.activeCases} в работе`} tone="primary" />
-          <MetricTile label="Требуют атомизации" value={String(metrics.casesNeedingAtomization)} hint="договоров без завершенной декомпозиции" tone={metrics.casesNeedingAtomization > 0 ? 'danger' : 'success'} />
-          <MetricTile label="Атомов" value={String(metrics.atomsTotal)} hint={`${metrics.atomizedCases} договоров содержат атомы`} />
-          <MetricTile label="Альфа-проверка" value={`${metrics.alphaPassed} / ${metrics.atomsTotal}`} hint={`${progressPercent(metrics.alphaPassed, metrics.atomsTotal)}% подтверждено`} tone="success" />
-          <MetricTile label="Комиссия" value={`${metrics.commissionPassed} / ${metrics.atomsTotal}`} hint={`${progressPercent(metrics.commissionPassed, metrics.atomsTotal)}% подтверждено`} tone={metrics.commissionPassed > 0 ? 'success' : 'neutral'} />
-        </div>
-        <div className="mt-5 flex items-center justify-between gap-3 border-t border-border pt-4">
-          <div>
-            <h3 className="text-sm font-semibold text-foreground">Последние договоры</h3>
-            <p className="mt-1 text-xs text-muted-foreground">Откройте карточку, чтобы перейти к атомам и материалам</p>
-          </div>
-          <button type="button" onClick={() => setWorkspaceView('registry')} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border bg-surface-soft px-3 text-sm font-medium text-foreground hover:bg-muted">
-            Все договоры
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="mt-3 grid gap-3 lg:grid-cols-2">
-          {cases.slice(0, 4).map((item) => (
-            <button key={item.id} type="button" onClick={() => selectCase(item.id)} className="rounded-md border border-border bg-surface-soft p-3 text-left transition hover:border-primary/40 hover:bg-muted">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2"><span className="font-mono text-xs text-muted-foreground">{item.code}</span><StatusPill label={caseWorkflowLabel(item.status, item.workflowStage)} toneClass={caseWorkflowTone(item.status, item.workflowStage)} /></div>
-                  <div className="mt-2 truncate text-sm font-semibold text-foreground">{item.productMasked}</div>
-                  {canViewContractReference ? (
-                    <div className="mt-1 truncate font-mono text-xs text-muted-foreground">{item.contractMasked}</div>
-                  ) : null}
-                </div>
-                <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
-              </div>
+              ))}
+            </div>
+            <button type="button" onClick={() => setWorkspaceView('registry')} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border bg-surface-soft px-3 text-sm font-medium text-foreground hover:bg-muted">
+              <ClipboardList className="h-4 w-4" />
+              Реестр
             </button>
-          ))}
+            {canManage ? (
+              <button type="button" onClick={() => setDocumentDialogOpen(true)} className="inline-flex min-h-11 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90">
+                <Plus className="h-4 w-4" />
+                Новый документ
+              </button>
+            ) : null}
+          </div>
         </div>
+
+        {statisticsError ? (
+          <div className="border-t border-border px-4 py-10 text-center sm:px-5">
+            <AlertTriangle className="mx-auto h-7 w-7 text-rose-600" />
+            <p className="mt-3 text-sm font-medium text-foreground">Статистика временно недоступна</p>
+            <p className="mt-1 text-xs text-muted-foreground">{statisticsError}</p>
+            <button type="button" onClick={() => void loadStatistics(statisticsDays)} className="mt-4 inline-flex min-h-11 items-center gap-2 rounded-md border border-border bg-surface-soft px-3 text-sm font-medium text-foreground hover:bg-muted">
+              <RefreshCcw className="h-4 w-4" />
+              Повторить
+            </button>
+          </div>
+        ) : statisticsLoading && !statistics ? (
+          <div className="flex min-h-[360px] items-center justify-center border-t border-border text-sm text-muted-foreground">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Загружаем статистику
+          </div>
+        ) : statistics ? (
+          <>
+            <div className="border-t border-border px-4 py-5 sm:px-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">Подтверждённые атомы по дням</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">Столбцы показывают результат дня, линия — накопительный итог на конец дня.</p>
+                </div>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {formatDateOnly(statistics.date_from)} — {formatDateOnly(statistics.date_to)}
+                </span>
+              </div>
+              <div className="mt-4 overflow-x-auto pb-1">
+                <div className="h-[310px] min-w-[720px]" role="img" aria-label="График подтверждённых атомов по дням и накопительным итогом">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={statistics.trend} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+                      <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="date" tickFormatter={formatStatisticsDay} tick={{ fontSize: 11 }} minTickGap={24} />
+                      <YAxis yAxisId="daily" allowDecimals={false} width={36} tick={{ fontSize: 11 }} />
+                      <YAxis yAxisId="total" orientation="right" allowDecimals={false} width={44} tick={{ fontSize: 11 }} />
+                      <Tooltip labelFormatter={(value) => formatStatisticsDay(String(value))} />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      <Bar yAxisId="daily" dataKey="verified_count" name="Подтверждено за день" fill="hsl(var(--primary) / 0.72)" radius={[3, 3, 0, 0]} maxBarSize={28} />
+                      <Line yAxisId="total" type="monotone" dataKey="cumulative_verified_count" name="Подтверждено накопительно" stroke="#059669" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid border-t border-border lg:grid-cols-2 lg:divide-x lg:divide-border">
+              <section className="px-4 py-5 sm:px-5" aria-labelledby="audit-contract-statistics-title">
+                <div className="flex items-end justify-between gap-3">
+                  <div>
+                    <h3 id="audit-contract-statistics-title" className="text-base font-semibold text-foreground">Договоры</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">Завершение этапа считается только после обработки всех активных атомов договора.</p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-3xl font-semibold tabular-nums text-foreground">{AUDIT_NUMBER_FORMAT.format(statistics.contracts.total)}</div>
+                    <div className="text-xs text-muted-foreground">всего</div>
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <StatisticsRow label="В работе" value={statistics.contracts.in_progress} total={statistics.contracts.total} tone="primary" />
+                  <StatisticsRow label="Альфа-проверка завершена" value={statistics.contracts.alpha_review_completed} total={statistics.contracts.total} tone="success" />
+                  <StatisticsRow label="Альфа-комиссия завершена" value={statistics.contracts.alpha_commission_completed} total={statistics.contracts.total} tone="success" />
+                  <StatisticsRow label="Бета-комиссия завершена" value={statistics.contracts.beta_commission_completed} total={statistics.contracts.total} tone="success" />
+                </div>
+              </section>
+
+              <section className="border-t border-border px-4 py-5 sm:px-5 lg:border-t-0" aria-labelledby="audit-atom-statistics-title">
+                <div className="flex items-end justify-between gap-3">
+                  <div>
+                    <h3 id="audit-atom-statistics-title" className="text-base font-semibold text-foreground">Атомы</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">Исключённые атомы не входят в знаменатель: {AUDIT_NUMBER_FORMAT.format(statistics.atoms.excluded)}.</p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-3xl font-semibold tabular-nums text-foreground">{AUDIT_NUMBER_FORMAT.format(statistics.atoms.total)}</div>
+                    <div className="text-xs text-muted-foreground">активных</div>
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <StatisticsRow label="Верифицировано" value={statistics.atoms.verified} total={statistics.atoms.total} tone="primary" />
+                  <StatisticsRow label="Альфа-проверка проведена" value={statistics.atoms.alpha_review_completed} total={statistics.atoms.total} detail={`${statistics.atoms.alpha_review_needs_work} требуют доработки или уточнения`} tone="success" />
+                  <StatisticsRow label="Альфа-комиссия проведена" value={statistics.atoms.alpha_commission_completed} total={statistics.atoms.total} detail={`${statistics.atoms.alpha_commission_needs_work} направлены на доработку`} tone="success" />
+                  <StatisticsRow label="Бета-комиссия завершена" value={statistics.atoms.beta_commission_completed} total={statistics.atoms.total} tone="success" />
+                </div>
+              </section>
+            </div>
+          </>
+        ) : (
+          <div className="border-t border-border px-6 py-14 text-center text-sm text-muted-foreground">Нет данных для выбранного периода.</div>
+        )}
       </section>
       ) : null}
 
@@ -5791,6 +5966,8 @@ export function AuditPage() {
                       ? '634 и подобные значения здесь означают исходные фрагменты, а не атомы. Итоговый список сформирует модель.'
                       : canonicalRun.status === 'atomizing'
                         ? `Обработано пакетов: ${canonicalRun.completed_batch_count} из ${canonicalRun.total_batch_count}. Прогресс сохраняется.`
+                        : canonicalRun.status === 'paused'
+                          ? `Сохранено пакетов: ${canonicalRun.completed_batch_count} из ${canonicalRun.total_batch_count}. Возобновление продолжит с этого места.`
                         : canonicalRun.current_phase === 'atomization_retry_wait'
                           ? `Готово пакетов: ${canonicalRun.completed_batch_count} из ${canonicalRun.total_batch_count}. Повтор начнется автоматически${canonicalRetryAt(canonicalRun) ? ` ${formatDateTime(canonicalRetryAt(canonicalRun) as string)}` : ''}.`
                         : `${canonicalRunLabel(canonicalRun)}. Результат сохраняется в истории аудита.`
@@ -5837,9 +6014,9 @@ export function AuditPage() {
                     {aiAtomizationBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                     {canonicalRun.status === 'failed' ? 'Повторить атомизацию' : 'Запустить атомизацию'}
                   </button>
-                ) : ['queued', 'running', 'atomization_queued', 'atomizing', 'draft_ready'].includes(canonicalRun.status) ? (
+                ) : ['queued', 'running', 'atomization_queued', 'atomizing', 'paused', 'draft_ready'].includes(canonicalRun.status) ? (
                   <button type="button" disabled className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground opacity-60">
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {canonicalRun.status === 'paused' ? <Pause className="h-4 w-4" /> : <Loader2 className="h-4 w-4 animate-spin" />}
                     {canonicalRun.status === 'draft_ready' ? 'Загружаем черновик' : canonicalRunLabel(canonicalRun)}
                   </button>
                 ) : canonicalRun.status !== 'committed' ? (
@@ -5898,7 +6075,7 @@ export function AuditPage() {
                     setCanonicalAtomizationPreview(null)
                     setAiTransferConfirmed(false)
                   }}
-                  disabled={aiAtomizationBusy || ['atomization_queued', 'atomizing'].includes(canonicalRun?.status ?? '') || aiProviders.length === 0}
+                  disabled={aiAtomizationBusy || ['atomization_queued', 'atomizing', 'paused'].includes(canonicalRun?.status ?? '') || aiProviders.length === 0}
                   className="min-h-11 w-full rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-50 sm:text-sm"
                 >
                   {aiProviders.length === 0 ? <option value="">Нет проверенных подключений</option> : null}
@@ -5925,7 +6102,7 @@ export function AuditPage() {
                       {canonicalRun && ['queued', 'running'].includes(canonicalRun.status)
                         ? <Loader2 className="h-4 w-4 animate-spin text-primary" />
                         : canonicalRun && (
-                          ['preflight_pass', 'atomization_queued', 'atomizing', 'draft_ready', 'committed'].includes(canonicalRun.status)
+                          ['preflight_pass', 'atomization_queued', 'atomizing', 'paused', 'draft_ready', 'committed'].includes(canonicalRun.status)
                           || (canonicalRun.status === 'failed' && canonicalRun.current_phase === 'atomization_failed')
                         )
                           ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
@@ -5937,12 +6114,14 @@ export function AuditPage() {
                   <div className="px-4 py-3">
                     <div className={cn(
                       'flex items-center gap-2 text-sm font-semibold',
-                      canonicalRun && ['atomization_queued', 'atomizing', 'draft_ready', 'committed'].includes(canonicalRun.status)
+                      canonicalRun && ['atomization_queued', 'atomizing', 'paused', 'draft_ready', 'committed'].includes(canonicalRun.status)
                         ? 'text-foreground'
                         : 'text-muted-foreground'
                     )}>
-                      {canonicalRun && ['atomization_queued', 'atomizing'].includes(canonicalRun.status)
-                        ? <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                      {canonicalRun && ['atomization_queued', 'atomizing', 'paused'].includes(canonicalRun.status)
+                        ? canonicalRun.status === 'paused'
+                          ? <Pause className="h-4 w-4 text-amber-600" />
+                          : <Loader2 className="h-4 w-4 animate-spin text-primary" />
                         : canonicalRun && ['draft_ready', 'committed'].includes(canonicalRun.status)
                           ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                           : canonicalRun?.status === 'preflight_pass'
@@ -5962,12 +6141,15 @@ export function AuditPage() {
                   canonicalRun.status === 'blocked' && 'border-amber-500 bg-amber-500/5',
                   canonicalRun.status === 'failed' && 'border-rose-500 bg-rose-500/5',
                   ['queued', 'running', 'atomization_queued', 'atomizing'].includes(canonicalRun.status) && 'border-primary bg-primary/5',
+                  canonicalRun.status === 'paused' && 'border-amber-500 bg-amber-500/5',
                   ['draft_ready', 'committed'].includes(canonicalRun.status) && 'border-emerald-500 bg-emerald-500/5'
                 )}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                       {['queued', 'running', 'atomization_queued', 'atomizing'].includes(canonicalRun.status)
                         ? <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                        : canonicalRun.status === 'paused'
+                          ? <Pause className="h-4 w-4 text-amber-600" />
                         : ['preflight_pass', 'draft_ready', 'committed'].includes(canonicalRun.status)
                           ? <CheckCircle2 className="h-4 w-4 text-emerald-600" />
                           : <AlertTriangle className="h-4 w-4 text-amber-600" />}
@@ -5981,14 +6163,14 @@ export function AuditPage() {
                       <MetricTile label="Предупреждений" value={String(canonicalRun.warning_count)} />
                       <MetricTile label="Следующий этап" value="ИИ-анализ" hint="после вашего подтверждения" />
                     </div>
-                  ) : ['atomization_queued', 'atomizing', 'draft_ready', 'committed'].includes(canonicalRun.status) ? (
+                  ) : ['atomization_queued', 'atomizing', 'paused', 'draft_ready', 'committed'].includes(canonicalRun.status) ? (
                     <div className="mt-3">
                       <div className="grid gap-3 sm:grid-cols-3">
                         <MetricTile label="Исходных фрагментов" value={String(canonicalRun.source_unit_count)} />
                         <MetricTile
                           label="Обработано пакетов"
                           value={`${canonicalRun.completed_batch_count}/${canonicalRun.total_batch_count || '—'}`}
-                          tone={canonicalRun.status === 'draft_ready' || canonicalRun.status === 'committed' ? 'success' : 'primary'}
+                          tone={canonicalRun.status === 'draft_ready' || canonicalRun.status === 'committed' ? 'success' : canonicalRun.status === 'paused' ? 'warning' : 'primary'}
                         />
                         <MetricTile
                           label="Найдено атомов"
@@ -6003,6 +6185,54 @@ export function AuditPage() {
                             ИИ-провайдер временно недоступен или ограничил запросы. DPMS сохранил готовые пакеты и продолжит с места остановки
                             {canonicalRetryAt(canonicalRun) ? ` ${formatDateTime(canonicalRetryAt(canonicalRun) as string)}` : ''}.
                           </span>
+                        </div>
+                      ) : null}
+                      {['atomization_queued', 'atomizing', 'paused'].includes(canonicalRun.status) ? (
+                        <div className="mt-3 flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="text-xs text-muted-foreground">
+                            Сохранено пакетов: <span className="font-semibold tabular-nums text-foreground">{canonicalRun.completed_batch_count} из {canonicalRun.total_batch_count || '—'}</span>.
+                            {' '}После продолжения готовые пакеты повторно не отправляются.
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {canonicalRun.status === 'paused' || canonicalRun.pause_requested ? (
+                              <button
+                                type="button"
+                                onClick={() => void controlCanonicalAtomization('resume')}
+                                disabled={aiAtomizationBusy}
+                                className="inline-flex min-h-10 items-center gap-2 rounded-md border border-border bg-surface px-3 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                              >
+                                <Play className="h-4 w-4" />
+                                {canonicalRun.pause_requested ? 'Отменить остановку' : 'Продолжить'}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => void controlCanonicalAtomization('pause')}
+                                disabled={aiAtomizationBusy}
+                                className="inline-flex min-h-10 items-center gap-2 rounded-md border border-border bg-surface px-3 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                              >
+                                <Pause className="h-4 w-4" />
+                                Приостановить
+                              </button>
+                            )}
+                            {canManage && ['atomization_queued', 'paused'].includes(canonicalRun.status) ? (
+                              <button
+                                type="button"
+                                onClick={() => void controlCanonicalAtomization('prioritize')}
+                                disabled={aiAtomizationBusy || canonicalRun.priority > 0}
+                                aria-pressed={canonicalRun.priority > 0}
+                                className={cn(
+                                  'inline-flex min-h-10 items-center gap-2 rounded-md border px-3 text-xs font-medium disabled:opacity-60',
+                                  canonicalRun.priority > 0
+                                    ? 'border-primary/40 bg-primary/10 text-primary'
+                                    : 'border-border bg-surface text-foreground hover:bg-muted'
+                                )}
+                              >
+                                <ChevronsUp className="h-4 w-4" />
+                                {canonicalRun.priority > 0 ? 'Следующая в очереди' : 'Обработать следующей'}
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
                       ) : null}
                     </div>

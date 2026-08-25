@@ -40,6 +40,7 @@ class AuditTZRunRead(BaseModel):
         "preflight_pass",
         "atomization_queued",
         "atomizing",
+        "paused",
         "draft_ready",
         "committed",
         "blocked",
@@ -56,6 +57,9 @@ class AuditTZRunRead(BaseModel):
     artifacts: list[AuditTZArtifactRead] = Field(default_factory=list)
     external_ai_called: bool = False
     ai_attempt_id: UUID | None = None
+    pause_requested: bool = False
+    priority: int = 0
+    paused_at: datetime | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None

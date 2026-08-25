@@ -56,6 +56,7 @@ from app.schemas.audit import (
     AuditImportCommitResponse,
     AuditImportPreview,
     AuditResponsibleUpdate,
+    AuditStatisticsRead,
     AuditTeamCandidateRead,
     AuditTeamMemberCreate,
     AuditTeamMemberRead,
@@ -102,6 +103,14 @@ from app.services.audit_import import (
     record_audit_event,
 )
 from app.services.audit_model_comparison import evidence_text
+from app.services.audit_statistics import (
+    AuditStatisticsAtomRecord,
+    AuditStatisticsCaseRecord,
+    AuditStatisticsStateEvent,
+    build_audit_statistics,
+    period_start_utc,
+    statistics_period,
+)
 from app.services.activity import record_activity_event
 
 router = APIRouter()
@@ -419,6 +428,85 @@ async def _serialize_case(
         atoms=[AuditAtomRead.model_validate(atom) for atom in atoms] if include_atoms else [],
         created_at=audit_case.created_at,
         updated_at=audit_case.updated_at,
+    )
+
+
+@router.get("/statistics", response_model=AuditStatisticsRead)
+async def get_audit_statistics(
+    days: int = Query(30, ge=7, le=366),
+    _: User = Depends(require_audit_workspace_member),
+    db: AsyncSession = Depends(get_db),
+):
+    date_from, date_to = statistics_period(days)
+    case_rows = (
+        await db.execute(
+            select(AuditCase.id, AuditCase.status, AuditCase.workflow_stage)
+        )
+    ).all()
+    atom_rows = (
+        await db.execute(
+            select(
+                AuditAtom.id,
+                AuditAtom.case_id,
+                AuditAtom.state,
+                AuditAtom.alpha_result,
+                AuditAtom.commission_result,
+                AuditAtom.created_at,
+            )
+        )
+    ).all()
+    event_rows = (
+        await db.execute(
+            select(AuditEvent.atom_id, AuditEvent.created_at, AuditEvent.payload_json)
+            .where(
+                AuditEvent.event_type == "atom_status_changed",
+                AuditEvent.atom_id.is_not(None),
+                AuditEvent.created_at >= period_start_utc(date_from),
+            )
+            .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
+        )
+    ).all()
+    state_events = []
+    for atom_id, created_at, payload in event_rows:
+        previous_state = (payload or {}).get("previous_state")
+        next_state = (payload or {}).get("state")
+        if atom_id is None or previous_state not in {"draft", "ready", "excluded"}:
+            continue
+        if next_state not in {"draft", "ready", "excluded"}:
+            continue
+        state_events.append(
+            AuditStatisticsStateEvent(
+                atom_id=atom_id,
+                created_at=created_at,
+                previous_state=previous_state,
+                state=next_state,
+            )
+        )
+    return AuditStatisticsRead.model_validate(
+        build_audit_statistics(
+            [
+                AuditStatisticsCaseRecord(
+                    id=row.id,
+                    status=row.status,
+                    workflow_stage=row.workflow_stage,
+                )
+                for row in case_rows
+            ],
+            [
+                AuditStatisticsAtomRecord(
+                    id=row.id,
+                    case_id=row.case_id,
+                    state=row.state,
+                    alpha_result=row.alpha_result,
+                    commission_result=row.commission_result,
+                    created_at=row.created_at,
+                )
+                for row in atom_rows
+            ],
+            state_events,
+            period_start=date_from,
+            period_end=date_to,
+        )
     )
 
 

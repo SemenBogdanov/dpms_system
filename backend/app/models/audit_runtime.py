@@ -23,7 +23,7 @@ class AuditTZRun(Base):
         ),
         CheckConstraint(
             "status IN ('queued', 'running', 'preflight_pass', 'atomization_queued', "
-            "'atomizing', 'draft_ready', 'committed', 'blocked', 'failed')",
+            "'atomizing', 'paused', 'draft_ready', 'committed', 'blocked', 'failed')",
             name="ck_audit_tz_runs_status",
         ),
         CheckConstraint("source_unit_count >= 0", name="ck_audit_tz_runs_source_units"),
@@ -109,11 +109,12 @@ class AuditTZRuntimeJob(Base):
             name="ck_audit_tz_runtime_jobs_kind",
         ),
         CheckConstraint(
-            "status IN ('queued', 'running', 'succeeded', 'blocked', 'failed')",
+            "status IN ('queued', 'running', 'paused', 'succeeded', 'blocked', 'failed')",
             name="ck_audit_tz_runtime_jobs_status",
         ),
         CheckConstraint("attempt_count >= 0", name="ck_audit_tz_runtime_jobs_attempts"),
         CheckConstraint("max_attempts BETWEEN 1 AND 10", name="ck_audit_tz_runtime_jobs_max_attempts"),
+        CheckConstraint("priority BETWEEN 0 AND 100", name="ck_audit_tz_runtime_jobs_priority"),
         CheckConstraint(
             "(kind = 'skill_selftest' AND run_id IS NULL) OR "
             "(kind IN ('preflight', 'atomization') AND run_id IS NOT NULL)",
@@ -137,7 +138,13 @@ class AuditTZRuntimeJob(Base):
             unique=True,
             postgresql_where=text("kind = 'atomization'"),
         ),
-        Index("ix_audit_tz_runtime_jobs_claim", "status", "available_at", "created_at"),
+        Index(
+            "ix_audit_tz_runtime_jobs_claim",
+            "status",
+            "priority",
+            "available_at",
+            "created_at",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -155,12 +162,23 @@ class AuditTZRuntimeJob(Base):
         index=True,
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
     lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     worker_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    pause_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pause_requested_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -173,6 +191,7 @@ class AuditTZRuntimeJob(Base):
 
     skill_version = relationship("AuditAtomizationSkillVersion")
     run = relationship("AuditTZRun", back_populates="jobs")
+    pause_requested_by = relationship("User", foreign_keys=[pause_requested_by_id])
 
 
 class AuditTZArtifact(Base):

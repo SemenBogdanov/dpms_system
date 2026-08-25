@@ -12,6 +12,147 @@ from app.schemas.audit_runtime import AuditTZAtomizationStart
 
 
 class AuditRuntimeRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_running_atomization_requests_cooperative_pause(self):
+        case_id = uuid4()
+        run_id = uuid4()
+        user = SimpleNamespace(id=uuid4())
+        audit_case = SimpleNamespace(id=case_id)
+        run = SimpleNamespace(
+            id=run_id,
+            completed_batch_count=3,
+            total_batch_count=8,
+            status="atomizing",
+            current_phase="atomizing",
+        )
+        job = SimpleNamespace(
+            status="running",
+            pause_requested_at=None,
+            pause_requested_by_id=None,
+            paused_at=None,
+        )
+        db = SimpleNamespace(add=MagicMock(), flush=AsyncMock())
+        serialized = SimpleNamespace(id=run_id, pause_requested=True)
+
+        with (
+            patch.object(audit_runtime, "_get_case_or_404", AsyncMock(return_value=audit_case)),
+            patch.object(audit_runtime, "_ensure_case_atom_editor", AsyncMock()),
+            patch.object(
+                audit_runtime,
+                "_locked_atomization_run_and_job",
+                AsyncMock(return_value=(run, job)),
+            ),
+            patch.object(audit_runtime, "_serialize_run", AsyncMock(return_value=serialized)),
+        ):
+            result = await audit_runtime.pause_canonical_atomization(
+                case_id=case_id,
+                run_id=run_id,
+                user=user,
+                db=db,
+            )
+
+        self.assertIs(result, serialized)
+        self.assertEqual(job.status, "running")
+        self.assertIsNotNone(job.pause_requested_at)
+        self.assertEqual(job.pause_requested_by_id, user.id)
+        self.assertEqual(run.current_phase, "atomization_pause_requested")
+
+    async def test_resume_keeps_saved_progress_and_requeues_paused_job(self):
+        case_id = uuid4()
+        run_id = uuid4()
+        user = SimpleNamespace(id=uuid4())
+        audit_case = SimpleNamespace(id=case_id)
+        run = SimpleNamespace(
+            id=run_id,
+            completed_batch_count=5,
+            total_batch_count=9,
+            status="paused",
+            current_phase="atomization_paused",
+            error_code=None,
+            finished_at=None,
+        )
+        job = SimpleNamespace(
+            status="paused",
+            pause_requested_at=None,
+            pause_requested_by_id=user.id,
+            paused_at=object(),
+            available_at=None,
+            lease_token=None,
+            lease_expires_at=None,
+            worker_id=None,
+            finished_at=None,
+        )
+        db = SimpleNamespace(add=MagicMock(), flush=AsyncMock())
+        serialized = SimpleNamespace(id=run_id, status="atomization_queued")
+
+        with (
+            patch.object(audit_runtime, "_get_case_or_404", AsyncMock(return_value=audit_case)),
+            patch.object(audit_runtime, "_ensure_case_atom_editor", AsyncMock()),
+            patch.object(
+                audit_runtime,
+                "_locked_atomization_run_and_job",
+                AsyncMock(return_value=(run, job)),
+            ),
+            patch.object(audit_runtime, "_serialize_run", AsyncMock(return_value=serialized)),
+        ):
+            result = await audit_runtime.resume_canonical_atomization(
+                case_id=case_id,
+                run_id=run_id,
+                user=user,
+                db=db,
+            )
+
+        self.assertIs(result, serialized)
+        self.assertEqual(job.status, "queued")
+        self.assertEqual(run.status, "atomization_queued")
+        self.assertEqual(run.completed_batch_count, 5)
+        self.assertEqual(run.total_batch_count, 9)
+        self.assertIsNone(job.pause_requested_by_id)
+
+    async def test_prioritize_paused_atomization_makes_it_next(self):
+        case_id = uuid4()
+        run_id = uuid4()
+        user = SimpleNamespace(id=uuid4())
+        run = SimpleNamespace(
+            id=run_id,
+            completed_batch_count=2,
+            total_batch_count=7,
+            status="paused",
+            current_phase="atomization_paused",
+        )
+        job = SimpleNamespace(
+            id=uuid4(),
+            status="paused",
+            priority=0,
+            available_at=None,
+            paused_at=object(),
+            pause_requested_at=None,
+            pause_requested_by_id=user.id,
+        )
+        db = SimpleNamespace(execute=AsyncMock(), add=MagicMock(), flush=AsyncMock())
+        serialized = SimpleNamespace(id=run_id, priority=100)
+
+        with (
+            patch.object(audit_runtime, "_get_case_or_404", AsyncMock()),
+            patch.object(
+                audit_runtime,
+                "_locked_atomization_run_and_job",
+                AsyncMock(return_value=(run, job)),
+            ),
+            patch.object(audit_runtime, "_serialize_run", AsyncMock(return_value=serialized)),
+        ):
+            result = await audit_runtime.prioritize_canonical_atomization(
+                case_id=case_id,
+                run_id=run_id,
+                user=user,
+                db=db,
+            )
+
+        self.assertIs(result, serialized)
+        self.assertEqual(job.priority, 100)
+        self.assertEqual(job.status, "queued")
+        self.assertEqual(run.status, "atomization_queued")
+        db.execute.assert_awaited_once()
+
     async def test_committed_model_lane_can_be_reused_for_another_provider(self):
         case_id = uuid4()
         run_id = uuid4()

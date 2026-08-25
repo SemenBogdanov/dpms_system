@@ -31,6 +31,7 @@ from app.services.audit_tz_atomization import CanonicalAtomizationError
 from app.services.audit_tz_runtime import (
     AuditTZRuntimeError,
     _generate_batch_with_retry,
+    _pause_atomization_if_requested,
     _read_json_file,
     _recover_stale_jobs,
     _reschedule_atomization,
@@ -73,6 +74,61 @@ def main(argv=None):
 
 
 class AuditTZRuntimeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cooperative_pause_preserves_saved_batch_checkpoint(self):
+        run_id = uuid4()
+        actor_id = uuid4()
+        saved_batches = [{"batch_index": 1}, {"batch_index": 2}]
+        job = SimpleNamespace(
+            id=uuid4(),
+            run_id=run_id,
+            status="running",
+            lease_token="lease",
+            pause_requested_at=datetime.now(timezone.utc),
+            pause_requested_by_id=actor_id,
+            paused_at=None,
+            lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+            worker_id="worker",
+            finished_at=None,
+        )
+        run = SimpleNamespace(
+            id=run_id,
+            case_id=uuid4(),
+            status="atomizing",
+            current_phase="atomizing",
+            completed_batch_count=2,
+            total_batch_count=6,
+            finished_at=None,
+        )
+        attempt = SimpleNamespace(batch_results_json=saved_batches.copy())
+        added: list[object] = []
+
+        class FakeSession:
+            async def scalar(self, _query):
+                return job
+
+            async def get(self, model, key):
+                if model is AuditTZRun and key == run_id:
+                    return run
+                return None
+
+            def add(self, value):
+                added.append(value)
+
+            async def commit(self):
+                return None
+
+        @asynccontextmanager
+        async def db_factory():
+            yield FakeSession()
+
+        paused = await _pause_atomization_if_requested(db_factory, job.id, "lease")
+
+        self.assertTrue(paused)
+        self.assertEqual(job.status, "paused")
+        self.assertEqual(run.status, "paused")
+        self.assertEqual(attempt.batch_results_json, saved_batches)
+        self.assertEqual(len(added), 1)
+
     def test_start_request_needs_only_document_and_skill(self):
         request = AuditTZRunStart(
             request_id=uuid4(),
