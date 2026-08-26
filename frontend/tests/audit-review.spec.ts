@@ -70,6 +70,8 @@ type MockState = {
   patchCalls: number
   failNextPatch: boolean
   runtimeRun: Record<string, unknown> | null
+  contractReferenceMask?: string | null
+  contractReferenceRevealable?: boolean
 }
 
 function atom(id: string, code: string, title: string, order: number): Atom {
@@ -123,7 +125,8 @@ function casePayload(state: MockState) {
     responsible_email: testUser.email,
     title: 'Проверка цифрового продукта',
     digital_product: 'OPEC',
-    contract_reference_mask: '12****42',
+    contract_reference_mask: state.contractReferenceMask === undefined ? '12****42' : state.contractReferenceMask,
+    contract_reference_revealable: state.contractReferenceRevealable ?? true,
     contract_date: '2026-08-01',
     status: 'atomization',
     workflow_stage: state.workflowStage,
@@ -189,6 +192,9 @@ async function installApiMock(page: Page, state: MockState) {
       return respond([summary])
     }
     if (path === `/api/audit/cases/${caseId}` && method === 'GET') return respond(casePayload(state))
+    if (path === `/api/audit/cases/${caseId}/contract-reference/reveal` && method === 'POST') {
+      return respond({ contract_reference: '12-2026-0042' })
+    }
     if (path === `/api/audit/cases/${caseId}/events` && method === 'GET') return respond([])
     if (path === `/api/audit/cases/${caseId}/documents` && method === 'GET') {
       return respond(state.runtimeRun ? [{
@@ -320,26 +326,68 @@ function newState(): MockState {
 async function openAudit(page: Page, state: MockState) {
   await installApiMock(page, state)
   await page.goto(`/audit?view=case&case=${caseId}`)
-  await expect(page.getByText('Проверка цифрового продукта', { exact: true })).toBeVisible()
+  await expect(page.getByText('OPEC', { exact: true }).first()).toBeVisible()
   await expect(page.getByRole('button', { name: 'Проверить черновики' })).toBeVisible()
 }
 
 test('contract header keeps the audit identity, process and controls scannable', async ({ page }, testInfo) => {
   const state = newState()
+  await page.setViewportSize({ width: 2048, height: 1000 })
   await openAudit(page, state)
 
   await expect(page.getByText('AUD-0042', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('OPEC', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('12****42', { exact: true })).toBeVisible()
   await expect(page.getByText('Не завершено · 2 атома', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Модельные реестры' })).toBeVisible()
+  await expect(page.getByText('Модельные реестры пока не сформированы.', { exact: false })).toBeVisible()
   const progress = page.getByRole('group', { name: 'Прогресс аудита' })
   await expect(progress).toBeVisible()
   await expect(page.getByRole('button', { name: 'Редактировать договор' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Изменить ответственного' })).toBeVisible()
 
+  const revealButton = page.getByRole('button', { name: 'Удерживайте, чтобы показать полный номер договора' })
+  const editBox = await page.getByRole('button', { name: 'Редактировать договор' }).boundingBox()
+  const responsibleBox = await page.getByRole('button', { name: 'Изменить ответственного' }).boundingBox()
+  const revealBox = await revealButton.boundingBox()
+  expect(editBox).not.toBeNull()
+  expect(responsibleBox).not.toBeNull()
+  expect(revealBox).not.toBeNull()
+  const actionButtonTopPositions = [editBox!.y, revealBox!.y, responsibleBox!.y]
+  expect(Math.max(...actionButtonTopPositions) - Math.min(...actionButtonTopPositions)).toBeLessThanOrEqual(1)
+  await page.mouse.move(revealBox!.x + revealBox!.width / 2, revealBox!.y + revealBox!.height / 2)
+  await page.mouse.down()
+  await expect(page.getByText('12-2026-0042', { exact: true })).toBeVisible()
+  await page.mouse.up()
+  await expect(page.getByText('12-2026-0042', { exact: true })).toBeHidden()
+  await expect(page.getByText('12****42', { exact: true })).toBeVisible()
+
+  const productBox = await page.getByText('OPEC', { exact: true }).first().boundingBox()
+  const stateBox = await page.getByText('Состояние работы:', { exact: false }).boundingBox()
+  const progressBox = await progress.boundingBox()
+  expect(productBox).not.toBeNull()
+  expect(stateBox).not.toBeNull()
+  expect(progressBox).not.toBeNull()
+  expect(Math.abs(productBox!.y - stateBox!.y)).toBeLessThan(80)
+  expect(Math.abs(stateBox!.y - progressBox!.y)).toBeLessThan(80)
+
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
   expect(overflow).toBeLessThanOrEqual(1)
   await progress.scrollIntoViewIfNeeded()
   await page.screenshot({ path: testInfo.outputPath('audit-contract-header.png') })
+})
+
+test('legacy contract keeps the reveal control discoverable without a reversible number', async ({ page }) => {
+  const state = newState()
+  state.contractReferenceMask = null
+  state.contractReferenceRevealable = false
+  await openAudit(page, state)
+
+  await expect(page.getByText('Не указан', { exact: true })).toBeVisible()
+  const revealButton = page.getByRole('button', { name: 'Полный номер договора не сохранён' })
+  await expect(revealButton).toBeVisible()
+  await revealButton.click()
+  await expect(page.getByText('Полный номер не сохранён. Укажите его через редактирование договора.')).toBeVisible()
 })
 
 test('paused AI atomization exposes saved progress and resumes from checkpoint', async ({ page }) => {
@@ -597,10 +645,10 @@ test('late detail response cannot replace the currently selected contract', asyn
     window.dispatchEvent(new PopStateEvent('popstate'))
   }, secondCaseId)
 
-  await expect(page.getByText('Выбранный договор', { exact: true })).toBeVisible()
+  await expect(page.getByText('CURRENT', { exact: true }).first()).toBeVisible()
   await page.waitForTimeout(300)
-  await expect(page.getByText('Выбранный договор', { exact: true })).toBeVisible()
-  await expect(page.getByText('Старый договор', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('CURRENT', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('OLD', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Редактировать договор' }).click()
   await expect(page.getByLabel('Название аудита')).toHaveValue('Выбранный договор')
 })

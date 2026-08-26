@@ -49,6 +49,7 @@ from app.schemas.audit import (
     AuditCaseDeleteResponse,
     AuditCaseRead,
     AuditCaseUpdate,
+    AuditContractReferenceRead,
     AuditDocumentBatchResponse,
     AuditDocumentRead,
     AuditDocumentUploadItem,
@@ -75,6 +76,11 @@ from app.schemas.audit_ai import (
     AuditAtomizationSkillVersionRead,
 )
 from app.services.ai_provider import AIProviderError, get_ready_ai_provider
+from app.services.audit_contract_reference import (
+    AuditContractReferenceError,
+    decrypt_contract_reference,
+    encrypt_contract_reference,
+)
 from app.services.audit_ai_atomization import (
     AuditAIAtomizationError,
     complete_audit_atomization,
@@ -414,6 +420,9 @@ async def _serialize_case(
         contract_reference_mask=(
             audit_case.contract_reference_mask if can_view_contract_reference else None
         ),
+        contract_reference_revealable=bool(
+            can_view_contract_reference and audit_case.contract_reference_ciphertext
+        ),
         contract_date=audit_case.contract_date,
         status=audit_case.status,
         workflow_stage=audit_case.workflow_stage,
@@ -603,6 +612,12 @@ async def create_audit_case(
             detail="Номер договора доступен только участникам команды аудита",
         )
     fingerprint, mask = build_contract_fields(body.contract_reference)
+    contract_reference_ciphertext = None
+    if body.contract_reference:
+        try:
+            contract_reference_ciphertext = encrypt_contract_reference(body.contract_reference)
+        except AuditContractReferenceError as exc:
+            raise HTTPException(status_code=503, detail=exc.message) from exc
     if fingerprint:
         existing = await db.execute(
             select(AuditCase.id).where(AuditCase.contract_reference_fingerprint == fingerprint)
@@ -615,6 +630,7 @@ async def create_audit_case(
         digital_product=body.digital_product,
         contract_reference_fingerprint=fingerprint,
         contract_reference_mask=mask,
+        contract_reference_ciphertext=contract_reference_ciphertext,
         contract_date=body.contract_date,
         status=body.status,
         workflow_stage=body.workflow_stage,
@@ -651,6 +667,40 @@ async def get_audit_case(
         include_atoms=True,
         can_view_contract_reference=await _is_audit_team_member(user, db),
     )
+
+
+@router.post(
+    "/cases/{case_id}/contract-reference/reveal",
+    response_model=AuditContractReferenceRead,
+)
+async def reveal_audit_contract_reference(
+    case_id: UUID,
+    response: Response,
+    user: User = Depends(require_audit_workspace_member),
+    db: AsyncSession = Depends(get_db),
+):
+    if not await _is_audit_team_member(user, db):
+        raise HTTPException(
+            status_code=403,
+            detail="Полный номер договора доступен только участникам команды аудита",
+        )
+    audit_case = await _get_case_or_404(db, case_id)
+    try:
+        contract_reference = decrypt_contract_reference(
+            audit_case.contract_reference_ciphertext
+        )
+    except AuditContractReferenceError as exc:
+        status_code = 503 if exc.code == "encryption_key_not_configured" else 409
+        raise HTTPException(status_code=status_code, detail=exc.message) from exc
+    record_audit_event(
+        db,
+        case_id=audit_case.id,
+        actor_id=user.id,
+        event_type="contract_reference_revealed",
+        message="Просмотрен полный номер договора",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return AuditContractReferenceRead(contract_reference=contract_reference)
 
 
 @router.patch("/cases/{case_id}", response_model=AuditCaseRead)
@@ -732,6 +782,12 @@ async def update_audit_case(
             raise HTTPException(status_code=409, detail="Для этого договора аудит уже существует")
         audit_case.contract_reference_fingerprint = fingerprint
         audit_case.contract_reference_mask = mask
+        try:
+            audit_case.contract_reference_ciphertext = encrypt_contract_reference(
+                contract_reference
+            )
+        except AuditContractReferenceError as exc:
+            raise HTTPException(status_code=503, detail=exc.message) from exc
         changed_fields.append("contract_reference")
     for field, value in changes.items():
         setattr(audit_case, field, value)

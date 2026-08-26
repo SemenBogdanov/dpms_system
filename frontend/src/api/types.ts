@@ -185,6 +185,7 @@ export interface AuditCaseSummary {
   title: string
   digital_product: string
   contract_reference_mask: string | null
+  contract_reference_revealable: boolean
   contract_date: string | null
   status: AuditCaseStatus
   workflow_stage: AuditWorkflowStage
@@ -202,6 +203,10 @@ export interface AuditCaseSummary {
 
 export interface AuditCaseDetail extends AuditCaseSummary {
   atoms: AuditAtom[]
+}
+
+export interface AuditContractReferenceReveal {
+  contract_reference: string
 }
 
 export interface AuditEvent {

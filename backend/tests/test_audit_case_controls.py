@@ -29,6 +29,10 @@ class AuditCaseControlTests(unittest.TestCase):
         self.assertIn("delete", paths["/api/audit/cases/{case_id}"])
         self.assertIn("patch", paths["/api/audit/cases/{case_id}/atoms/bulk-status"])
         self.assertIn("get", paths["/api/audit/cases/{case_id}/atoms/export"])
+        self.assertIn(
+            "post",
+            paths["/api/audit/cases/{case_id}/contract-reference/reveal"],
+        )
 
 
 if __name__ == "__main__":

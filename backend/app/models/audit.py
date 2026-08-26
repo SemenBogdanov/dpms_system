@@ -55,6 +55,7 @@ class AuditCase(Base):
     digital_product: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     contract_reference_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     contract_reference_mask: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    contract_reference_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
     contract_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
     workflow_stage: Mapped[str] = mapped_column(

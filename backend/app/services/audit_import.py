@@ -25,6 +25,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.audit import AuditAtom, AuditCase, AuditEvent, AuditImportBatch
 from app.models.user import User
+from app.services.audit_contract_reference import (
+    AuditContractReferenceError,
+    encrypt_contract_reference,
+)
 from app.schemas.audit import (
     AuditImportCommitCase,
     AuditImportCommitResponse,
@@ -1262,6 +1266,14 @@ async def commit_audit_import(
     for contract_fingerprint, group_rows in grouped_rows.items():
         first_row = group_rows[0]
         group_contract_date = choose_contract_date(group_rows)
+        contract_reference_ciphertext = None
+        if first_row.contract_reference_raw:
+            try:
+                contract_reference_ciphertext = encrypt_contract_reference(
+                    first_row.contract_reference_raw
+                )
+            except AuditContractReferenceError as exc:
+                raise HTTPException(status_code=503, detail=exc.message) from exc
         if target_case is not None:
             case = target_case
         else:
@@ -1278,6 +1290,7 @@ async def commit_audit_import(
                 digital_product=next(iter(digital_products)) if len(digital_products) == 1 else "Несколько продуктов",
                 contract_reference_fingerprint=first_row.contract_reference_fingerprint,
                 contract_reference_mask=first_row.contract_reference_mask,
+                contract_reference_ciphertext=contract_reference_ciphertext,
                 contract_date=group_contract_date,
                 status="atomization",
                 notes="Создано из импортированного реестра технических объектов.",
@@ -1306,6 +1319,11 @@ async def commit_audit_import(
         if target_case is not None and case.contract_reference_fingerprint is None:
             case.contract_reference_fingerprint = first_row.contract_reference_fingerprint
             case.contract_reference_mask = first_row.contract_reference_mask
+        if (
+            case.contract_reference_ciphertext is None
+            and contract_reference_ciphertext is not None
+        ):
+            case.contract_reference_ciphertext = contract_reference_ciphertext
         digital_products = {row.digital_product for row in group_rows if row.digital_product}
         if case.digital_product == "Требует заполнения" and len(digital_products) == 1:
             case.digital_product = next(iter(digital_products))

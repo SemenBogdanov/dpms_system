@@ -217,6 +217,7 @@ class AuditAssignmentPersistenceTests(unittest.IsolatedAsyncioTestCase):
             try:
                 _, assignee, audit_case = await self._load_or_create_fixture(db)
                 audit_case.contract_reference_mask = "AB****42"
+                audit_case.contract_reference_ciphertext = "v1:encrypted"
                 await db.flush()
 
                 hidden = await _serialize_case(
@@ -233,7 +234,9 @@ class AuditAssignmentPersistenceTests(unittest.IsolatedAsyncioTestCase):
                 )
 
                 self.assertIsNone(hidden.contract_reference_mask)
+                self.assertFalse(hidden.contract_reference_revealable)
                 self.assertEqual(visible.contract_reference_mask, "AB****42")
+                self.assertTrue(visible.contract_reference_revealable)
                 self.assertIsNotNone(assignee.id)
             finally:
                 await db.rollback()

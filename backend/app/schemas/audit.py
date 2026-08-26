@@ -235,6 +235,10 @@ class AuditCaseDeleteResponse(BaseModel):
     deleted_atoms_count: int
 
 
+class AuditContractReferenceRead(BaseModel):
+    contract_reference: str
+
+
 class AuditCaseListItem(BaseModel):
     id: UUID
     case_number: str
@@ -246,6 +250,7 @@ class AuditCaseListItem(BaseModel):
     title: str
     digital_product: str
     contract_reference_mask: str | None = None
+    contract_reference_revealable: bool = False
     contract_date: date | None = None
     status: str
     workflow_stage: AuditWorkflowStage

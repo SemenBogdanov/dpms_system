@@ -36,6 +36,7 @@ import {
   Clock3,
   Download,
   ExternalLink,
+  Eye,
   EyeOff,
   FileDown,
   FilePlus2,
@@ -88,6 +89,7 @@ import type {
   AuditCaseDetail,
   AuditCaseSummary,
   AuditCaseUpdate,
+  AuditContractReferenceReveal,
   AuditDocument,
   AuditDocumentBatchResponse,
   AuditDocumentKind,
@@ -128,6 +130,7 @@ interface NormalizedAuditCaseSummary {
   title: string
   productMasked: string
   contractMasked: string
+  contractReferenceRevealable: boolean
   contractDate: string | null
   status: string
   workflowStage: string
@@ -310,6 +313,7 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   case_created: 'Договор создан',
   case_updated: 'Договор изменен',
   case_imported: 'Договор импортирован',
+  contract_reference_revealed: 'Номер договора просмотрен',
   responsible_changed: 'Ответственный изменен',
   document_uploaded: 'Материал загружен',
   atom_created: 'Атом создан',
@@ -751,6 +755,7 @@ function normalizeAuditCaseSummary(input: unknown): NormalizedAuditCaseSummary |
     title: getString(source, 'title', 'name', 'audit_title') ?? 'Без названия',
     productMasked,
     contractMasked,
+    contractReferenceRevealable: source.contract_reference_revealable === true,
     contractDate: getString(source, 'contract_date', 'contractDate'),
     status: getString(source, 'status', 'state') ?? 'draft',
     workflowStage: getString(source, 'workflow_stage', 'workflowStage') ?? 'unassigned',
@@ -1147,7 +1152,7 @@ function StatusPill({ label, toneClass }: { label: string; toneClass: string }) 
 
 interface AuditProgressCounts {
   total: number
-  atomizationReviewed: number
+  verified: number
   alphaEligible: number
   alphaReviewed: number
   commissionReviewed: number
@@ -1182,11 +1187,10 @@ function auditProgressCounts(
 ): AuditProgressCounts {
   const atoms = detail?.atoms ?? []
   const total = detail?.atomsTotal ?? item.atomsTotal
-  const drafts = detail?.atomsDraft ?? item.atomsDraft
   const alphaEligible = detail?.atomsReady ?? item.atomsReady
   return {
     total,
-    atomizationReviewed: Math.max(0, total - drafts),
+    verified: alphaEligible,
     alphaEligible,
     alphaReviewed: detail
       ? atoms.filter((atom) => atom.status === 'ready' && Boolean(atom.alphaResult)).length
@@ -1345,14 +1349,14 @@ function AuditProcessTimeline({
   const nextStage = auditNextStageLabel(item)
   const stepMeta = [
     item.responsibleName ?? 'Не назначен',
-    `${counts.atomizationReviewed} из ${counts.total}`,
+    counts.total > 0 ? `Верифицировано ${counts.verified} из ${counts.total}` : 'Атомов нет',
     counts.reviewCountsLoaded ? `${counts.alphaReviewed} из ${counts.alphaEligible}` : 'Загружаем',
     counts.reviewCountsLoaded ? `${counts.commissionReviewed} из ${counts.alphaEligible}` : 'Загружаем',
     item.workflowStage === 'ready' ? 'Аудит завершен' : 'Финальный результат',
   ]
 
   return (
-    <div className="mt-5" role="group" aria-label="Прогресс аудита">
+    <div role="group" aria-label="Прогресс аудита">
       <div className="md:hidden">
         <div className="flex items-start justify-between gap-4 text-xs">
           <div>
@@ -1523,6 +1527,9 @@ export function AuditPage() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState<string | null>(null)
   const [detailTab, setDetailTab] = useState<DetailTab>('atoms')
+  const [revealedContractReference, setRevealedContractReference] = useState<string | null>(null)
+  const [contractReferenceLoading, setContractReferenceLoading] = useState(false)
+  const contractReferenceHoldRef = useRef(false)
   const detailTabRefs = useRef<Array<HTMLButtonElement | null>>([])
   const [selectedAtomId, setSelectedAtomId] = useState<string | null>(null)
   const [events, setEvents] = useState<NormalizedAuditEvent[]>([])
@@ -1868,6 +1875,9 @@ export function AuditPage() {
     setModelRegistries([])
     setModelComparisons([])
     setSelectedModelRegistryIds([])
+    contractReferenceHoldRef.current = false
+    setRevealedContractReference(null)
+    setContractReferenceLoading(false)
     if (!selectedCaseId) {
       caseBundleRequestRef.current += 1
       modelWorkspaceRequestRef.current += 1
@@ -2923,6 +2933,30 @@ export function AuditPage() {
     setCaseDialogOpen(true)
   }
 
+  const beginContractReferenceReveal = async () => {
+    if (!selectedCaseId || !selectedCaseSummary?.contractReferenceRevealable) return
+    contractReferenceHoldRef.current = true
+    setContractReferenceLoading(true)
+    try {
+      const result = await api.post<AuditContractReferenceReveal>(
+        `/api/audit/cases/${selectedCaseId}/contract-reference/reveal`,
+        {}
+      )
+      if (contractReferenceHoldRef.current) {
+        setRevealedContractReference(result.contract_reference)
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось показать номер договора')
+    } finally {
+      setContractReferenceLoading(false)
+    }
+  }
+
+  const endContractReferenceReveal = () => {
+    contractReferenceHoldRef.current = false
+    setRevealedContractReference(null)
+  }
+
   const openCreateAtomDialog = () => {
     setAtomDialogMode('create')
     setEditingAtomId(null)
@@ -3345,6 +3379,8 @@ export function AuditPage() {
         await loadCaseBundle(savedId)
       }
       setCaseDialogOpen(false)
+      contractReferenceHoldRef.current = false
+      setRevealedContractReference(null)
       setCaseForm(EMPTY_CASE_FORM)
       setCaseFormInitial(EMPTY_CASE_FORM)
       toast.success(caseDialogMode === 'create' ? 'Аудит создан' : 'Договор обновлен')
@@ -4305,9 +4341,9 @@ export function AuditPage() {
         ) : null}
 
         {workspaceView === 'case' ? (
-        <section className="min-w-0 rounded-lg border border-border bg-surface shadow-sm">
+        <section className="min-w-0">
           {!selectedCaseId ? (
-            <div className="flex min-h-[520px] flex-col items-center justify-center px-6 py-10 text-center">
+            <div className="flex min-h-[520px] flex-col items-center justify-center rounded-lg border border-border bg-surface px-6 py-10 text-center shadow-sm">
               <Shield className="h-10 w-10 text-muted-foreground" />
               <h2 className="mt-3 text-lg font-semibold text-foreground">Аудиты пока не загружены</h2>
               <p className="mt-1 max-w-md text-sm text-muted-foreground">
@@ -4325,21 +4361,19 @@ export function AuditPage() {
               ) : null}
             </div>
           ) : (
-            <div>
-              <div className="border-b border-border">
-                <div className="px-4 pb-4 pt-3 sm:px-5">
+            <div className="space-y-4">
+              <div className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm">
+                <div className="px-4 pt-3 sm:px-5">
                   <button type="button" onClick={() => setWorkspaceView('registry')} className="inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground">
                     <ArrowLeft className="h-4 w-4" />
                     Реестр
                   </button>
+                </div>
 
-                  <div className="mt-1 grid grid-cols-2 lg:grid-cols-[minmax(0,1.2fr)_minmax(15rem,.8fr)_minmax(17rem,.9fr)]">
-                    <div className="col-span-2 min-w-0 border-b border-border py-3 lg:col-span-1 lg:border-b-0 lg:pr-5">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-sm font-semibold text-muted-foreground">{selectedCaseSummary?.code ?? 'AUD-—'}</span>
-                        <StatusPill label={caseWorkflowLabel(selectedCaseSummary?.status ?? 'draft', selectedCaseSummary?.workflowStage ?? 'unassigned')} toneClass={caseWorkflowTone(selectedCaseSummary?.status ?? 'draft', selectedCaseSummary?.workflowStage ?? 'unassigned')} />
-                      </div>
-                      <div className="mt-3 flex min-w-0 items-center gap-2">
+                <div className="grid border-t border-border min-[1680px]:grid-cols-[minmax(590px,1.05fr)_minmax(0,1.65fr)]">
+                  <div className="grid min-w-0 border-b border-border md:grid-cols-[minmax(190px,1.05fr)_minmax(170px,.9fr)_minmax(180px,.95fr)] min-[1680px]:border-b-0 min-[1680px]:border-r">
+                    <div className="min-w-0 border-b border-border px-4 py-4 md:border-b-0 sm:px-5 md:pr-4">
+                      <div className="flex min-w-0 items-start justify-between gap-2">
                         <h2 className="min-w-0 truncate text-xl font-semibold text-foreground sm:text-2xl" title={selectedCaseSummary?.productMasked}>
                           {selectedCaseSummary?.productMasked ?? 'Аудит'}
                         </h2>
@@ -4356,27 +4390,88 @@ export function AuditPage() {
                           </button>
                         ) : null}
                       </div>
-                      <p className="mt-2 flex min-w-0 flex-wrap gap-x-1 text-sm text-muted-foreground">
-                        <span>Аудит:</span>
-                        <span className="min-w-0 text-foreground">{selectedCaseSummary?.title ?? 'Карточка аудита'}</span>
-                      </p>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-sm font-semibold text-muted-foreground">{selectedCaseSummary?.code ?? 'AUD-—'}</span>
+                        <StatusPill label={caseWorkflowLabel(selectedCaseSummary?.status ?? 'draft', selectedCaseSummary?.workflowStage ?? 'unassigned')} toneClass={caseWorkflowTone(selectedCaseSummary?.status ?? 'draft', selectedCaseSummary?.workflowStage ?? 'unassigned')} />
+                      </div>
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">Обновлено</span>
+                        <span className="tabular-nums">{formatDateTime(selectedCaseSummary?.updatedAt ?? null)}</span>
+                      </div>
                     </div>
 
-                    <dl className="min-w-0 py-3 pr-3 lg:border-l lg:border-border lg:px-5">
-                      <dt className="text-[11px] font-medium uppercase text-muted-foreground">
-                        {canViewContractReference ? 'Договор' : 'Дата договора'}
-                      </dt>
-                      {canViewContractReference ? (
-                        <dd className="mt-2 truncate font-mono text-base font-semibold text-foreground" title={selectedCaseSummary?.contractMasked}>
-                          {selectedCaseSummary?.contractMasked ?? '—'}
-                        </dd>
-                      ) : null}
-                      <dd className={cn('text-sm text-muted-foreground', canViewContractReference ? 'mt-1' : 'mt-2 font-medium text-foreground')}>
+                    <dl className="relative min-w-0 border-b border-border px-4 py-4 md:border-b-0 md:border-l sm:px-5 md:px-4">
+                      <dt className="text-[11px] font-medium uppercase text-muted-foreground">Договор</dt>
+                      <dd className="mt-2 flex min-w-0 items-center gap-2 pr-14">
+                        <span
+                          className="min-w-0 flex-1 break-words font-mono text-base font-semibold text-foreground"
+                          title={revealedContractReference ?? selectedCaseSummary?.contractMasked}
+                        >
+                          {revealedContractReference ?? (selectedCaseSummary?.contractMasked !== '—'
+                            ? selectedCaseSummary?.contractMasked
+                            : canViewContractReference ? 'Не указан' : 'Скрыт')}
+                        </span>
+                        <button
+                            type="button"
+                            onPointerDown={(event) => {
+                              if (event.button !== 0 || contractReferenceLoading || !selectedCaseSummary?.contractReferenceRevealable) return
+                              event.preventDefault()
+                              event.currentTarget.setPointerCapture(event.pointerId)
+                              void beginContractReferenceReveal()
+                            }}
+                            onPointerUp={endContractReferenceReveal}
+                            onPointerCancel={endContractReferenceReveal}
+                            onLostPointerCapture={endContractReferenceReveal}
+                            onKeyDown={(event) => {
+                              if ((event.key === ' ' || event.key === 'Enter') && !event.repeat && !contractReferenceLoading && selectedCaseSummary?.contractReferenceRevealable) {
+                                event.preventDefault()
+                                void beginContractReferenceReveal()
+                              }
+                            }}
+                            onKeyUp={(event) => {
+                              if (event.key === ' ' || event.key === 'Enter') endContractReferenceReveal()
+                            }}
+                            onBlur={endContractReferenceReveal}
+                            onContextMenu={(event) => event.preventDefault()}
+                            onClick={() => {
+                              if (selectedCaseSummary?.contractReferenceRevealable) return
+                              toast(canViewContractReference
+                                ? 'Полный номер не сохранён. Укажите его через редактирование договора.'
+                                : 'Полный номер доступен только участникам команды аудита.')
+                            }}
+                            className={cn(
+                              'absolute right-4 top-4 inline-flex h-11 w-11 shrink-0 touch-none select-none items-center justify-center rounded-md border border-border bg-surface-soft transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 sm:right-5 md:right-4',
+                              selectedCaseSummary?.contractReferenceRevealable
+                                ? 'text-muted-foreground hover:text-foreground'
+                                : 'text-muted-foreground/70'
+                            )}
+                            aria-label={selectedCaseSummary?.contractReferenceRevealable
+                              ? 'Удерживайте, чтобы показать полный номер договора'
+                              : canViewContractReference
+                                ? 'Полный номер договора не сохранён'
+                                : 'Полный номер договора доступен только участникам команды аудита'}
+                            aria-busy={contractReferenceLoading}
+                            title={selectedCaseSummary?.contractReferenceRevealable
+                              ? 'Удерживайте, чтобы показать полный номер'
+                              : canViewContractReference
+                                ? 'Полный номер не сохранён; укажите его через редактирование'
+                                : 'Полный номер доступен только участникам команды аудита'}
+                          >
+                            {contractReferenceLoading ? (
+                              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                            ) : revealedContractReference ? (
+                              <EyeOff className="h-4 w-4" aria-hidden="true" />
+                            ) : (
+                              <Eye className="h-4 w-4" aria-hidden="true" />
+                            )}
+                          </button>
+                      </dd>
+                      <dd className="mt-2 text-sm tabular-nums text-muted-foreground">
                         {formatDateOnly(selectedCaseSummary?.contractDate ?? null)}
                       </dd>
                     </dl>
 
-                    <dl className="min-w-0 border-l border-border py-3 pl-3 lg:pl-5">
+                    <dl className="min-w-0 px-4 py-4 md:border-l md:border-border sm:px-5 md:px-4">
                       <div className="flex min-w-0 items-start justify-between gap-3">
                         <div className="min-w-0">
                           <dt className="text-[11px] font-medium uppercase text-muted-foreground">Ответственный</dt>
@@ -4403,124 +4498,80 @@ export function AuditPage() {
                       </div>
                     </dl>
                   </div>
-                </div>
 
-                <div className="border-t border-border bg-surface-soft/35 px-4 py-4 sm:px-5">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <div
-                        className={cn(
-                          'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border',
-                          selectedCaseSignal?.kind === 'danger' && 'border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300',
-                          selectedCaseSignal?.kind === 'attention' && 'border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200',
-                          selectedCaseSignal?.kind === 'progress' && 'border-primary/25 bg-primary/10 text-primary',
-                          selectedCaseSignal?.kind === 'success' && 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-                          selectedCaseSignal?.kind === 'neutral' && 'border-border bg-surface text-muted-foreground'
-                        )}
-                      >
-                        {selectedCaseSignal?.kind === 'success' ? (
-                          <CheckCircle2 className="h-4 w-4" />
-                        ) : selectedCaseSignal?.kind === 'progress' ? (
-                          <Clock3 className="h-4 w-4" />
-                        ) : (
-                          <AlertTriangle className="h-4 w-4" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-base font-semibold text-foreground">
-                          Состояние работы: <span className={cn(
-                            selectedCaseSignal?.kind === 'danger' && 'text-rose-700 dark:text-rose-300',
-                            selectedCaseSignal?.kind === 'attention' && 'text-amber-800 dark:text-amber-200',
-                            selectedCaseSignal?.kind === 'progress' && 'text-primary',
-                            selectedCaseSignal?.kind === 'success' && 'text-emerald-700 dark:text-emerald-300',
-                            selectedCaseSignal?.kind === 'neutral' && 'text-muted-foreground'
-                          )}>{selectedCaseSignal?.label ?? 'Загружаем состояние'}</span>
+                  <div className="grid min-w-0 bg-surface-soft/35 md:grid-cols-[minmax(340px,.82fr)_minmax(0,1.38fr)]">
+                    <div className="min-w-0 border-b border-border px-4 py-5 md:border-b-0 md:border-r sm:px-5">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <div
+                          className={cn(
+                            'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border',
+                            selectedCaseSignal?.kind === 'danger' && 'border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300',
+                            selectedCaseSignal?.kind === 'attention' && 'border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200',
+                            selectedCaseSignal?.kind === 'progress' && 'border-primary/25 bg-primary/10 text-primary',
+                            selectedCaseSignal?.kind === 'success' && 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+                            selectedCaseSignal?.kind === 'neutral' && 'border-border bg-surface text-muted-foreground'
+                          )}
+                        >
+                          {selectedCaseSignal?.kind === 'success' ? (
+                            <CheckCircle2 className="h-4 w-4" />
+                          ) : selectedCaseSignal?.kind === 'progress' ? (
+                            <Clock3 className="h-4 w-4" />
+                          ) : (
+                            <AlertTriangle className="h-4 w-4" />
+                          )}
                         </div>
-                        <p className="mt-1 text-xs text-muted-foreground">{selectedCaseSignal?.description ?? 'Получаем данные договора'}</p>
-                        {canEditSelectedAtoms && detail ? (
-                          <div className="mt-3 md:hidden">
-                            {detail.atomsDraft > 0 ? (
-                              <button
-                                type="button"
-                                onClick={() => void openAtomReview('draft')}
-                                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-                              >
-                                <CheckCircle2 className="h-4 w-4" />
-                                Проверить черновики
-                              </button>
-                            ) : detail.atomsReady > 0 && alphaUnreviewedCount > 0 ? (
-                              <button
-                                type="button"
-                                onClick={() => void openAtomReview('alpha')}
-                                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-                              >
-                                <Search className="h-4 w-4" />
-                                Альфа-проверка
-                              </button>
-                            ) : detail.atomsTotal === 0 ? (
-                              <button
-                                type="button"
-                                onClick={() => openImportDialog(selectedCaseId)}
-                                className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90"
-                              >
-                                <Upload className="h-4 w-4" />
-                                Загрузить реестр атомов
-                              </button>
-                            ) : null}
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-foreground">
+                            Состояние работы: <span className={cn(
+                              selectedCaseSignal?.kind === 'danger' && 'text-rose-700 dark:text-rose-300',
+                              selectedCaseSignal?.kind === 'attention' && 'text-amber-800 dark:text-amber-200',
+                              selectedCaseSignal?.kind === 'progress' && 'text-primary',
+                              selectedCaseSignal?.kind === 'success' && 'text-emerald-700 dark:text-emerald-300',
+                              selectedCaseSignal?.kind === 'neutral' && 'text-muted-foreground'
+                            )}>{selectedCaseSignal?.label ?? 'Загружаем состояние'}</span>
                           </div>
-                        ) : null}
+                          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{selectedCaseSignal?.description ?? 'Получаем данные договора'}</p>
+                        </div>
                       </div>
                     </div>
-                    <div className="hidden shrink-0 text-left text-xs text-muted-foreground sm:block sm:text-right">
-                      <div className="font-medium text-foreground">Обновлено</div>
-                      <div className="mt-1 tabular-nums">{formatDateTime(selectedCaseSummary?.updatedAt ?? null)}</div>
+
+                    <div className="min-w-0 px-4 py-4 sm:px-5">
+                      {selectedCaseSummary && selectedCaseProgress ? (
+                        <AuditProcessTimeline item={selectedCaseSummary} counts={selectedCaseProgress} />
+                      ) : null}
+
+                      {selectedCaseProgress ? (
+                        <div className="mt-4 grid grid-cols-2 gap-y-4 border-t border-border pt-4 text-sm sm:grid-cols-4 sm:divide-x sm:divide-border">
+                          <div className="min-w-0 sm:pr-3">
+                            <div className="text-xs text-muted-foreground">Атомов всего</div>
+                            <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">{selectedCaseProgress.total}</div>
+                          </div>
+                          <div className="min-w-0 sm:px-3">
+                            <div className="text-xs text-muted-foreground">Верифицировано</div>
+                            <div className={cn('mt-1 text-lg font-semibold tabular-nums', selectedCaseProgress.total > 0 && selectedCaseProgress.verified === selectedCaseProgress.total ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-800 dark:text-amber-200')}>
+                              {selectedCaseProgress.verified} / {selectedCaseProgress.total} · {progressPercent(selectedCaseProgress.verified, selectedCaseProgress.total)}%
+                            </div>
+                          </div>
+                          <div className="min-w-0 sm:px-3">
+                            <div className="text-xs text-muted-foreground">Альфа-проверка</div>
+                            <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">
+                              {selectedCaseProgress.reviewCountsLoaded
+                                ? `${selectedCaseProgress.alphaReviewed} / ${selectedCaseProgress.alphaEligible} · ${progressPercent(selectedCaseProgress.alphaReviewed, selectedCaseProgress.alphaEligible)}%`
+                                : 'Загружаем'}
+                            </div>
+                          </div>
+                          <div className="min-w-0 sm:pl-3">
+                            <div className="text-xs text-muted-foreground">Комиссия</div>
+                            <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">
+                              {selectedCaseProgress.reviewCountsLoaded
+                                ? `${selectedCaseProgress.commissionReviewed} / ${selectedCaseProgress.alphaEligible} · ${progressPercent(selectedCaseProgress.commissionReviewed, selectedCaseProgress.alphaEligible)}%`
+                                : 'Загружаем'}
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
-
-                  {selectedCaseSummary && selectedCaseProgress ? (
-                    <AuditProcessTimeline item={selectedCaseSummary} counts={selectedCaseProgress} />
-                  ) : null}
-
-                  {selectedCaseProgress ? (
-                    <div className="mt-4 hidden grid-cols-2 gap-y-4 border-t border-border pt-4 text-sm md:grid lg:grid-cols-4 lg:divide-x lg:divide-border">
-                      <div className="min-w-0 lg:pr-4">
-                        <div className="text-xs text-muted-foreground">Атомов всего</div>
-                        <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">{selectedCaseProgress.total}</div>
-                      </div>
-                      <div className="min-w-0 lg:px-4">
-                        <div className="text-xs text-muted-foreground">Атомизация</div>
-                        <div className={cn('mt-1 text-lg font-semibold tabular-nums', selectedCaseProgress.total > 0 && selectedCaseProgress.atomizationReviewed === selectedCaseProgress.total ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-800 dark:text-amber-200')}>
-                          {selectedCaseProgress.atomizationReviewed} / {selectedCaseProgress.total} · {progressPercent(selectedCaseProgress.atomizationReviewed, selectedCaseProgress.total)}%
-                        </div>
-                      </div>
-                      <div className="min-w-0 lg:px-4">
-                        <div className="text-xs text-muted-foreground">Альфа-проверка</div>
-                        <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">
-                          {selectedCaseProgress.reviewCountsLoaded
-                            ? `${selectedCaseProgress.alphaReviewed} / ${selectedCaseProgress.alphaEligible} · ${progressPercent(selectedCaseProgress.alphaReviewed, selectedCaseProgress.alphaEligible)}%`
-                            : 'Загружаем'}
-                        </div>
-                      </div>
-                      <div className="min-w-0 lg:pl-4">
-                        <div className="text-xs text-muted-foreground">Комиссия</div>
-                        <div className="mt-1 text-lg font-semibold tabular-nums text-foreground">
-                          {selectedCaseProgress.reviewCountsLoaded
-                            ? `${selectedCaseProgress.commissionReviewed} / ${selectedCaseProgress.alphaEligible} · ${progressPercent(selectedCaseProgress.commissionReviewed, selectedCaseProgress.alphaEligible)}%`
-                            : 'Загружаем'}
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {detail?.summary ? (
-                    <>
-                      <p className="mt-4 hidden max-w-4xl whitespace-pre-wrap border-t border-border pt-3 text-sm text-muted-foreground md:block">{detail.summary}</p>
-                      <details className="mt-3 border-t border-border pt-3 text-sm md:hidden">
-                        <summary className="cursor-pointer font-medium text-foreground">Контекст аудита</summary>
-                        <p className="mt-2 whitespace-pre-wrap text-muted-foreground">{detail.summary}</p>
-                      </details>
-                    </>
-                  ) : null}
                 </div>
               </div>
 
@@ -4529,7 +4580,7 @@ export function AuditPage() {
                 role="tabpanel"
                 aria-labelledby="audit-tab-materials"
                 hidden={detailTab !== 'materials'}
-                className="px-4 py-4 sm:px-5"
+                className="rounded-lg border border-border bg-surface px-4 py-4 shadow-sm sm:px-5"
               >
                 <div className="flex flex-col gap-3 border-b border-border pb-3 sm:flex-row sm:items-center sm:justify-between">
                   <div><h3 className="text-sm font-semibold text-foreground">Материалы договора</h3><p className="mt-1 text-xs text-muted-foreground">Исходные версии хранятся без изменения</p></div>
@@ -4578,11 +4629,93 @@ export function AuditPage() {
                 role="tabpanel"
                 aria-labelledby="audit-tab-atoms"
                 hidden={detailTab !== 'atoms'}
-                className="px-4 py-4 sm:px-5"
+                className="space-y-4"
               >
+                <section className="rounded-lg border border-border bg-surface px-4 py-4 shadow-sm sm:px-5" aria-labelledby="model-registries-title">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <h3 id="model-registries-title" className="text-sm font-semibold text-foreground">Модельные реестры</h3>
+                        <p className="mt-1 text-xs text-muted-foreground">Выберите один результат для подготовки рабочего реестра или несколько для сравнительного анализа.</p>
+                      </div>
+                      {canEditSelectedAtoms ? (
+                        <div className="flex flex-wrap gap-2">
+                          <button type="button" onClick={() => void openAIAtomizationDialog()} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30">
+                            <Sparkles className="h-4 w-4" aria-hidden="true" />
+                            {modelRegistries.length > 0 ? 'Запустить другую модель' : 'Запустить модель'}
+                          </button>
+                          {draftReadyModelComparison ? (
+                            <button type="button" onClick={() => showModelComparison(draftReadyModelComparison)} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-primary px-3 text-sm font-medium text-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30">
+                              <Boxes className="h-4 w-4" aria-hidden="true" />
+                              {workingAtomRegistryExists
+                                ? 'Открыть анализ'
+                                : draftReadyModelComparison.registry_ids.length === 1
+                                  ? 'Продолжить подготовку'
+                                  : 'Продолжить сравнение'}
+                            </button>
+                          ) : null}
+                          {modelRegistries.length > 0 ? (
+                            <button type="button" onClick={() => void runModelComparison()} disabled={comparisonBusy || selectedModelRegistryIds.length < 1} className="inline-flex min-h-10 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50">
+                              {comparisonBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Boxes className="h-4 w-4" aria-hidden="true" />}
+                              {selectedModelRegistryIds.length === 1 ? 'Подготовить рабочий реестр' : 'Сравнить выбранные'}
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                    {modelWorkspaceError ? (
+                      <div className="mt-4 rounded-md border border-rose-500/25 bg-rose-500/10 px-3 py-3 text-sm text-rose-700 dark:text-rose-300">
+                        {modelWorkspaceError}
+                      </div>
+                    ) : modelWorkspaceLoading ? (
+                      <div className="mt-4 flex min-h-14 items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Проверяем модельные реестры…</div>
+                    ) : modelRegistries.length > 0 ? (
+                      <div className="mt-3 divide-y divide-border overflow-hidden rounded-md border border-border">
+                        {modelRegistries.map((registry) => (
+                          <details key={registry.id} className="group bg-surface">
+                            <summary className="flex min-h-14 cursor-pointer list-none items-center gap-3 px-3 py-2 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30">
+                              {canEditSelectedAtoms ? (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedModelRegistryIds.includes(registry.id)}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onChange={() => toggleModelRegistry(registry.id)}
+                                  className="h-5 w-5 shrink-0 rounded border-input text-primary focus:ring-primary"
+                                  aria-label={`Выбрать реестр ${registry.provider_name}`}
+                                />
+                              ) : null}
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-semibold text-foreground">{registry.provider_name}</span>
+                                <span className="block truncate font-mono text-xs text-muted-foreground">{registry.model_name} · конфигурация v{registry.provider_config_version}</span>
+                              </span>
+                              <span className="shrink-0 text-right">
+                                <span className="block text-sm font-semibold tabular-nums text-foreground">{registry.atom_count}</span>
+                                <span className="block text-[11px] text-muted-foreground">атомов</span>
+                              </span>
+                              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
+                            </summary>
+                            <div className="max-h-80 overflow-auto border-t border-border bg-surface-soft px-3 py-2">
+                              {registry.items.map((item, index) => (
+                                <div key={item.id} className="grid gap-1 border-b border-border/70 py-2 text-xs last:border-b-0 sm:grid-cols-[3rem_minmax(0,1fr)_minmax(12rem,0.7fr)]">
+                                  <span className="font-mono tabular-nums text-muted-foreground">{index + 1}</span>
+                                  <span className="font-medium text-foreground">{item.title}</span>
+                                  <span className="text-muted-foreground">{item.source_refs[0]?.excerpt || item.source_clause}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-3 rounded-md border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
+                        Модельные реестры пока не сформированы. Запустите первую модель или загрузите готовый реестр атомов.
+                      </div>
+                    )}
+                  </section>
+
+                <section className="rounded-lg border border-border bg-surface px-4 py-4 shadow-sm sm:px-5" aria-labelledby="working-atom-register-title">
                 <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
-                    <h3 className="text-base font-semibold text-foreground">Реестр атомов</h3>
+                    <h3 id="working-atom-register-title" className="text-base font-semibold text-foreground">Реестр атомов</h3>
                     <p className="mt-1 text-xs text-muted-foreground">
                       Принято: {detail?.atomsReady ?? 0} · черновиков: {detail?.atomsDraft ?? 0} · альфа: {alphaReviewedCount}/{(detail?.atoms ?? []).filter((atom) => atom.status === 'ready').length}
                     </p>
@@ -4593,7 +4726,7 @@ export function AuditPage() {
                         <button
                           type="button"
                           onClick={() => void openAtomReview('draft')}
-                          className="hidden min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 md:inline-flex"
+                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
                         >
                           <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                           Проверить черновики
@@ -4604,7 +4737,7 @@ export function AuditPage() {
                           type="button"
                           onClick={() => void openAtomReview('alpha')}
                           disabled={(detail?.atomsDraft ?? 0) > 0 || alphaUnreviewedCount === 0}
-                          className="hidden min-h-11 items-center justify-center gap-2 rounded-md border border-primary/30 bg-surface px-3 text-sm font-medium text-primary transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:border-border disabled:text-muted-foreground disabled:opacity-60 md:inline-flex"
+                          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-primary/30 bg-surface px-3 text-sm font-medium text-primary transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:border-border disabled:text-muted-foreground disabled:opacity-60"
                           title={(detail?.atomsDraft ?? 0) > 0 ? 'Сначала проверьте все черновики' : alphaUnreviewedCount === 0 ? 'Альфа-проверка заполнена' : 'Начать последовательную альфа-проверку'}
                         >
                           <Search className="h-4 w-4" aria-hidden="true" />
@@ -4709,85 +4842,6 @@ export function AuditPage() {
                       </button>
                     </div>
                   </div>
-                ) : null}
-
-                {modelWorkspaceError ? (
-                  <div className="mt-4 rounded-md border border-rose-500/25 bg-rose-500/10 px-3 py-3 text-sm text-rose-700 dark:text-rose-300">
-                    {modelWorkspaceError}
-                  </div>
-                ) : null}
-
-                {modelRegistries.length > 0 ? (
-                  <section className="mt-4 border-y border-border py-4" aria-labelledby="model-registries-title">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <h3 id="model-registries-title" className="text-sm font-semibold text-foreground">Модельные реестры</h3>
-                        <p className="mt-1 text-xs text-muted-foreground">Выберите один результат для подготовки рабочего реестра или несколько для сравнительного анализа.</p>
-                      </div>
-                      {canEditSelectedAtoms ? (
-                        <div className="flex flex-wrap gap-2">
-                          <button type="button" onClick={() => void openAIAtomizationDialog()} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-muted">
-                            <Sparkles className="h-4 w-4" />
-                            Запустить другую модель
-                          </button>
-                          {draftReadyModelComparison ? (
-                            <button type="button" onClick={() => showModelComparison(draftReadyModelComparison)} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-primary px-3 text-sm font-medium text-primary hover:bg-primary/5">
-                              <Boxes className="h-4 w-4" />
-                              {workingAtomRegistryExists
-                                ? 'Открыть анализ'
-                                : draftReadyModelComparison.registry_ids.length === 1
-                                  ? 'Продолжить подготовку'
-                                  : 'Продолжить сравнение'}
-                            </button>
-                          ) : null}
-                          <button type="button" onClick={() => void runModelComparison()} disabled={comparisonBusy || selectedModelRegistryIds.length < 1} className="inline-flex min-h-10 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">
-                            {comparisonBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Boxes className="h-4 w-4" />}
-                            {selectedModelRegistryIds.length === 1 ? 'Подготовить рабочий реестр' : 'Сравнить выбранные'}
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="mt-3 divide-y divide-border overflow-hidden rounded-md border border-border">
-                      {modelRegistries.map((registry) => (
-                        <details key={registry.id} className="group bg-surface">
-                          <summary className="flex min-h-14 cursor-pointer list-none items-center gap-3 px-3 py-2 hover:bg-muted/50">
-                            {canEditSelectedAtoms ? (
-                              <input
-                                type="checkbox"
-                                checked={selectedModelRegistryIds.includes(registry.id)}
-                                onClick={(event) => event.stopPropagation()}
-                                onChange={() => toggleModelRegistry(registry.id)}
-                                className="h-5 w-5 shrink-0 rounded border-input text-primary focus:ring-primary"
-                                aria-label={`Выбрать реестр ${registry.provider_name}`}
-                              />
-                            ) : null}
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-sm font-semibold text-foreground">{registry.provider_name}</span>
-                              <span className="block truncate font-mono text-xs text-muted-foreground">{registry.model_name} · конфигурация v{registry.provider_config_version}</span>
-                            </span>
-                            <span className="shrink-0 text-right">
-                              <span className="block text-sm font-semibold text-foreground">{registry.atom_count}</span>
-                              <span className="block text-[11px] text-muted-foreground">атомов</span>
-                            </span>
-                            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition group-open:rotate-90" />
-                          </summary>
-                          <div className="max-h-80 overflow-auto border-t border-border bg-surface-soft px-3 py-2">
-                            {registry.items.map((item, index) => (
-                              <div key={item.id} className="grid gap-1 border-b border-border/70 py-2 text-xs last:border-b-0 sm:grid-cols-[3rem_minmax(0,1fr)_minmax(12rem,0.7fr)]">
-                                <span className="font-mono text-muted-foreground">{index + 1}</span>
-                                <span className="font-medium text-foreground">{item.title}</span>
-                                <span className="text-muted-foreground">
-                                  {item.source_refs[0]?.excerpt || item.source_clause}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-                      ))}
-                    </div>
-                  </section>
-                ) : modelWorkspaceLoading ? (
-                  <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" />Проверяем модельные реестры</div>
                 ) : null}
 
                 {detailLoading ? (
@@ -5106,6 +5160,7 @@ export function AuditPage() {
                     </div>
                   </>
                 )}
+                </section>
               </div>
 
               <div
@@ -5113,7 +5168,7 @@ export function AuditPage() {
                 role="tabpanel"
                 aria-labelledby="audit-tab-history"
                 hidden={detailTab !== 'history'}
-                className="px-4 py-4 sm:px-5"
+                className="rounded-lg border border-border bg-surface px-4 py-4 shadow-sm sm:px-5"
               >
                 {detailLoading ? (
                   <div className="flex min-h-[220px] items-center justify-center rounded-md border border-border bg-surface-soft text-sm text-muted-foreground">
