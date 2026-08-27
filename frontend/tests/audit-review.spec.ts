@@ -70,6 +70,10 @@ type MockState = {
   patchCalls: number
   failNextPatch: boolean
   runtimeRun: Record<string, unknown> | null
+  runtimePollCalls?: number
+  runtimePollDelayMs?: number
+  runtimePollInFlight?: number
+  runtimePollMaxInFlight?: number
   contractReferenceMask?: string | null
   contractReferenceRevealable?: boolean
 }
@@ -254,6 +258,14 @@ async function installApiMock(page: Page, state: MockState) {
       return respond({ items: state.runtimeRun ? [state.runtimeRun] : [] })
     }
     if (state.runtimeRun && path === `/api/audit/cases/${caseId}/canonical-preflight/runs/${state.runtimeRun.id}` && method === 'GET') {
+      state.runtimePollCalls = (state.runtimePollCalls ?? 0) + 1
+      state.runtimePollInFlight = (state.runtimePollInFlight ?? 0) + 1
+      state.runtimePollMaxInFlight = Math.max(
+        state.runtimePollMaxInFlight ?? 0,
+        state.runtimePollInFlight,
+      )
+      if (state.runtimePollDelayMs) await new Promise((resolve) => setTimeout(resolve, state.runtimePollDelayMs))
+      state.runtimePollInFlight -= 1
       return respond(state.runtimeRun)
     }
     if (state.runtimeRun && path.endsWith('/atomization/resume') && method === 'POST') {
@@ -431,6 +443,44 @@ test('paused AI atomization exposes saved progress and resumes from checkpoint',
 
   await expect(dialog.getByRole('button', { name: 'Атомизация в очереди' })).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Приостановить' })).toBeVisible()
+})
+
+test('AI runtime polling never overlaps slow status requests', async ({ page }) => {
+  const state = newState()
+  state.runtimePollDelayMs = 3_500
+  state.runtimeRun = {
+    id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    case_id: caseId,
+    document_id: '99999999-9999-4999-8999-999999999999',
+    skill_version_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    skill_name: 'Аудит ТЗ',
+    skill_version: '0.3.0',
+    status: 'atomizing',
+    current_phase: 'atomization_model_batches',
+    source_unit_count: 120,
+    warning_count: 0,
+    atom_count: 0,
+    completed_batch_count: 4,
+    total_batch_count: 9,
+    safe_summary: {},
+    error_code: null,
+    artifacts: [],
+    external_ai_called: true,
+    ai_attempt_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+    pause_requested: false,
+    priority: 0,
+    paused_at: null,
+    created_at: '2026-08-24T08:00:00Z',
+    started_at: '2026-08-24T08:01:00Z',
+    finished_at: null,
+  }
+  await openAudit(page, state)
+
+  await page.getByRole('button', { name: 'Сформировать реестр с ИИ' }).click()
+  await expect.poll(() => state.runtimePollCalls ?? 0).toBeGreaterThan(0)
+  await page.waitForTimeout(4_000)
+
+  expect(state.runtimePollMaxInFlight).toBe(1)
 })
 
 test('one AI model registry can populate the working atom table', async ({ page }, testInfo) => {

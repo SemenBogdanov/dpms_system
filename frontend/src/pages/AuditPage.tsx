@@ -124,6 +124,15 @@ type AuditCaseUpdatePayload = Partial<AuditCaseUpdate> & UnknownRecord
 type AuditAtomCreatePayload = Partial<AuditAtomCreate> & UnknownRecord
 type AuditAtomUpdatePayload = Partial<AuditAtomUpdate> & UnknownRecord
 
+const ACTIVE_CANONICAL_RUN_STATUSES = new Set([
+  'queued',
+  'running',
+  'atomization_queued',
+  'atomizing',
+])
+const CANONICAL_RUN_POLL_INTERVAL_MS = 3_000
+const CANONICAL_RUN_RETRY_WAIT_POLL_INTERVAL_MS = 10_000
+
 interface NormalizedAuditCaseSummary {
   id: string
   code: string
@@ -2066,6 +2075,9 @@ export function AuditPage() {
         .map((registry) => `${registry.provider_config_id}:${registry.provider_config_version}:${registry.model_name}`)
     )
   }, [canonicalRun, modelRegistries])
+  const canonicalRunId = canonicalRun?.id ?? null
+  const canonicalRunStatus = canonicalRun?.status ?? null
+  const canonicalRunPhase = canonicalRun?.current_phase ?? null
 
   useEffect(() => {
     if (!isCanonicalSkill) return
@@ -2082,24 +2094,63 @@ export function AuditPage() {
     if (
       !aiAtomizationDialogOpen
       || !selectedCaseId
-      || !canonicalRun
-      || !['queued', 'running', 'atomization_queued', 'atomizing'].includes(canonicalRun.status)
+      || !canonicalRunId
+      || !canonicalRunStatus
+      || !ACTIVE_CANONICAL_RUN_STATUSES.has(canonicalRunStatus)
     ) return
     let cancelled = false
-    const timer = window.setInterval(() => {
-      void api.get<AuditTZRun>(`/api/audit/cases/${selectedCaseId}/canonical-preflight/runs/${canonicalRun.id}`)
-        .then((result) => {
-          if (!cancelled) setCanonicalRun(result)
-        })
-        .catch((error: unknown) => {
-          if (!cancelled) setAiAtomizationError(error instanceof Error ? error.message : 'Не удалось обновить состояние runtime')
-        })
-    }, canonicalRun.current_phase === 'atomization_retry_wait' ? 5000 : 1200)
+    let timer: number | null = null
+    let controller: AbortController | null = null
+
+    const schedule = (delayMs: number): void => {
+      timer = window.setTimeout(poll, delayMs)
+    }
+
+    const poll = async (): Promise<void> => {
+      const requestController = new AbortController()
+      controller = requestController
+      let continuePolling = true
+      let nextDelay = canonicalRunPhase === 'atomization_retry_wait'
+        ? CANONICAL_RUN_RETRY_WAIT_POLL_INTERVAL_MS
+        : CANONICAL_RUN_POLL_INTERVAL_MS
+      try {
+        const result = await api.get<AuditTZRun>(
+          `/api/audit/cases/${selectedCaseId}/canonical-preflight/runs/${canonicalRunId}`,
+          undefined,
+          { signal: requestController.signal }
+        )
+        if (cancelled) return
+        setCanonicalRun(result)
+        continuePolling = ACTIVE_CANONICAL_RUN_STATUSES.has(result.status)
+        nextDelay = result.current_phase === 'atomization_retry_wait'
+          ? CANONICAL_RUN_RETRY_WAIT_POLL_INTERVAL_MS
+          : CANONICAL_RUN_POLL_INTERVAL_MS
+      } catch (error) {
+        if (cancelled || requestController.signal.aborted) return
+        setAiAtomizationError(error instanceof Error ? error.message : 'Не удалось обновить состояние runtime')
+      } finally {
+        if (controller === requestController) controller = null
+        if (!cancelled && continuePolling) schedule(nextDelay)
+      }
+    }
+
+    schedule(
+      canonicalRunPhase === 'atomization_retry_wait'
+        ? CANONICAL_RUN_RETRY_WAIT_POLL_INTERVAL_MS
+        : CANONICAL_RUN_POLL_INTERVAL_MS
+    )
     return () => {
       cancelled = true
-      window.clearInterval(timer)
+      if (timer !== null) window.clearTimeout(timer)
+      controller?.abort()
     }
-  }, [aiAtomizationDialogOpen, canonicalRun, selectedCaseId])
+  }, [
+    aiAtomizationDialogOpen,
+    canonicalRunId,
+    canonicalRunPhase,
+    canonicalRunStatus,
+    selectedCaseId,
+  ])
 
   useEffect(() => {
     if (
