@@ -269,7 +269,8 @@ def upgrade() -> None:
                 created_at, updated_at
             )
             SELECT
-                gen_random_uuid(), owner_id, stored_filename, size_bytes, category,
+                md5(owner_id::text || ':' || stored_filename)::uuid,
+                owner_id, stored_filename, size_bytes, category,
                 'active', NULL, created_at, NULL, NULL, created_at, now()
             FROM deduplicated
             ON CONFLICT (stored_filename) DO NOTHING
