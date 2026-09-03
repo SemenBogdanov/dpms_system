@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { UserModal, type UserFormPayload } from '@/components/UserModal'
 import { UserAdminHistoryModal } from '@/components/UserAdminHistoryModal'
+import { AdminStorageQuotaRequestsPanel } from '@/components/AdminStorageQuotaRequestsPanel'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
 import { Copy, History, KeyRound, Pencil, PlugZap, Plus, RotateCcw, Trash2, UserPlus, Users } from 'lucide-react'
@@ -683,6 +684,8 @@ export function AdminUsersPage() {
           </table>
         </div>
       </section>
+
+      <AdminStorageQuotaRequestsPanel />
 
       <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">

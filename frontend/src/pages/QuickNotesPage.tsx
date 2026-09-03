@@ -684,6 +684,17 @@ export function QuickNotesPage() {
     }
   }
 
+  const deleteAttachment = async (noteId: string, attachment: QuickNoteAttachment) => {
+    if (!window.confirm(`Удалить файл «${attachment.original_filename}»?`)) return
+    try {
+      await api.delete(`/api/quick-notes/${noteId}/attachments/${attachment.id}`)
+      await loadAttachments(noteId)
+      toast.success('Файл удален')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Ошибка удаления файла')
+    }
+  }
+
   const renderDiscussion = (noteId: string) => {
     const comments = commentsByNote[noteId] ?? []
     const rootComments = comments.filter((comment) => !comment.parent_id)
@@ -869,7 +880,7 @@ export function QuickNotesPage() {
                 className="hidden"
                 disabled={uploadingNoteId === note.id}
                 onChange={(event) => void uploadAttachment(note.id, event.target.files?.[0] ?? null)}
-                accept=".png,.jpg,.jpeg,.webp,.gif,.docx,.xls,.xlsx"
+                accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xls,.xlsx,.pptx,.txt,.md,.csv"
               />
             </label>
           )}
@@ -881,21 +892,33 @@ export function QuickNotesPage() {
         ) : (
           <div className="mt-3 space-y-2">
             {attachments.map((attachment) => (
-              <button
-                key={attachment.id}
-                type="button"
-                onClick={() => downloadAttachment(note.id, attachment)}
-                className="flex w-full items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-left text-sm hover:bg-slate-50"
-              >
-                <span className="flex min-w-0 items-center gap-2">
-                  <FileText className="h-4 w-4 shrink-0 text-slate-400" />
-                  <span className="min-w-0">
-                    <span className="block truncate font-medium text-slate-700">{attachment.original_filename}</span>
-                    <span className="text-xs text-slate-400">{formatBytes(attachment.size_bytes)}</span>
+              <div key={attachment.id} className="flex items-center gap-1 rounded-lg bg-white p-1">
+                <button
+                  type="button"
+                  onClick={() => downloadAttachment(note.id, attachment)}
+                  className="flex min-h-11 min-w-0 flex-1 items-center justify-between gap-3 rounded-md px-2 text-left text-sm hover:bg-slate-50"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <FileText className="h-4 w-4 shrink-0 text-slate-400" />
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-slate-700">{attachment.original_filename}</span>
+                      <span className="text-xs text-slate-400">{formatBytes(attachment.size_bytes)}</span>
+                    </span>
                   </span>
-                </span>
-                <Download className="h-4 w-4 shrink-0 text-slate-400" />
-              </button>
+                  <Download className="h-4 w-4 shrink-0 text-slate-400" />
+                </button>
+                {canUpload && (
+                  <button
+                    type="button"
+                    onClick={() => void deleteAttachment(note.id, attachment)}
+                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    title="Удалить файл"
+                    aria-label={`Удалить файл ${attachment.original_filename}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         )}

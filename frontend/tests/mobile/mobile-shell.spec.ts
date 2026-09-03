@@ -53,6 +53,23 @@ async function installApiMock(
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(testUser) })
       return
     }
+    if (pathname === '/api/storage-quota/me') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          quota_bytes: 50 * 1024 * 1024,
+          used_bytes: 0,
+          reserved_bytes: 0,
+          available_bytes: 50 * 1024 * 1024,
+          usage_percent: 0,
+          warning_level: 'normal',
+          warning_message: 'Свободного места достаточно.',
+          pending_request: null,
+        }),
+      })
+      return
+    }
     if (Object.prototype.hasOwnProperty.call(responses, pathname)) {
       const response = responses[pathname]
       if (typeof response === 'function') {

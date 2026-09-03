@@ -45,6 +45,11 @@ from app.models.personal_task_artifact import (
     PersonalTaskArtifact,
     PersonalTaskArtifactVersion,
 )
+from app.models.storage_quota import (
+    StorageQuotaRequest,
+    UserStorageFile,
+    UserStorageQuota,
+)
 from app.models.deadline_tracker import DeadlineTracker
 from app.models.audit import (
     AuditAIAtomDraft,
@@ -132,6 +137,9 @@ __all__ = [
     "PersonalTaskCheckpoint",
     "PersonalTaskArtifact",
     "PersonalTaskArtifactVersion",
+    "UserStorageQuota",
+    "UserStorageFile",
+    "StorageQuotaRequest",
     "DeadlineTracker",
     "AuditCase",
     "AuditAIAtomDraft",

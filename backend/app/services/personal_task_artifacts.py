@@ -23,6 +23,11 @@ from app.services.attachments import (
     stored_attachment_path,
     write_attachment_bytes,
 )
+from app.services.storage_quota import (
+    abandon_storage_reservation,
+    activate_storage_file,
+    reserve_storage_file,
+)
 
 
 ARTIFACT_TYPES = {"document", "link", "result"}
@@ -96,10 +101,11 @@ async def _version_payload(
     *,
     task_id: uuid.UUID,
     artifact_id: uuid.UUID,
+    owner_id: uuid.UUID,
     upload: UploadFile | None,
     url: str | None,
     artifact_type: str,
-) -> tuple[dict, Path | None]:
+) -> tuple[dict, Path | None, uuid.UUID | None]:
     source_kind, normalized_url = _source_kind(artifact_type, upload, url)
     if source_kind == "link":
         return {
@@ -110,14 +116,24 @@ async def _version_payload(
             "content_type": None,
             "size_bytes": None,
             "sha256": None,
-        }, None
+        }, None, None
 
     assert upload is not None
     original_filename, content_type, extension, data = await read_attachment_upload(upload)
     stored_filename = (
         f"personal-tasks/{task_id}/artifacts/{artifact_id}/{uuid.uuid4()}{extension}"
     )
-    file_path = write_attachment_bytes(stored_filename, data)
+    reservation = await reserve_storage_file(
+        owner_id=owner_id,
+        stored_filename=stored_filename,
+        size_bytes=len(data),
+        category="personal_task_artifact",
+    )
+    try:
+        file_path = write_attachment_bytes(stored_filename, data)
+    except Exception:
+        await abandon_storage_reservation(reservation.id)
+        raise
     return {
         "source_kind": source_kind,
         "url": None,
@@ -126,7 +142,7 @@ async def _version_payload(
         "content_type": content_type,
         "size_bytes": len(data),
         "sha256": hashlib.sha256(data).hexdigest(),
-    }, file_path
+    }, file_path, reservation.id
 
 
 async def create_artifact(
@@ -172,9 +188,10 @@ async def create_artifact(
         created_by_id=user.id,
         updated_by_id=user.id,
     )
-    payload, file_path = await _version_payload(
+    payload, file_path, storage_file_id = await _version_payload(
         task_id=task.id,
         artifact_id=artifact.id,
+        owner_id=task.owner_id,
         upload=upload,
         url=url,
         artifact_type=artifact_type,
@@ -187,11 +204,18 @@ async def create_artifact(
         **payload,
     )
     db.add_all([artifact, version])
+    activation_started = False
     try:
         await db.flush()
+        if storage_file_id is not None:
+            activation_started = True
+            await activate_storage_file(db, storage_file_id)
+            await db.flush()
     except Exception:
         if file_path is not None:
             file_path.unlink(missing_ok=True)
+        if storage_file_id is not None and not activation_started:
+            await abandon_storage_reservation(storage_file_id)
         raise
     return artifact, version
 
@@ -229,9 +253,10 @@ async def add_artifact_version(
             ),
         )
 
-    payload, file_path = await _version_payload(
+    payload, file_path, storage_file_id = await _version_payload(
         task_id=task.id,
         artifact_id=artifact.id,
+        owner_id=task.owner_id,
         upload=upload,
         url=url,
         artifact_type=artifact.artifact_type,
@@ -248,11 +273,18 @@ async def add_artifact_version(
     artifact.updated_by_id = user.id
     artifact.updated_at = utc_now()
     db.add(version)
+    activation_started = False
     try:
         await db.flush()
+        if storage_file_id is not None:
+            activation_started = True
+            await activate_storage_file(db, storage_file_id)
+            await db.flush()
     except Exception:
         if file_path is not None:
             file_path.unlink(missing_ok=True)
+        if storage_file_id is not None and not activation_started:
+            await abandon_storage_reservation(storage_file_id)
         raise
     return version
 

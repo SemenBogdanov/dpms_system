@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     MAX_TASK_ATTACHMENTS: int = 5
     MAX_PERSONAL_TASK_ARTIFACTS: int = 20
     MAX_PERSONAL_TASK_ARTIFACT_VERSIONS: int = 20
+    PERSONAL_STORAGE_DEFAULT_BYTES: int = 50 * 1024 * 1024
 
     # External integrations. Origins are exact HTTPS origins without paths.
     SYNOLOGY_ALLOWED_ORIGINS: str = ""

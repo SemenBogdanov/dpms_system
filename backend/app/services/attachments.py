@@ -219,23 +219,43 @@ async def save_quick_note_attachment(
             detail=f"К заметке можно прикрепить не более {settings.MAX_TASK_ATTACHMENTS} файлов",
         )
 
+    from app.services.storage_quota import (
+        abandon_storage_reservation,
+        activate_storage_file,
+        reserve_storage_file,
+    )
+
     original_filename, content_type, extension, data = await read_attachment_upload(upload)
     stored_filename = f"quick-notes/{note.id}/{uuid.uuid4()}{extension}"
-    file_path = write_attachment_bytes(stored_filename, data)
-
-    attachment = QuickNoteAttachment(
-        note_id=note.id,
-        uploaded_by_id=uploader.id,
-        original_filename=original_filename,
+    reservation = await reserve_storage_file(
+        owner_id=note.owner_id,
         stored_filename=stored_filename,
-        content_type=content_type,
         size_bytes=len(data),
+        category="quick_note",
     )
-    db.add(attachment)
+    file_path: Path | None = None
+    activation_started = False
     try:
+        file_path = write_attachment_bytes(stored_filename, data)
+
+        attachment = QuickNoteAttachment(
+            note_id=note.id,
+            uploaded_by_id=uploader.id,
+            original_filename=original_filename,
+            stored_filename=stored_filename,
+            content_type=content_type,
+            size_bytes=len(data),
+        )
+        db.add(attachment)
+        await db.flush()
+        activation_started = True
+        await activate_storage_file(db, reservation.id)
         await db.flush()
         await db.refresh(attachment)
     except Exception:
-        file_path.unlink(missing_ok=True)
+        if file_path is not None:
+            file_path.unlink(missing_ok=True)
+        if not activation_started:
+            await abandon_storage_reservation(reservation.id)
         raise
     return attachment

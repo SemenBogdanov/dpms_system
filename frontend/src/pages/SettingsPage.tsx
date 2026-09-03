@@ -23,6 +23,7 @@ import type { AuthenticatedUser } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 import { LeagueBadge } from '@/components/LeagueBadge'
+import { StorageQuotaSettingsPanel } from '@/components/StorageQuotaSettingsPanel'
 import { hasTaskWorkspaceAccess } from '@/lib/access'
 import {
   applySidebarItemLabels,
@@ -318,6 +319,8 @@ export function SettingsPage() {
           </button>
         </section>
       </div>
+
+      <StorageQuotaSettingsPanel />
 
       {user && (
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">

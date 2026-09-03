@@ -128,6 +128,42 @@ export interface AdminUser extends AuthenticatedUser {
   temporary_password_expires_at: string | null
 }
 
+export type StorageQuotaWarningLevel = 'normal' | 'warning' | 'critical' | 'blocked'
+export type StorageQuotaRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled'
+
+export interface StorageQuotaRequest {
+  id: string
+  user_id: string
+  current_limit_bytes: number
+  requested_limit_bytes: number
+  approved_limit_bytes: number | null
+  reason: string
+  status: StorageQuotaRequestStatus
+  decision_comment: string | null
+  decided_by_id: string | null
+  decided_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface StorageQuotaSummary {
+  quota_bytes: number
+  used_bytes: number
+  reserved_bytes: number
+  available_bytes: number
+  usage_percent: number
+  warning_level: StorageQuotaWarningLevel
+  warning_message: string
+  pending_request: StorageQuotaRequest | null
+}
+
+export interface AdminStorageQuotaRequest extends StorageQuotaRequest {
+  user_name: string
+  user_email: string
+  used_bytes: number
+  reserved_bytes: number
+}
+
 export type AuditCaseStatus = 'draft' | 'atomization' | 'ready' | 'archived'
 export type AuditWorkflowStage =
   | 'unassigned'

@@ -48,6 +48,10 @@ from app.services.personal_task_artifacts import (
     remove_version_file,
 )
 from app.services.task_policy import ensure_critical_priority_allowed
+from app.services.storage_quota import (
+    finalize_storage_file_deletion,
+    schedule_storage_file_deletion,
+)
 
 router = APIRouter()
 
@@ -1113,6 +1117,15 @@ async def delete_personal_task_artifact(
             detail="Для удаления сначала архивируйте материал и личную задачу",
         )
     versions = list(artifact.versions)
+    storage_file_ids = [
+        await schedule_storage_file_deletion(
+            db,
+            owner_id=task.owner_id,
+            stored_filename=version.stored_filename,
+        )
+        for version in versions
+        if version.source_kind == "file" and version.stored_filename
+    ]
     _add_event(
         db,
         task,
@@ -1129,8 +1142,8 @@ async def delete_personal_task_artifact(
     await db.delete(artifact)
     await db.flush()
     await db.commit()
-    for version in versions:
-        remove_version_file(version)
+    for storage_file_id in storage_file_ids:
+        await finalize_storage_file_deletion(storage_file_id)
     return {"deleted": True, "artifact_id": str(artifact_id)}
 
 

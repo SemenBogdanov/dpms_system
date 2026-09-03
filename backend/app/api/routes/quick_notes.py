@@ -30,6 +30,10 @@ from app.schemas.quick_note import (
     SharedQuickNoteRead,
 )
 from app.services.attachments import attachment_path, save_quick_note_attachment
+from app.services.storage_quota import (
+    finalize_storage_file_deletion,
+    schedule_storage_file_deletion,
+)
 from app.services.attention_realtime import attention_hub
 from app.services.messages import emit_attention_event, resolve_attention_for_source
 from app.services.quick_note_realtime import QuickNoteConnection, hub_registry
@@ -524,6 +528,46 @@ async def get_note_attachment_content(
         filename=attachment.original_filename,
     )
 
+
+@router.delete("/{note_id}/attachments/{attachment_id}")
+async def delete_note_attachment(
+    note_id: UUID,
+    attachment_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently remove one file from an owned note and release its quota."""
+    note = await _get_owned_note_or_404(db, note_id, current_user.id, for_update=True)
+    attachment = (
+        await db.execute(
+            select(QuickNoteAttachment)
+            .where(
+                QuickNoteAttachment.id == attachment_id,
+                QuickNoteAttachment.note_id == note.id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Файл заметки не найден")
+    storage_file_id = await schedule_storage_file_deletion(
+        db,
+        owner_id=note.owner_id,
+        stored_filename=attachment.stored_filename,
+    )
+    await db.delete(attachment)
+    await db.commit()
+    await finalize_storage_file_deletion(storage_file_id)
+    await _broadcast(
+        note.id,
+        {
+            "type": "attachment.deleted",
+            "attachment_id": str(attachment_id),
+            "actor_id": str(current_user.id),
+        },
+    )
+    return {"deleted": True, "attachment_id": str(attachment_id)}
+
 @router.patch("/{note_id}", response_model=QuickNoteRead)
 async def update_quick_note(
     note_id: UUID,
@@ -574,10 +618,27 @@ async def delete_quick_note(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete current user's quick note."""
-    note = await _get_owned_note_or_404(db, note_id, current_user.id)
+    note = await _get_owned_note_or_404(db, note_id, current_user.id, for_update=True)
+    attachments = list(
+        (
+            await db.execute(
+                select(QuickNoteAttachment).where(QuickNoteAttachment.note_id == note.id)
+            )
+        ).scalars()
+    )
+    storage_file_ids = [
+        await schedule_storage_file_deletion(
+            db,
+            owner_id=note.owner_id,
+            stored_filename=attachment.stored_filename,
+        )
+        for attachment in attachments
+    ]
     deleted_note_id = note.id
     await db.delete(note)
     await db.commit()
+    for storage_file_id in storage_file_ids:
+        await finalize_storage_file_deletion(storage_file_id)
     await _broadcast(
         deleted_note_id,
         {"type": "note.deleted", "actor_id": str(current_user.id)},

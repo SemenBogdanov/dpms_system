@@ -9,7 +9,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
-from app.api.routes import absences, activity, admin, ai_provider, audit, audit_runtime, audit_synology, auth, calculator, catalog, client_events, competencies, contacts, dashboard, deadline_trackers, feedback, knowledge, messages, notifications, personal_tasks, project_cockpit, queue, quick_notes, reports, shop, tasks, users, work_entities, work_entity_workspace
+from app.api.routes import absences, activity, admin, ai_provider, audit, audit_runtime, audit_synology, auth, calculator, catalog, client_events, competencies, contacts, dashboard, deadline_trackers, feedback, knowledge, messages, notifications, personal_tasks, project_cockpit, queue, quick_notes, reports, shop, storage_quota, tasks, users, work_entities, work_entity_workspace
 from app.database import AsyncSessionLocal
 from app.services.audit_documents import reconcile_staged_audit_documents
 from app.services.audit_synology import synology_session_store
@@ -64,6 +64,7 @@ app.include_router(activity.router, prefix="/api/activity", tags=["activity"])
 app.include_router(client_events.router, prefix="/api/client-events", tags=["client-events"])
 app.include_router(contacts.router, prefix="/api/contacts", tags=["contacts"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
+app.include_router(storage_quota.router, prefix="/api/storage-quota", tags=["storage-quota"])
 app.include_router(catalog.router, prefix="/api/catalog", tags=["catalog"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["knowledge"])
 app.include_router(absences.router, prefix="/api/absences", tags=["absences"])

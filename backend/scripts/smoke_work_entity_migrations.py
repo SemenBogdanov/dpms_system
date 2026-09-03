@@ -269,7 +269,7 @@ async def verify_head_schema(database_url: URL) -> None:
                     text("SELECT version_num FROM alembic_version")
                 )
             ).scalar_one()
-            assert revision == "074_audit_atom_review"
+            assert revision == "077_user_storage_quota"
             audit_context_default = (
                 await connection.execute(
                     text(
@@ -350,7 +350,10 @@ async def verify_head_schema(database_url: URL) -> None:
                                 'email_outbox',
                                 'audit_tz_runs',
                                 'audit_tz_runtime_jobs',
-                                'audit_tz_artifacts'
+                                'audit_tz_artifacts',
+                                'user_storage_quotas',
+                                'user_storage_files',
+                                'storage_quota_requests'
                               )
                             """
                         )
@@ -375,6 +378,9 @@ async def verify_head_schema(database_url: URL) -> None:
                 "audit_tz_runs",
                 "audit_tz_runtime_jobs",
                 "audit_tz_artifacts",
+                "user_storage_quotas",
+                "user_storage_files",
+                "storage_quota_requests",
             }
             runtime_columns = set(
                 (
@@ -424,7 +430,8 @@ async def verify_head_schema(database_url: URL) -> None:
                                 'sovmestnaya-rabota-i-realtime-v-zametkah',
                                 'soobshcheniya-obrashcheniya-i-vazhnoe',
                                 'email-uvedomleniya-o-soobshcheniyah',
-                                'audit-ai-atomization-skills'
+                                'audit-ai-atomization-skills',
+                                'lichnoe-fajlovoe-hranilishche-i-kvota'
                             )
                               AND status = 'published'
                             """
@@ -437,7 +444,57 @@ async def verify_head_schema(database_url: URL) -> None:
                 "soobshcheniya-obrashcheniya-i-vazhnoe",
                 "email-uvedomleniya-o-soobshcheniyah",
                 "audit-ai-atomization-skills",
+                "lichnoe-fajlovoe-hranilishche-i-kvota",
             }
+            quota_default = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT column_default
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'user_storage_quotas'
+                          AND column_name = 'limit_bytes'
+                        """
+                    )
+                )
+            ).scalar_one()
+            assert "52428800" in quota_default
+            quota_indexes = set(
+                (
+                    await connection.execute(
+                        text(
+                            """
+                            SELECT indexname
+                            FROM pg_indexes
+                            WHERE schemaname = 'public'
+                              AND indexname IN (
+                                'ix_user_storage_files_owner_status_expiry',
+                                'uq_storage_quota_requests_pending_user'
+                              )
+                            """
+                        )
+                    )
+                ).scalars()
+            )
+            assert quota_indexes == {
+                "ix_user_storage_files_owner_status_expiry",
+                "uq_storage_quota_requests_pending_user",
+            }
+            quota_article = (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT title, body
+                        FROM knowledge_articles
+                        WHERE slug = 'lichnoe-fajlovoe-hranilishche-i-kvota'
+                        """
+                    )
+                )
+            ).one()
+            assert quota_article.title == "Личное файловое хранилище и квота"
+            assert "50 МиБ" in quota_article.body
+            assert "резервирует необходимый объем" in quota_article.body
             user_columns = set(
                 (
                     await connection.execute(
