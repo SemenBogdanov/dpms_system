@@ -79,9 +79,9 @@ const growthHomeCardClass =
 const growthToolbarButtonClass =
   'inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-900 focus:outline-none focus:ring-2 focus:ring-cyan-300/50'
 const growthModalBackdropClass =
-  'fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4 py-6 backdrop-blur-md'
+  'portable-modal-backdrop px-4 py-6'
 const growthModalPanelClass =
-  'w-full rounded-lg border border-cyan-300/35 bg-white shadow-[0_0_0_1px_rgba(14,165,233,0.18),0_28px_80px_rgba(2,6,23,0.38),0_0_44px_rgba(14,165,233,0.18)] dark:bg-slate-900'
+  'portable-modal-surface'
 
 const planStatusLabel: Record<DevelopmentPlanStatus, string> = {
   planned: 'Запланировано',
@@ -1991,9 +1991,9 @@ export function CompetenciesPage() {
       )}
 
       {pendingStartCompetency && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4 py-6">
-          <div className="w-full max-w-xl rounded-lg bg-white shadow-xl">
-            <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+        <div className={growthModalBackdropClass}>
+          <div className={cn(growthModalPanelClass, 'max-w-xl')}>
+            <div className="portable-modal-header flex items-center justify-between gap-3 border-b px-5 py-4">
               <h2 className="font-medium text-slate-900">Начать оценку</h2>
               <button
                 type="button"
@@ -2036,9 +2036,9 @@ export function CompetenciesPage() {
       )}
 
       {activeAttempt && activeQuestion && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4 py-6">
-          <div className="w-full max-w-2xl rounded-lg bg-white shadow-xl">
-            <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+        <div className={growthModalBackdropClass}>
+          <div className={cn(growthModalPanelClass, 'max-w-2xl')}>
+            <div className="portable-modal-header flex items-center justify-between gap-3 border-b px-5 py-4">
               <div>
                 <h2 className="font-medium text-slate-900">{activeAttempt.competency_title}</h2>
                 <p className="mt-1 text-sm text-slate-500">Вопрос {questionIndex + 1} из {activeAttempt.questions.length}</p>

@@ -27,7 +27,7 @@ function Workspace() {
           </div>
           <div className="flex items-center gap-2">
             {user.role === 'admin' && (
-              <button type="button" onClick={() => setUsersOpen(true)} className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              <button type="button" onClick={() => setUsersOpen(true)} aria-label="Сотрудники" title="Сотрудники" className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">
                 <Users className="h-4 w-4" />
                 <span className="hidden sm:inline">Сотрудники</span>
               </button>
