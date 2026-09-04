@@ -1,0 +1,32 @@
+name: dpms-development
+
+services:
+  app:
+    image: dpms-development-edition:1.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "${DPMS_UID:-10001}:${DPMS_GID:-10001}"
+    ports:
+      - "${DPMS_BIND_ADDRESS:-127.0.0.1}:${DPMS_PORT:-8787}:8000"
+    environment:
+      DPMS_DATA_DIR: /data
+    volumes:
+      - ./runtime/data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    restart: unless-stopped
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 2.0
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

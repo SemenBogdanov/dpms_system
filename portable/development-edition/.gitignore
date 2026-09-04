@@ -1,0 +1,14 @@
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/*.tsbuildinfo
+/test-results/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+runtime/data/*
+archives/*
+images/*
+!runtime/data/.gitkeep
+!archives/.gitkeep
+!images/.gitkeep

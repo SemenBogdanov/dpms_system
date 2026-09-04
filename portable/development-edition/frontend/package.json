@@ -1,0 +1,31 @@
+{
+  "name": "dpms-development-edition",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "dev": "vite --host 0.0.0.0"
+  },
+  "dependencies": {
+    "clsx": "2.1.1",
+    "lucide-react": "0.323.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-hot-toast": "2.6.0",
+    "react-router-dom": "7.18.1",
+    "tailwind-merge": "2.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.0",
+    "@playwright/test": "1.62.0",
+    "@types/react": "18.3.18",
+    "@types/react-dom": "18.3.5",
+    "@vitejs/plugin-react": "6.1.1",
+    "autoprefixer": "10.4.21",
+    "postcss": "8.5.3",
+    "tailwindcss": "3.4.19",
+    "typescript": "5.6.3",
+    "vite": "8.2.2"
+  }
+}

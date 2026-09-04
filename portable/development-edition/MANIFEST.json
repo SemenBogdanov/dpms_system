@@ -1,0 +1,21 @@
+{
+  "name": "DPMS Development Edition",
+  "version": "1.0.0",
+  "source_release_sha": "2def4d6d1435d643041d6f3edb139f4169684485",
+  "database": "SQLite",
+  "sections": [
+    "Развитие"
+  ],
+  "catalog": {
+    "sha256": "0eb2a2d29357d143230399602a58992199b80b496e85f2e8c55cf6bd90cf71b3",
+    "competencies": 6,
+    "questions": 84,
+    "choices": 420,
+    "interpretations": 24
+  },
+  "production_personal_data_included": false,
+  "supported_cpu_architectures": [
+    "amd64",
+    "arm64"
+  ]
+}
