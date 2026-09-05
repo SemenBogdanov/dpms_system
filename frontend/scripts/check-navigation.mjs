@@ -18,7 +18,7 @@ const expectedItems = [
   ['quick-notes', '/quick-notes', 'Заметки', 'tasks'],
   ['contacts', '/contacts', 'Контакты', 'tasks'],
   ['messages', '/messages', 'Сообщения', 'tasks'],
-  ['dashboard', '/', 'Дашборд', 'management'],
+  ['dashboard', '/dashboard', 'Дашборд', 'management'],
   ['reports', '/reports', 'Отчёты', 'management'],
   ['calibration', '/calibration', 'Калибровка', 'management'],
   ['absences', '/absences', 'Отсутствия', 'management'],
@@ -78,14 +78,26 @@ for (const [path, label] of expectedInternalRoutes) {
   }
 }
 
-const payloadVersionMatch = sidebarSource.match(/sidebarOrderPayload[\s\S]*?return\s*\{\s*version:\s*(\d+)/)
+const payloadVersionMatch = sidebarSource.match(/SIDEBAR_MENU_SCHEMA_VERSION\s*=\s*(\d+)/)
 const payloadVersion = payloadVersionMatch ? Number(payloadVersionMatch[1]) : 0
-if (payloadVersion < 7) {
-  errors.push(`sidebar menu payload version must be >= 7, got ${payloadVersion || 'unknown'}`)
+if (payloadVersion < 8) {
+  errors.push(`sidebar menu payload version must be >= 8, got ${payloadVersion || 'unknown'}`)
+}
+
+if (!sidebarSource.includes('version: SIDEBAR_MENU_SCHEMA_VERSION')) {
+  errors.push('sidebar payload must use the shared schema version constant')
 }
 
 if (!sidebarSource.includes("version < 7 && !uniqueGroups.some((group) => group.id === 'audit')")) {
   errors.push('sidebar migration must restore the Audit group for saved menus created before version 7')
+}
+
+if (!sidebarSource.includes("requiredSidebarItemIds = new Set(['messages'])")) {
+  errors.push('Messages must remain a required, reorderable sidebar item')
+}
+
+if (!appSource.includes('<Route index element={<Navigate to="/messages" replace />} />')) {
+  errors.push('authenticated root route must open Messages')
 }
 
 if (errors.length > 0) {

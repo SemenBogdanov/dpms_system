@@ -286,26 +286,33 @@ def _safe_tracker_start_at(start_at: datetime, due_at: datetime) -> datetime:
 
 async def _sync_linked_deadline_tracker(db: AsyncSession, task: PersonalTask) -> None:
     """Keep personal-task tracker dates aligned with the parent task."""
+    from app.services.deadline_tracker_schedule import sync_tracker_schedule
+
     result = await db.execute(
         select(DeadlineTracker).where(
             DeadlineTracker.personal_task_id == task.id,
             DeadlineTracker.owner_id == task.owner_id,
-        )
+        ).with_for_update()
     )
     tracker = result.scalar_one_or_none()
     if tracker is None:
         return
-    tracker.title = f"PT-{task.task_number} {task.title}"
+    tracker.title = f"PT-{task.task_number} {task.title}"[:200]
     tracker.description = task.description or task.notes
     if task.due_at is None:
         tracker.status = "archived"
         tracker.updated_at = datetime.now(timezone.utc)
+        await sync_tracker_schedule(db, tracker)
         return
     tracker.starts_at = _safe_tracker_start_at(_task_start_at(task), task.due_at)
     tracker.due_at = task.due_at
     tracker.next_action = task.next_step
     tracker.responsible = task.responsible
     tracker.updated_at = datetime.now(timezone.utc)
+    if task.status in {"done", "archived"}:
+        tracker.status = task.status
+        tracker.completed_at = datetime.now(timezone.utc)
+    await sync_tracker_schedule(db, tracker)
 
 
 def _add_event(
@@ -649,7 +656,7 @@ async def update_personal_task(
     changed_fields = sorted(update_data.keys())
     if "start_at" in update_data or "due_at" in update_data:
         _ensure_valid_task_dates(task.start_at, task.due_at)
-    if {"title", "description", "notes", "next_step", "responsible", "start_at", "due_at"} & set(changed_fields):
+    if {"title", "description", "notes", "next_step", "responsible", "start_at", "due_at", "status"} & set(changed_fields):
         await _sync_linked_deadline_tracker(db, task)
     if "status" in update_data and update_data["status"] != old_status:
         _add_event(

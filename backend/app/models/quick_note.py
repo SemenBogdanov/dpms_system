@@ -43,3 +43,7 @@ class QuickNote(Base):
         onupdate=datetime.utcnow,
     )
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    group_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("note_groups.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )

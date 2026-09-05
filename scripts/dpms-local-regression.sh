@@ -58,14 +58,18 @@ fi
 curl --fail --silent --show-error "$health_url"
 "${compose[@]}" exec -T backend alembic current
 "${compose[@]}" exec -T backend alembic heads
+"${compose[@]}" exec -T deadline-worker python -m app.workers.deadline_reminders --healthcheck
 
 step "Python syntax"
 "${compose[@]}" exec -T backend python -m compileall -q app alembic scripts
 
 step "Backend unit tests"
+"${compose[@]}" exec -T backend pip install --disable-pip-version-check -r requirements-test.txt
 "${compose[@]}" exec -T backend python -m unittest discover -s tests -p 'test_*.py'
 
 run_backend_smoke smoke_messages.py --allow-compose-db
+run_backend_smoke smoke_attention_snapshot.py
+run_backend_smoke check_workspace_release.py
 run_backend_smoke smoke_email_outbox.py
 run_backend_smoke smoke_auth_session.py
 run_backend_smoke smoke_admin_user_audit.py
@@ -78,6 +82,9 @@ run_backend_smoke smoke_work_entities.py
 run_backend_smoke smoke_work_entity_workspace.py
 run_backend_smoke smoke_project_cockpit.py
 run_backend_smoke smoke_quick_note_collaboration.py
+run_backend_smoke smoke_note_groups.py
+run_backend_smoke smoke_work_entity_note_privacy.py --allow-local-db
+run_backend_smoke smoke_deadline_trackers.py --allow-local-db
 
 if [[ "$PROFILE" == "full" ]]; then
   step "Migration upgrade/downgrade contract"
@@ -96,6 +103,18 @@ npm --prefix frontend run lint
 npm --prefix frontend run build
 
 if [[ "$PROFILE" == "full" ]]; then
+  step "ID 64A start screen, menu portability, and Knowledge Base splitter"
+  npm --prefix frontend run test:id64a
+
+  step "Tracker groups, calendar recurrence, and reminders"
+  npm --prefix frontend run test:trackers
+
+  step "Note groups and private context links"
+  npm --prefix frontend run test:note-groups
+
+  step "Protected personal task form"
+  npm --prefix frontend run test:personal-task-form
+
   step "Messages browser matrix"
   npm --prefix frontend run test:messages
 

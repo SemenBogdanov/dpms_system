@@ -13,6 +13,7 @@ AttentionSourceType = Literal["contact", "quick_note"]
 class AttentionSummaryRead(BaseModel):
     direct_count: int = 0
     important_count: int = 0
+    revision: str = ""
 
 
 class AttentionItemRead(BaseModel):

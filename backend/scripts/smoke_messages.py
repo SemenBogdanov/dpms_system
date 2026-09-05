@@ -508,7 +508,8 @@ async def exercise_slice(
     summary = await api_json(
         client, "GET", "/api/messages/summary", recipient.id, 200
     )
-    require(summary == {"direct_count": 1, "important_count": 0}, "Contact request badge mismatch")
+    require(summary["direct_count"] == 1 and summary["important_count"] == 0, "Contact request badge mismatch")
+    require(isinstance(summary.get("revision"), str) and bool(summary["revision"]), "Inbox revision missing")
     direct_items = await api_json(
         client,
         "GET",

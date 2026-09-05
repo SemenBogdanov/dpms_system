@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: dpms_user
       POSTGRES_PASSWORD: dpms_pass
     ports:
-      - "${DPMS_DB_PORT:-5432}:5432"
+      - "${DPMS_DB_PORT:-5436}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +18,7 @@ services:
   backend:
     build: ./backend
     ports:
-      - "${DPMS_BACKEND_PORT:-8000}:8000"
+      - "${DPMS_BACKEND_PORT:-8004}:8000"
     env_file:
       - ./deploy/integrations.defaults
     environment:
@@ -39,7 +39,25 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://dpms_user:dpms_pass@db:5432/dpms
       EMAIL_DELIVERY_MODE: console
-      PUBLIC_APP_URL: http://localhost:${DPMS_FRONTEND_PORT:-5173}
+      PUBLIC_APP_URL: http://localhost:${DPMS_FRONTEND_PORT:-5177}
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
+  deadline-worker:
+    build: ./backend
+    command: ["python", "-m", "app.workers.deadline_reminders"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.deadline_reminders", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dpms_user:dpms_pass@db:5432/dpms
     depends_on:
       db:
         condition: service_healthy
@@ -81,7 +99,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "${DPMS_FRONTEND_PORT:-5173}:5173"
+      - "${DPMS_FRONTEND_PORT:-5177}:5173"
     environment:
       VITE_API_PROXY_TARGET: http://backend:8000
     depends_on:

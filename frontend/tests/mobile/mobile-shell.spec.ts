@@ -83,7 +83,9 @@ async function installApiMock(
       })
       return
     }
-    const body = request.method() === 'GET' ? [] : {}
+    const body = pathname === '/api/note-groups/backlinks'
+      ? { notes: [], groups: [] }
+      : request.method() === 'GET' ? [] : {}
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
   })
   return {

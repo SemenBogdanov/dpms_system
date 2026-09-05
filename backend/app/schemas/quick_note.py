@@ -32,6 +32,7 @@ class QuickNoteCreate(BaseModel):
     body: str = Field(..., min_length=1)
     context: str | None = Field(None, max_length=160)
     tags: list[str] = Field(default_factory=list, max_length=8)
+    group_id: UUID | None = None
 
     @field_validator("title", "context", mode="before")
     @classmethod
@@ -109,6 +110,7 @@ class QuickNoteRead(BaseModel):
     revision: int
     created_at: datetime
     updated_at: datetime
+    group_id: UUID | None = None
 
     model_config = {"from_attributes": True}
 

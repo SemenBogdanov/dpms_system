@@ -15,6 +15,10 @@
     "test:realtime-notes": "npm run build && playwright test --config playwright.realtime-notes.config.ts",
     "test:messages": "playwright test --config playwright.messages.config.ts",
     "test:audit-review": "playwright test --config playwright.audit-review.config.ts",
+    "test:id64a": "playwright test --config playwright.id64a.config.ts",
+    "test:trackers": "playwright test --config playwright.trackers.config.ts",
+    "test:note-groups": "playwright test --config playwright.note-groups.config.ts",
+    "test:personal-task-form": "npm run build && playwright test --config tests/personal-task-form.config.ts",
     "test:regression": "../scripts/dpms-local-regression.sh full",
     "test:regression:quick": "../scripts/dpms-local-regression.sh quick"
   },

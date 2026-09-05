@@ -3,7 +3,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import String, and_, case, cast, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.deadline_tracker import DeadlineTracker
@@ -160,6 +160,99 @@ def redact_entity_event_payload(
         return value
 
     return redact(payload)
+
+
+def quick_note_access_clause(user_id: UUID):
+    return or_(
+        QuickNote.owner_id == user_id,
+        select(QuickNoteShare.id)
+        .where(
+            QuickNoteShare.note_id == QuickNote.id,
+            QuickNoteShare.recipient_id == user_id,
+            QuickNoteShare.status == "active",
+        )
+        .correlate(QuickNote)
+        .exists(),
+    )
+
+
+def visible_work_entity_links_clause(user_id: UUID):
+    """Private notes leave no placeholder; other target contracts stay unchanged."""
+    return or_(
+        WorkEntityLink.quick_note_id.is_(None),
+        WorkEntityLink.quick_note_id.in_(
+            select(QuickNote.id).where(quick_note_access_clause(user_id))
+        ),
+    )
+
+
+def visible_work_entity_events_clause(user_id: UUID):
+    """Apply current note ACL to history, including removed and legacy links."""
+    event = WorkEntityEvent.__table__
+    origin = event.alias("link_origin")
+    link = WorkEntityLink.__table__.alias("event_link")
+
+    def link_id(table):
+        return func.coalesce(
+            cast(table.c.object_id, String),
+            table.c.payload["object"]["id"].astext,
+            table.c.payload["link_id"].astext,
+        )
+
+    event_link_id = link_id(event)
+    live_link = (
+        select(link)
+        .where(
+            link.c.entity_id == event.c.entity_id,
+            cast(link.c.id, String) == event_link_id,
+        )
+        .correlate(event)
+    )
+    # Old updates omitted the target, and old removals omitted its ID. The
+    # creation event preserves both even after the link row has been deleted.
+    creation = (
+        select(origin)
+        .where(
+            origin.c.entity_id == event.c.entity_id,
+            origin.c.event_type == "link_added",
+            link_id(origin) == event_link_id,
+        )
+        .order_by(origin.c.created_at, origin.c.id)
+        .limit(1)
+        .correlate(event)
+    )
+    target_type = func.coalesce(
+        event.c.payload["target_type"].astext,
+        live_link.with_only_columns(
+            case(
+                (link.c.quick_note_id.is_not(None), "quick_note"),
+                (link.c.personal_task_id.is_not(None), "personal_task"),
+                (link.c.task_id.is_not(None), "task"),
+                (link.c.target_entity_id.is_not(None), "entity"),
+                (link.c.deadline_tracker_id.is_not(None), "deadline_tracker"),
+            )
+        ).scalar_subquery(),
+        creation.with_only_columns(origin.c.payload["target_type"].astext).scalar_subquery(),
+    )
+    note_id = func.coalesce(
+        event.c.payload["target_id"].astext,
+        live_link.with_only_columns(cast(link.c.quick_note_id, String)).scalar_subquery(),
+        creation.with_only_columns(origin.c.payload["target_id"].astext).scalar_subquery(),
+    )
+    is_link_event = or_(
+        event.c.event_type.in_({"link_added", "link_updated", "link_removed"}),
+        func.coalesce(event.c.object_type, "") == "link",
+    )
+    return or_(
+        ~is_link_event,
+        target_type.in_({"entity", "task", "personal_task", "deadline_tracker"}),
+        and_(
+            target_type == "quick_note",
+            note_id.in_(
+                select(cast(QuickNote.id, String)).where(quick_note_access_clause(user_id))
+            ),
+        ),
+    )
 
 
 def link_target_type(link: WorkEntityLink) -> WorkEntityTargetType:
@@ -380,6 +473,8 @@ async def serialize_links(
             target = personal_task_map.get(raw_target_id)
         elif target_type == "quick_note":
             target = quick_note_map.get(raw_target_id)
+            if target is None:
+                continue
         else:
             target = tracker_map.get(raw_target_id)
 

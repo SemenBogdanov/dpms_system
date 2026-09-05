@@ -1,10 +1,10 @@
 """Схемы для пользователей."""
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.models.user import League, UserRole
 
@@ -101,6 +101,141 @@ class SidebarMenuOrderUpdate(BaseModel):
     """Пользовательский порядок левого меню."""
 
     sidebar_menu_order: dict[str, Any] | None = None
+
+
+SidebarMenuImportId = Annotated[str, Field(strict=True, min_length=1, max_length=64)]
+SidebarMenuImportLabel = Annotated[str, Field(strict=True, min_length=1, max_length=80)]
+SidebarMenuImportItemIds = Annotated[
+    list[SidebarMenuImportId],
+    Field(max_length=64),
+]
+
+
+class SidebarMenuImportGroup(BaseModel):
+    """Одна пользовательская кнопка импортируемого меню."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    id: SidebarMenuImportId
+    label: SidebarMenuImportLabel
+    item_ids: SidebarMenuImportItemIds | None = None
+
+    @field_validator("id", "label")
+    @classmethod
+    def strip_non_empty_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Значение не может быть пустым")
+        return cleaned
+
+    @field_validator("item_ids")
+    @classmethod
+    def strip_item_ids(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        cleaned = [item_id.strip() for item_id in value]
+        if any(not item_id for item_id in cleaned):
+            raise ValueError("Идентификатор раздела не может быть пустым")
+        return cleaned
+
+
+class SidebarMenuImportLayout(BaseModel):
+    """Ограниченный формат раскладки внутри файла импорта."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    version: int = Field(..., strict=True, ge=1, le=100)
+    groups: list[SidebarMenuImportGroup] = Field(..., min_length=1, max_length=32)
+    items: dict[SidebarMenuImportId, SidebarMenuImportItemIds] = Field(
+        default_factory=dict,
+        max_length=32,
+    )
+    item_labels: dict[SidebarMenuImportId, SidebarMenuImportLabel] = Field(
+        default_factory=dict,
+        max_length=64,
+    )
+
+    @field_validator("items")
+    @classmethod
+    def strip_legacy_items(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+        cleaned: dict[str, list[str]] = {}
+        for group_id, item_ids in value.items():
+            normalized_group_id = group_id.strip()
+            normalized_item_ids = [item_id.strip() for item_id in item_ids]
+            if not normalized_group_id or any(not item_id for item_id in normalized_item_ids):
+                raise ValueError("Идентификаторы меню не могут быть пустыми")
+            cleaned[normalized_group_id] = normalized_item_ids
+        return cleaned
+
+    @field_validator("item_labels")
+    @classmethod
+    def strip_item_labels(cls, value: dict[str, str]) -> dict[str, str]:
+        cleaned: dict[str, str] = {}
+        for item_id, label in value.items():
+            normalized_item_id = item_id.strip()
+            normalized_label = label.strip()
+            if not normalized_item_id or not normalized_label:
+                raise ValueError("Подпись раздела не может быть пустой")
+            cleaned[normalized_item_id] = normalized_label
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_layout_limits(self):
+        group_ids = [group.id for group in self.groups]
+        if len(set(group_ids)) != len(group_ids):
+            raise ValueError("Идентификаторы кнопок меню не должны повторяться")
+
+        references = sum(len(group.item_ids or []) for group in self.groups)
+        references += sum(len(item_ids) for item_ids in self.items.values())
+        if references > 256:
+            raise ValueError("В раскладке слишком много ссылок на разделы")
+        return self
+
+
+class SidebarMenuImportRequest(BaseModel):
+    """Версионированный безопасный envelope файла меню."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    format: Literal["dpms-sidebar-menu"]
+    version: Literal[1]
+    menu_schema_version: int | None = Field(default=None, strict=True, ge=1, le=100)
+    exported_at: Annotated[str, Field(strict=True, min_length=1, max_length=40)] | None = None
+    layout: SidebarMenuImportLayout
+
+    @field_validator("exported_at")
+    @classmethod
+    def validate_exported_at(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("Некорректная дата экспорта") from exc
+        if parsed.tzinfo is None:
+            raise ValueError("Дата экспорта должна содержать часовой пояс")
+        return value
+
+    @model_validator(mode="after")
+    def validate_menu_schema_version(self):
+        if (
+            self.menu_schema_version is not None
+            and self.menu_schema_version != self.layout.version
+        ):
+            raise ValueError("Версия схемы меню не совпадает с версией раскладки")
+        return self
+
+
+class SidebarMenuImportPreview(BaseModel):
+    """Проекция импортированной раскладки без сохранения в профиль."""
+
+    sidebar_menu_order: SidebarMenuImportLayout
+    referenced_item_count: int = Field(..., ge=0)
+    imported_count: int = Field(..., ge=0)
+    skipped_unknown_count: int = Field(..., ge=0)
+    skipped_inaccessible_count: int = Field(..., ge=0)
+    skipped_duplicate_count: int = Field(..., ge=0)
+    required_added_count: int = Field(..., ge=0)
 
 
 class TemporaryPasswordRequest(BaseModel):

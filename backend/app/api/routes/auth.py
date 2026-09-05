@@ -16,8 +16,14 @@ from app.core.security import (
 )
 from app.models.user import User
 from app.schemas.auth import LoginRequest, TokenResponse, SetPasswordRequest, ChangePasswordRequest
-from app.schemas.user import AuthenticatedUserRead, SidebarMenuOrderUpdate
+from app.schemas.user import (
+    AuthenticatedUserRead,
+    SidebarMenuImportPreview,
+    SidebarMenuImportRequest,
+    SidebarMenuOrderUpdate,
+)
 from app.services.activity import record_activity_event
+from app.services.sidebar_menu import project_sidebar_menu_import
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
@@ -305,3 +311,12 @@ async def update_sidebar_menu_order(
     await db.commit()
     await db.refresh(merged)
     return _user_to_read(merged)
+
+
+@router.post("/me/sidebar-menu/import-preview", response_model=SidebarMenuImportPreview)
+def import_sidebar_menu_preview(
+    body: SidebarMenuImportRequest,
+    user: User = Depends(get_current_user),
+):
+    """Проверить импорт меню с учетом доступов, не изменяя профиль."""
+    return project_sidebar_menu_import(body.layout, user)

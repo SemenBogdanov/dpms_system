@@ -138,6 +138,7 @@ const note = {
 }
 
 type MockState = {
+  importantTitle?: string
   directUnread: boolean
   importantUnread: boolean
   threadUnread: number
@@ -201,12 +202,13 @@ async function installApiMock(page: Page, state: MockState) {
       return respond({
         direct_count: (state.directUnread ? 1 : 0) + (state.threadUnread > 0 ? 1 : 0),
         important_count: state.importantUnread ? 1 : 0,
+        revision: state.importantTitle || 'initial',
       })
     }
     if (path === '/api/messages/attention' && method === 'GET') {
       const kind = url.searchParams.get('kind')
       if (kind === 'direct') return respond(state.directUnread ? [directItem] : [])
-      return respond(state.importantUnread ? [importantItem] : [])
+      return respond(state.importantUnread ? [{ ...importantItem, title: state.importantTitle || importantItem.title }] : [])
     }
     if (path === `/api/messages/attention/${directId}/read` && method === 'POST') {
       state.directUnread = false
@@ -376,4 +378,40 @@ test('open thread resyncs when a colleague replies', async ({ page }, testInfo) 
   const renderedPosts = page.locator('article')
   await expect(renderedPosts.first()).toContainText(remoteReply)
   await expect(renderedPosts.last()).toContainText('Посмотрите, пожалуйста, итоговый вариант.')
+})
+
+test('background event refreshes the open important inbox without a socket hint', async ({ page }) => {
+  const state: MockState = {
+    directUnread: false,
+    importantUnread: false,
+    threadUnread: 0,
+    createCalls: 0,
+    createdPayload: null,
+    remoteReplyBody: null,
+  }
+  await page.clock.install()
+  await installApiMock(page, state)
+  await page.goto('/messages')
+  await page.getByRole('tab', { name: /Важное/ }).click()
+  await expect(page.getByRole('button', { name: /Результат задачи возвращён/ })).toHaveCount(0)
+  state.importantUnread = true
+  await page.clock.fastForward(31_000)
+  await expect(page.getByRole('button', { name: /Результат задачи возвращён/ })).toBeVisible()
+  await noHorizontalOverflow(page)
+})
+
+test('background event updates important inbox when the unread count stays the same', async ({ page }) => {
+  const state: MockState = {
+    directUnread: false, importantUnread: true, threadUnread: 0,
+    createCalls: 0, createdPayload: null, remoteReplyBody: null,
+  }
+  await page.clock.install()
+  await installApiMock(page, state)
+  await page.goto('/messages')
+  await page.getByRole('tab', { name: /Важное/ }).click()
+  await expect(page.getByRole('button', { name: /Результат задачи возвращён/ })).toBeVisible()
+  state.importantTitle = 'Подписка: срок завтра'
+  await page.clock.fastForward(31_000)
+  await expect(page.getByRole('button', { name: /Подписка: срок завтра/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Результат задачи возвращён/ })).toHaveCount(0)
 })

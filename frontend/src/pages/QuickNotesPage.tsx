@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Archive,
   CheckCircle2,
@@ -27,7 +27,6 @@ import { api } from '@/api/client'
 import type {
   Contact,
   PersonalTask,
-  QuickNote,
   QuickNoteAttachment,
   QuickNoteComment,
   QuickNoteCreate,
@@ -37,7 +36,11 @@ import type {
   SharedQuickNote,
 } from '@/api/types'
 import { cn } from '@/lib/utils'
-import { WorkEntityBacklinks } from '@/components/WorkEntityBacklinks'
+import { noteGroupsApi, type GroupedQuickNote as QuickNote, type NoteGroup } from '@/api/noteGroups'
+import { NoteGroupsPanel } from '@/components/NoteGroupsPanel'
+import { NoteBulkActions } from '@/components/NoteBulkActions'
+import { NoteContextLinks } from '@/components/NoteContextLinks'
+import { NoteShareDialog } from '@/components/NoteShareDialog'
 import { useProtectedModal, preventBackdropDismiss } from '@/hooks/useProtectedModal'
 import { useAttention } from '@/contexts/attentionState'
 import {
@@ -165,6 +168,17 @@ function formDirtyFor(form: NoteForm, editing: QuickNote | null): boolean {
 
 export function QuickNotesPage() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const groupView = searchParams.get('group') || 'all'
+  const activeTab: NoteTab = searchParams.get('view') === 'shared' ? 'shared' : 'mine'
+  const setActiveTab = (tab: NoteTab) => setSearchParams(params => { params.set('view', tab); return params })
+  const setGroupView = (id: string) => setSearchParams(params => { params.set('group', id); return params })
+  const [groups, setGroups] = useState<NoteGroup[]>([])
+  const [groupError, setGroupError] = useState('')
+  const notesRequest = useRef(0)
+  const [selectedNotes, setSelectedNotes] = useState<string[]>([])
+  const [bulkShare, setBulkShare] = useState<{ noteIds?: string[]; groupId?: string } | null>(null)
+  const activeGroup = groups.find(group => group.id === groupView)
   const { noteId } = useParams<{ noteId: string }>()
   const { refresh: refreshAttention } = useAttention()
   const [notes, setNotes] = useState<QuickNote[]>([])
@@ -172,7 +186,6 @@ export function QuickNotesPage() {
   const [filter, setFilter] = useState<NoteFilter>('all')
   const [search, setSearch] = useState('')
   const [viewMode, setViewMode] = useState<ViewMode>('list')
-  const [activeTab, setActiveTab] = useState<NoteTab>('mine')
   const [contacts, setContacts] = useState<Contact[]>([])
   const [sharedNotes, setSharedNotes] = useState<SharedQuickNote[]>([])
   const [sharedLoading, setSharedLoading] = useState(false)
@@ -211,19 +224,34 @@ export function QuickNotesPage() {
   }, [refreshAttention])
 
   const loadNotes = useCallback(async () => {
+    const requestId = ++notesRequest.current
     setLoading(true)
     try {
       const params: Record<string, string> = {}
       if (filter !== 'all') params.status = filter
       if (search.trim()) params.search = search.trim()
+      if (groupView === 'ungrouped') params.ungrouped = 'true'
+      else if (groupView !== 'all') params.group_id = groupView
       const data = await api.get<QuickNote[]>('/api/quick-notes', params)
+      if (requestId !== notesRequest.current) return
       setNotes(data)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка загрузки заметок')
+      if (requestId === notesRequest.current) {
+        setNotes([])
+        toast.error(e instanceof Error ? e.message : 'Ошибка загрузки заметок')
+      }
     } finally {
-      setLoading(false)
+      if (requestId === notesRequest.current) setLoading(false)
     }
-  }, [filter, search])
+  }, [filter, search, groupView])
+
+  const loadGroups = useCallback(async () => {
+    try { setGroups(await noteGroupsApi.list()); setGroupError('') }
+    catch (error) { setGroupError(error instanceof Error ? error.message : 'Группы недоступны') }
+  }, [])
+  const reloadOrganization = async () => { await loadGroups(); await loadNotes() }
+  useEffect(() => { void loadGroups() }, [loadGroups])
+  useEffect(() => { setSelectedNotes([]) }, [groupView, activeTab, search, filter])
 
   const loadContacts = useCallback(async () => {
     try {
@@ -507,6 +535,7 @@ export function QuickNotesPage() {
         toast.success('Заметка сохранена')
       } else {
         await api.post<QuickNote>('/api/quick-notes', {
+          ...(activeGroup && !activeGroup.archived ? { group_id: activeGroup.id } : {}),
           title: form.title.trim() || null,
           body: form.body,
           context: form.context.trim() || null,
@@ -516,6 +545,7 @@ export function QuickNotesPage() {
       }
       forceCloseNoteModal()
       await loadNotes()
+      await loadGroups()
       await silentReloadShared()
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Ошибка сохранения'
@@ -931,20 +961,20 @@ export function QuickNotesPage() {
     return (
       <article
         key={share?.id ?? note.id}
-        role="button"
-        tabIndex={0}
-        onClick={() => navigate(`/quick-notes/${note.id}`)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') navigate(`/quick-notes/${note.id}`)
-        }}
         className={cn(
-          'rounded-xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-primary/30 hover:shadow-md',
+          'rounded-lg border border-slate-200 bg-white p-4 text-left transition hover:border-primary/30',
           isList ? 'flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between' : 'space-y-3'
         )}
       >
-        <div className="min-w-0">
+        <div className="flex min-w-0 items-start gap-2">
+          {!share && <label className="flex h-11 w-11 shrink-0 items-center justify-center">
+            <input className="h-4 w-4 shrink-0" type="checkbox" aria-label={`Выбрать заметку: ${note.title}`} checked={selectedNotes.includes(note.id)}
+              disabled={selectedNotes.length >= 100 && !selectedNotes.includes(note.id)}
+              onChange={event => setSelectedNotes(ids => event.target.checked ? [...ids, note.id] : ids.filter(id => id !== note.id))} />
+          </label>}
+          <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="break-words text-base font-semibold text-slate-900">{note.title}</h2>
+            <h2 className="min-w-0 break-words text-base font-semibold text-slate-900"><Link className="inline-block min-h-11 content-center hover:text-primary" to={`/quick-notes/${note.id}`}>{note.title}</Link></h2>
             <span className={cn('rounded px-2 py-0.5 text-xs font-medium', statusClass(note.status))}>
               {statusLabel[note.status]}
             </span>
@@ -955,6 +985,7 @@ export function QuickNotesPage() {
             {note.context && <span>{note.context}</span>}
           </div>
           {!isList && <p className="mt-3 break-words text-sm leading-6 text-slate-600">{previewText(note.body)}</p>}
+          </div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2" onClick={(event) => event.stopPropagation()}>
           <button type="button" onClick={() => copyNote(note)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50" title="Скопировать" aria-label="Скопировать заметку">
@@ -1003,7 +1034,6 @@ export function QuickNotesPage() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Заметки</h1>
-          <p className="mt-1 text-sm text-slate-500">Быстрый capture, файлы и обсуждение</p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <div className="grid grid-cols-3 overflow-hidden rounded-lg border border-slate-200 bg-white text-center text-xs">
@@ -1024,6 +1054,7 @@ export function QuickNotesPage() {
             <button
               type="button"
               onClick={openCreate}
+              disabled={activeGroup?.archived}
               className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
             >
               <Plus className="h-4 w-4" />
@@ -1047,7 +1078,7 @@ export function QuickNotesPage() {
             onClick={() => setActiveTab('shared')}
             className={cn('border-l border-slate-200 px-4 py-2 transition', activeTab === 'shared' ? 'bg-primary text-primary-foreground' : 'hover:bg-slate-50')}
           >
-            Доступные
+            Доступные мне
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1078,6 +1109,7 @@ export function QuickNotesPage() {
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 type="search"
+                aria-label="Поиск заметок"
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 className="min-h-10 w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20 lg:w-72"
@@ -1088,6 +1120,12 @@ export function QuickNotesPage() {
         </div>
       </div>
 
+      {activeTab === 'mine' && <>
+        {groupError && <p role="alert" className="text-sm text-red-600">{groupError} <button type="button" onClick={() => void loadGroups()} className="min-h-11 underline">Повторить</button></p>}
+        <NoteGroupsPanel groups={groups} view={groupView} onView={setGroupView} onChanged={reloadOrganization} onShare={groupId => setBulkShare({ groupId })} />
+        {selectedNotes.length > 0 && <NoteBulkActions noteIds={selectedNotes} groups={groups} onChanged={reloadOrganization} onClear={() => setSelectedNotes([])} onShare={() => setBulkShare({ noteIds: selectedNotes })} />}
+      </>}
+
       {activeTab === 'mine' ? (
         <section className={cn('grid gap-3', viewMode === 'preview' ? 'lg:grid-cols-2' : '')}>
           {loading && <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-500">Загрузка...</div>}
@@ -1096,7 +1134,10 @@ export function QuickNotesPage() {
               Заметок пока нет.
             </div>
           )}
-          {notes.map((note) => renderNoteCard(note))}
+          {activeGroup?.collapsed ? <button type="button" className="min-h-11 text-left text-sm text-primary" onClick={async () => {
+            try { await noteGroupsApi.update(activeGroup, { collapsed: false }); await loadGroups() }
+            catch (error) { toast.error(error instanceof Error ? error.message : 'Не удалось развернуть группу') }
+          }}>Развернуть: {activeGroup.title}</button> : notes.map((note) => renderNoteCard(note))}
         </section>
       ) : (
         <section className={cn('grid gap-3', viewMode === 'preview' ? 'lg:grid-cols-2' : '')}>
@@ -1111,6 +1152,8 @@ export function QuickNotesPage() {
       )}
         </>
       )}
+
+      {bulkShare && <NoteShareDialog {...bulkShare} onClose={() => setBulkShare(null)} onApplied={() => { setSelectedNotes([]); void reloadOrganization(); toast.success('Доступ открыт') }} />}
 
       {noteId && detailLoading && (
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-sm text-slate-500">Загрузка заметки...</div>
@@ -1277,11 +1320,7 @@ export function QuickNotesPage() {
                     </div>
                   )}
                 </div>
-                <WorkEntityBacklinks
-                  targetType="quick_note"
-                  targetId={detailNote.id}
-                  canManage={detailIsOwner}
-                />
+                {detailIsOwner && <NoteContextLinks sourceType="note" sourceId={detailNote.id} />}
               </div>
               {renderDiscussion(detailNote.id)}
             </div>

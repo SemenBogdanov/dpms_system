@@ -176,7 +176,8 @@ function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<DashboardRoute />} />
+        <Route index element={<Navigate to="/messages" replace />} />
+        <Route path="dashboard" element={<DashboardRoute />} />
         <Route
           path="calibration"
           element={

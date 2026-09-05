@@ -34,7 +34,7 @@ from app.schemas.messages import (
 from app.services.attention_realtime import AttentionConnection, attention_hub
 from app.services.email_outbox import enqueue_message_notification
 from app.services.messages import (
-    get_attention_summary,
+    get_attention_snapshot,
     list_attention_items,
     mark_attention_context_read,
     mark_attention_read,
@@ -315,10 +315,11 @@ async def attention_summary(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    direct_count, important_count = await get_attention_summary(db, current_user.id)
+    direct_count, important_count, revision = await get_attention_snapshot(db, current_user.id)
     return AttentionSummaryRead(
         direct_count=direct_count,
         important_count=important_count,
+        revision=revision,
     )
 
 

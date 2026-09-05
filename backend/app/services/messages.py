@@ -13,6 +13,7 @@ from sqlalchemy.orm import aliased
 
 from app.models.messages import (
     CommunicationEvent,
+    MessageThread,
     MessageThreadParticipant,
     UserAttentionItem,
 )
@@ -191,42 +192,31 @@ async def list_attention_items(
 
 
 async def get_attention_summary(db: AsyncSession, user_id: UUID) -> tuple[int, int]:
-    direct_items = int(
-        (
-            await db.execute(
-                select(func.count(UserAttentionItem.id)).where(
-                    UserAttentionItem.user_id == user_id,
-                    UserAttentionItem.kind == "direct",
-                    UserAttentionItem.is_read.is_(False),
-                )
-            )
-        ).scalar()
-        or 0
-    )
-    unread_threads = int(
-        (
-            await db.execute(
-                select(func.count(MessageThreadParticipant.id)).where(
-                    MessageThreadParticipant.user_id == user_id,
-                    MessageThreadParticipant.unread_count > 0,
-                )
-            )
-        ).scalar()
-        or 0
-    )
-    important_items = int(
-        (
-            await db.execute(
-                select(func.count(UserAttentionItem.id)).where(
-                    UserAttentionItem.user_id == user_id,
-                    UserAttentionItem.kind == "important",
-                    UserAttentionItem.is_read.is_(False),
-                )
-            )
-        ).scalar()
-        or 0
-    )
-    return direct_items + unread_threads, important_items
+    direct, important, _ = await get_attention_snapshot(db, user_id)
+    return direct, important
+
+
+async def get_attention_snapshot(db: AsyncSession, user_id: UUID) -> tuple[int, int, str]:
+    unread_threads = select(func.count(MessageThreadParticipant.id)).where(
+        MessageThreadParticipant.user_id == user_id,
+        MessageThreadParticipant.unread_count > 0,
+    ).scalar_subquery()
+    latest_post = select(func.max(MessageThread.updated_at)).join(
+        MessageThreadParticipant, MessageThreadParticipant.thread_id == MessageThread.id,
+    ).where(MessageThreadParticipant.user_id == user_id).scalar_subquery()
+    row = (await db.execute(select(
+        func.count(UserAttentionItem.id).filter(
+            UserAttentionItem.kind == "direct", UserAttentionItem.is_read.is_(False),
+        ),
+        func.count(UserAttentionItem.id).filter(
+            UserAttentionItem.kind == "important", UserAttentionItem.is_read.is_(False),
+        ),
+        func.max(UserAttentionItem.updated_at),
+        unread_threads,
+        latest_post,
+    ).where(UserAttentionItem.user_id == user_id))).one()
+    revision = f"{row[2].isoformat() if row[2] else ''}|{row[4].isoformat() if row[4] else ''}"
+    return int(row[0]) + int(row[3]), int(row[1]), revision
 
 
 async def mark_attention_read(

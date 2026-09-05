@@ -1,25 +1,28 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
   ArrowDown,
   ArrowUp,
   ArrowUpRight,
+  Download,
   Gauge,
   GripVertical,
   KeyRound,
+  LockKeyhole,
   PanelLeft,
   Plus,
   RotateCcw,
   Save,
   ShieldCheck,
   Trash2,
+  Upload,
   UserRound,
   WalletCards,
   X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
-import type { AuthenticatedUser } from '@/api/types'
+import type { AuthenticatedUser, SidebarMenuImportPreview } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 import { LeagueBadge } from '@/components/LeagueBadge'
@@ -29,12 +32,25 @@ import {
   applySidebarItemLabels,
   defaultSidebarOrder,
   normalizeSidebarOrder,
+  requiredSidebarItemIds,
+  SIDEBAR_MENU_SCHEMA_VERSION,
   sidebarOrderPayload,
   type SidebarMenuButton,
   type SidebarNavItem,
   type SidebarOrder,
   visibleSidebarNav,
 } from '@/lib/sidebarNavigation'
+
+const SIDEBAR_IMPORT_MAX_BYTES = 64 * 1024
+
+type MenuImportSummary = Pick<
+  SidebarMenuImportPreview,
+  | 'imported_count'
+  | 'skipped_inaccessible_count'
+  | 'skipped_unknown_count'
+  | 'skipped_duplicate_count'
+  | 'required_added_count'
+>
 
 type MenuDragPayload =
   | { type: 'button'; id: string }
@@ -54,10 +70,16 @@ export function SettingsPage() {
   const [sidebarOrder, setSidebarOrder] = useState(() => normalizeSidebarOrder(user?.sidebar_menu_order))
   const [selectedButtonId, setSelectedButtonId] = useState(() => sidebarOrder.groups[0]?.id || '')
   const [savingMenu, setSavingMenu] = useState(false)
+  const [importingMenu, setImportingMenu] = useState(false)
+  const [menuImportSummary, setMenuImportSummary] = useState<MenuImportSummary | null>(null)
   const [dragPayload, setDragPayload] = useState<MenuDragPayload | null>(null)
+  const menuImportInputRef = useRef<HTMLInputElement>(null)
+  const menuDraftRevisionRef = useRef(0)
   const canOpenDetailedProfile = hasTaskWorkspaceAccess(user)
+  const menuLocked = savingMenu || importingMenu
 
   useEffect(() => {
+    menuDraftRevisionRef.current += 1
     const nextOrder = normalizeSidebarOrder(user?.sidebar_menu_order)
     setSidebarOrder(nextOrder)
     setSelectedButtonId((current) =>
@@ -95,6 +117,8 @@ export function SettingsPage() {
   }, [sidebarOrder.groups])
 
   const updateSidebarDraft = (updater: (current: SidebarOrder) => SidebarOrder) => {
+    menuDraftRevisionRef.current += 1
+    setMenuImportSummary(null)
     setSidebarOrder((current) => normalizeSidebarOrder(updater(current)))
   }
 
@@ -111,6 +135,7 @@ export function SettingsPage() {
         sidebar_menu_order: sidebarOrderPayload(normalized),
       })
       updateUser(updatedUser)
+      setMenuImportSummary(null)
       toast.success('Меню сохранено')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось сохранить меню')
@@ -190,6 +215,10 @@ export function SettingsPage() {
 
   const removeItemFromSelectedButton = (itemId: string) => {
     if (!selectedButton) return
+    if (requiredSidebarItemIds.has(itemId)) {
+      toast.error('Сообщения должны оставаться в меню')
+      return
+    }
     updateSidebarDraft((current) => ({
       ...current,
       groups: current.groups.map((button) =>
@@ -243,9 +272,83 @@ export function SettingsPage() {
   }
 
   const resetSidebarOrder = () => {
+    menuDraftRevisionRef.current += 1
     const nextOrder = normalizeSidebarOrder(defaultSidebarOrder)
     setSidebarOrder(nextOrder)
     setSelectedButtonId(nextOrder.groups[0]?.id || '')
+    setMenuImportSummary(null)
+  }
+
+  const exportSidebarOrder = () => {
+    const envelope = {
+      format: 'dpms-sidebar-menu',
+      version: 1,
+      menu_schema_version: SIDEBAR_MENU_SCHEMA_VERSION,
+      exported_at: new Date().toISOString(),
+      layout: sidebarOrderPayload(sidebarOrder),
+    }
+    const blob = new Blob([JSON.stringify(envelope, null, 2)], { type: 'application/json' })
+    const href = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = href
+    anchor.download = `dpms-menu-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(href)
+    toast.success('Настройки меню экспортированы')
+  }
+
+  const requestMenuImport = () => {
+    if (hasUnsavedMenuChanges && !window.confirm('Заменить текущий несохраненный черновик настройками из файла?')) {
+      return
+    }
+    if (menuImportInputRef.current) {
+      menuImportInputRef.current.value = ''
+      menuImportInputRef.current.click()
+    }
+  }
+
+  const importSidebarOrder = async (file: File | undefined) => {
+    if (!file) return
+    if (file.size > SIDEBAR_IMPORT_MAX_BYTES) {
+      toast.error('Файл настроек превышает 64 КБ')
+      return
+    }
+
+    const draftRevisionAtStart = menuDraftRevisionRef.current
+    setImportingMenu(true)
+    try {
+      const parsed: unknown = JSON.parse(await file.text())
+      const preview = await api.post<SidebarMenuImportPreview>(
+        '/api/auth/me/sidebar-menu/import-preview',
+        parsed
+      )
+      if (menuDraftRevisionRef.current !== draftRevisionAtStart) {
+        toast.error('Меню изменилось во время импорта. Повторите импорт')
+        return
+      }
+      const nextOrder = normalizeSidebarOrder(preview.sidebar_menu_order)
+      menuDraftRevisionRef.current += 1
+      setSidebarOrder(nextOrder)
+      setSelectedButtonId(nextOrder.groups[0]?.id || '')
+      setMenuImportSummary({
+        imported_count: preview.imported_count,
+        skipped_inaccessible_count: preview.skipped_inaccessible_count,
+        skipped_unknown_count: preview.skipped_unknown_count,
+        skipped_duplicate_count: preview.skipped_duplicate_count,
+        required_added_count: preview.required_added_count,
+      })
+      toast.success('Настройки загружены в черновик')
+    } catch (error) {
+      toast.error(error instanceof SyntaxError
+        ? 'Файл не является корректным JSON'
+        : error instanceof Error
+          ? error.message
+          : 'Не удалось импортировать настройки меню')
+    } finally {
+      setImportingMenu(false)
+    }
   }
 
   return (
@@ -395,8 +498,35 @@ export function SettingsPage() {
               )}
               <button
                 type="button"
+                onClick={exportSidebarOrder}
+                disabled={savingMenu || importingMenu}
+                className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                <Download className="h-4 w-4" />
+                Экспорт
+              </button>
+              <button
+                type="button"
+                onClick={requestMenuImport}
+                disabled={savingMenu || importingMenu}
+                className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                <Upload className="h-4 w-4" />
+                {importingMenu ? 'Импорт' : 'Импортировать'}
+              </button>
+              <input
+                ref={menuImportInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="sr-only"
+                tabIndex={-1}
+                onChange={(event) => void importSidebarOrder(event.target.files?.[0])}
+                aria-label="Выбрать файл настроек меню"
+              />
+              <button
+                type="button"
                 onClick={resetSidebarOrder}
-                disabled={savingMenu}
+                disabled={savingMenu || importingMenu}
                 className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
               >
                 <RotateCcw className="h-4 w-4" />
@@ -405,7 +535,7 @@ export function SettingsPage() {
               <button
                 type="button"
                 onClick={() => void persistSidebarOrder()}
-                disabled={savingMenu || !hasUnsavedMenuChanges}
+                disabled={savingMenu || importingMenu || !hasUnsavedMenuChanges}
                 className="inline-flex min-h-10 items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
               >
                 <Save className="h-4 w-4" />
@@ -414,7 +544,35 @@ export function SettingsPage() {
             </div>
           </div>
 
-          <div className="mt-5 grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)_300px]">
+          {menuImportSummary && (
+            <div
+              role="status"
+              aria-live="polite"
+              className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-l-2 border-primary bg-primary/5 px-3 py-2 text-xs text-slate-600 dark:text-slate-300"
+            >
+              <span className="font-medium text-slate-800 dark:text-slate-100">
+                Загружено разделов: {menuImportSummary.imported_count}
+              </span>
+              {menuImportSummary.skipped_inaccessible_count > 0 && (
+                <span>Без доступа: {menuImportSummary.skipped_inaccessible_count}</span>
+              )}
+              {menuImportSummary.skipped_unknown_count > 0 && (
+                <span>Неизвестных: {menuImportSummary.skipped_unknown_count}</span>
+              )}
+              {menuImportSummary.skipped_duplicate_count > 0 && (
+                <span>Повторов: {menuImportSummary.skipped_duplicate_count}</span>
+              )}
+              {menuImportSummary.required_added_count > 0 && (
+                <span>Системных добавлено: {menuImportSummary.required_added_count}</span>
+              )}
+            </div>
+          )}
+
+          <fieldset
+            disabled={menuLocked}
+            aria-busy={importingMenu}
+            className="mt-5 grid min-w-0 gap-4 border-0 p-0 xl:grid-cols-[320px_minmax(0,1fr)_300px]"
+          >
             <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Основные кнопки</h3>
@@ -436,7 +594,7 @@ export function SettingsPage() {
                   return (
                     <div
                       key={button.id}
-                      draggable={!savingMenu}
+                      draggable={!menuLocked}
                       onDragStart={() => setDragPayload({ type: 'button', id: button.id })}
                       onDragEnd={() => setDragPayload(null)}
                       onDragOver={(event) => event.preventDefault()}
@@ -549,7 +707,7 @@ export function SettingsPage() {
                           return (
                             <div
                               key={item.id}
-                              draggable={!savingMenu}
+                              draggable={!menuLocked}
                               onDragStart={() =>
                                 setDragPayload({ type: 'selected-item', buttonId: selectedButton.id, itemId: item.id })
                               }
@@ -579,16 +737,26 @@ export function SettingsPage() {
                               >
                                 <ArrowDown className="h-4 w-4" />
                               </button>
-                              <button
-                                type="button"
-                                onClick={() => removeItemFromSelectedButton(item.id)}
-                                disabled={savingMenu}
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-rose-500 hover:bg-rose-50 disabled:opacity-35 dark:text-rose-300 dark:hover:bg-rose-950/30"
-                                aria-label="Убрать из кнопки"
-                                title="Убрать из кнопки"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
+                              {requiredSidebarItemIds.has(item.id) ? (
+                                <span
+                                  className="inline-flex h-8 w-8 items-center justify-center text-slate-400"
+                                  aria-label="Системный раздел"
+                                  title="Системный раздел"
+                                >
+                                  <LockKeyhole className="h-4 w-4" />
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => removeItemFromSelectedButton(item.id)}
+                                  disabled={savingMenu || importingMenu}
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-rose-500 hover:bg-rose-50 disabled:opacity-35 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                                  aria-label="Убрать из кнопки"
+                                  title="Убрать из кнопки"
+                                >
+                                  <X className="h-4 w-4" />
+                                </button>
+                              )}
                             </div>
                           )
                         })}
@@ -622,7 +790,7 @@ export function SettingsPage() {
                   return (
                     <div
                       key={item.id}
-                      draggable={!savingMenu}
+                      draggable={!menuLocked}
                       onDragStart={() => setDragPayload({ type: 'available-item', itemId: item.id })}
                       onDragEnd={() => setDragPayload(null)}
                       className="flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-200"
@@ -660,7 +828,7 @@ export function SettingsPage() {
                 })}
               </div>
             </div>
-          </div>
+          </fieldset>
         </section>
       )}
 

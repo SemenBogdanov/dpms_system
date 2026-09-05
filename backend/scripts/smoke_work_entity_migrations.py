@@ -269,7 +269,7 @@ async def verify_head_schema(database_url: URL) -> None:
                     text("SELECT version_num FROM alembic_version")
                 )
             ).scalar_one()
-            assert revision == "077_user_storage_quota"
+            assert revision == "081_personal_task_form_guide"
             audit_context_default = (
                 await connection.execute(
                     text(
@@ -431,7 +431,11 @@ async def verify_head_schema(database_url: URL) -> None:
                                 'soobshcheniya-obrashcheniya-i-vazhnoe',
                                 'email-uvedomleniya-o-soobshcheniyah',
                                 'audit-ai-atomization-skills',
-                                'lichnoe-fajlovoe-hranilishche-i-kvota'
+                                'lichnoe-fajlovoe-hranilishche-i-kvota',
+                                'soobshcheniya-perenos-menyu-i-chtenie-bazy-znanij',
+                                'lichnye-gruppy-zametok-i-kontekst',
+                                'trekery-gruppy-povtoreniya-napominaniya',
+                                'lichnaya-zadacha-bystroe-sozdanie'
                             )
                               AND status = 'published'
                             """
@@ -445,6 +449,10 @@ async def verify_head_schema(database_url: URL) -> None:
                 "email-uvedomleniya-o-soobshcheniyah",
                 "audit-ai-atomization-skills",
                 "lichnoe-fajlovoe-hranilishche-i-kvota",
+                "soobshcheniya-perenos-menyu-i-chtenie-bazy-znanij",
+                "lichnye-gruppy-zametok-i-kontekst",
+                "trekery-gruppy-povtoreniya-napominaniya",
+                "lichnaya-zadacha-bystroe-sozdanie",
             }
             quota_default = (
                 await connection.execute(

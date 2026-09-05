@@ -18,10 +18,5 @@ export function hasAuditAccess(user: User | null | undefined) {
 
 export function firstAvailablePath(user: User | null | undefined) {
   if (!user) return '/login'
-  if (hasTaskWorkspaceAccess(user)) return user.role === 'executor' ? '/my-tasks' : '/'
-  if (hasAuditAccess(user)) return '/audit'
-  if (hasDevelopmentAccess(user)) return '/competencies'
-  if (hasFeedbackAccess(user)) return '/feedback'
-  if (user.role === 'admin') return '/admin/users'
-  return '/settings'
+  return '/messages'
 }

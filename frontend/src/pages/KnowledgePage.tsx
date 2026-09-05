@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { FormEvent, ReactElement } from 'react'
-import { Check, FileText, Pencil, Plus, Search, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, FormEvent, KeyboardEvent, PointerEvent, ReactElement } from 'react'
+import { Check, FileText, GripVertical, Pencil, Plus, Search, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
 import type {
@@ -43,6 +43,34 @@ const EMPTY_FORM: KnowledgeFormState = {
   body: '',
   status: 'draft',
   sort_order: '100',
+}
+
+const KNOWLEDGE_LIST_WIDTH_KEY = 'dpms:knowledge:list-width'
+const KNOWLEDGE_LIST_DEFAULT_WIDTH = 360
+const KNOWLEDGE_LIST_MIN_WIDTH = 280
+const KNOWLEDGE_LIST_MAX_WIDTH = 560
+const KNOWLEDGE_READER_MIN_WIDTH = 480
+const KNOWLEDGE_SPLITTER_WIDTH = 16
+
+function clampListWidth(value: number, maximum = KNOWLEDGE_LIST_MAX_WIDTH) {
+  return Math.min(Math.max(value, KNOWLEDGE_LIST_MIN_WIDTH), maximum)
+}
+
+function initialListWidth() {
+  try {
+    const stored = Number.parseInt(window.localStorage.getItem(KNOWLEDGE_LIST_WIDTH_KEY) || '', 10)
+    return Number.isFinite(stored) ? clampListWidth(stored) : KNOWLEDGE_LIST_DEFAULT_WIDTH
+  } catch {
+    return KNOWLEDGE_LIST_DEFAULT_WIDTH
+  }
+}
+
+function persistListWidth(value: number) {
+  try {
+    window.localStorage.setItem(KNOWLEDGE_LIST_WIDTH_KEY, String(value))
+  } catch {
+    // The splitter remains usable when storage is blocked by the browser.
+  }
 }
 
 const statusLabel: Record<KnowledgeStatus, string> = {
@@ -163,6 +191,89 @@ export function KnowledgePage() {
   const [editorOpen, setEditorOpen] = useState(false)
   const [editorArticle, setEditorArticle] = useState<KnowledgeArticle | null>(null)
   const [form, setForm] = useState<KnowledgeFormState>(EMPTY_FORM)
+  const splitViewRef = useRef<HTMLDivElement>(null)
+  const pointerStartRef = useRef<{ pointerId: number; x: number; width: number } | null>(null)
+  const [listWidth, setListWidth] = useState(initialListWidth)
+  const listWidthRef = useRef(listWidth)
+  const [listMaxWidth, setListMaxWidth] = useState(KNOWLEDGE_LIST_MAX_WIDTH)
+  const [resizingList, setResizingList] = useState(false)
+
+  const updateListWidth = useCallback((value: number) => {
+    const nextWidth = clampListWidth(value, listMaxWidth)
+    listWidthRef.current = nextWidth
+    setListWidth(nextWidth)
+  }, [listMaxWidth])
+
+  useEffect(() => {
+    const splitView = splitViewRef.current
+    if (!splitView || typeof ResizeObserver === 'undefined') return
+    const updateMaximum = () => {
+      const available = Math.floor(
+        splitView.getBoundingClientRect().width - KNOWLEDGE_READER_MIN_WIDTH - KNOWLEDGE_SPLITTER_WIDTH
+      )
+      const maximum = Math.max(
+        KNOWLEDGE_LIST_MIN_WIDTH,
+        Math.min(KNOWLEDGE_LIST_MAX_WIDTH, available)
+      )
+      setListMaxWidth(maximum)
+      setListWidth((current) => {
+        const nextWidth = clampListWidth(current, maximum)
+        listWidthRef.current = nextWidth
+        return nextWidth
+      })
+    }
+    updateMaximum()
+    const observer = new ResizeObserver(updateMaximum)
+    observer.observe(splitView)
+    return () => observer.disconnect()
+  }, [])
+
+  const handleSplitterPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    pointerStartRef.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      width: listWidthRef.current,
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setResizingList(true)
+    event.preventDefault()
+  }
+
+  const handleSplitterPointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    const start = pointerStartRef.current
+    if (!start || start.pointerId !== event.pointerId) return
+    updateListWidth(start.width + event.clientX - start.x)
+  }
+
+  const finishSplitterResize = (event: PointerEvent<HTMLDivElement>) => {
+    const start = pointerStartRef.current
+    if (!start || start.pointerId !== event.pointerId) return
+    pointerStartRef.current = null
+    setResizingList(false)
+    persistListWidth(listWidthRef.current)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }
+
+  const handleSplitterKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 48 : 24
+    let nextWidth: number | null = null
+    if (event.key === 'ArrowLeft') nextWidth = listWidthRef.current - step
+    if (event.key === 'ArrowRight') nextWidth = listWidthRef.current + step
+    if (event.key === 'Home') nextWidth = KNOWLEDGE_LIST_MIN_WIDTH
+    if (event.key === 'End') nextWidth = listMaxWidth
+    if (nextWidth === null) return
+    event.preventDefault()
+    updateListWidth(nextWidth)
+    persistListWidth(clampListWidth(nextWidth, listMaxWidth))
+  }
+
+  const resetListWidth = () => {
+    updateListWidth(KNOWLEDGE_LIST_DEFAULT_WIDTH)
+    persistListWidth(clampListWidth(KNOWLEDGE_LIST_DEFAULT_WIDTH, listMaxWidth))
+  }
 
   const loadArticles = useCallback(() => {
     const params: Record<string, string> = {}
@@ -332,8 +443,16 @@ export function KnowledgePage() {
         </section>
       )}
 
-      <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
-        <aside className="rounded-lg border border-slate-200 bg-white shadow-sm" aria-label="Список статей">
+      <div
+        ref={splitViewRef}
+        className="grid gap-5 xl:grid-cols-[var(--knowledge-list-width)_16px_minmax(480px,1fr)] xl:gap-0"
+        style={{ '--knowledge-list-width': `${listWidth}px` } as CSSProperties}
+      >
+        <aside
+          id="knowledge-article-list"
+          className="min-w-0 rounded-lg border border-slate-200 bg-white shadow-sm"
+          aria-label="Список статей"
+        >
           <div className="space-y-3 border-b border-slate-200 p-4">
             <label className="relative block">
               <span className="sr-only">Поиск по базе знаний</span>
@@ -419,7 +538,38 @@ export function KnowledgePage() {
           </div>
         </aside>
 
-        <section className="min-h-[520px] rounded-lg border border-slate-200 bg-white shadow-sm" aria-live="polite">
+        <div
+          role="separator"
+          aria-label="Изменить ширину списка статей"
+          aria-orientation="vertical"
+          aria-controls="knowledge-article-list knowledge-article-reader"
+          aria-valuemin={KNOWLEDGE_LIST_MIN_WIDTH}
+          aria-valuemax={listMaxWidth}
+          aria-valuenow={listWidth}
+          aria-valuetext={`${listWidth} пикселей`}
+          tabIndex={0}
+          title="Изменить ширину списка статей"
+          onPointerDown={handleSplitterPointerDown}
+          onPointerMove={handleSplitterPointerMove}
+          onPointerUp={finishSplitterResize}
+          onPointerCancel={finishSplitterResize}
+          onKeyDown={handleSplitterKeyDown}
+          onDoubleClick={resetListWidth}
+          className={cn(
+            'group relative hidden touch-none cursor-col-resize items-center justify-center outline-none xl:flex',
+            'focus-visible:bg-primary/10 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40',
+            resizingList && 'bg-primary/10'
+          )}
+        >
+          <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-slate-200 transition-colors group-hover:bg-primary/50" />
+          <GripVertical className="relative h-5 w-5 rounded bg-white text-slate-400 shadow-sm ring-1 ring-slate-200 group-hover:text-primary" />
+        </div>
+
+        <section
+          id="knowledge-article-reader"
+          className="min-h-[520px] min-w-0 rounded-lg border border-slate-200 bg-white shadow-sm"
+          aria-live="polite"
+        >
           {selectedArticle ? (
             <article className="flex h-full flex-col">
               <header className="border-b border-slate-200 p-5">

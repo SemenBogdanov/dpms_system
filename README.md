@@ -10,15 +10,32 @@
 ## Быстрый старт (Docker)
 
 ```bash
-cp .env.example .env
-docker-compose up --build
+docker compose -p dpms-local up -d --build
 ```
 
-- API: http://localhost:8000  
-- Документация: http://localhost:8000/docs  
-- Frontend: http://localhost:5173  
+- API: http://localhost:8004
+- Документация: http://localhost:8004/docs
+- Frontend: http://localhost:5177
+- PostgreSQL: локальный порт `5436`
+
+Порты закреплены в Compose. При необходимости их можно явно переопределить через
+`DPMS_FRONTEND_PORT`, `DPMS_BACKEND_PORT`, `DPMS_DB_PORT`. Повторный запуск того же
+Compose-проекта сохраняет локальный том базы данных.
 
 При первом запуске backend выполняет миграции и seed (тестовые пользователи, каталог, задачи).
+
+Напоминания трекеров обслуживает `deadline-worker`. Он запускается вместе с системой,
+проверяет сохраненные расписания и создает события во вкладке «Важное». Проверка
+готовности проверяет время последнего успешного цикла обработки:
+
+```bash
+docker compose -p dpms-local exec -T deadline-worker python -m app.workers.deadline_reminders --healthcheck
+```
+
+В production этот сервис использует тот же подготовленный образ, что и backend.
+Миграции применяются release manager до переключения сервисов. При откате приложения
+на версию без планировщика release manager останавливает `deadline-worker`;
+история повторений и доставки в БД сохраняется.
 
 ## Локальный запуск без Docker
 

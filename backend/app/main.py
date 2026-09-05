@@ -10,6 +10,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.api.routes import absences, activity, admin, ai_provider, audit, audit_runtime, audit_synology, auth, calculator, catalog, client_events, competencies, contacts, dashboard, deadline_trackers, feedback, knowledge, messages, notifications, personal_tasks, project_cockpit, queue, quick_notes, reports, shop, storage_quota, tasks, users, work_entities, work_entity_workspace
+from app.api.routes import note_groups
 from app.database import AsyncSessionLocal
 from app.services.audit_documents import reconcile_staged_audit_documents
 from app.services.audit_synology import synology_session_store
@@ -70,6 +71,7 @@ app.include_router(knowledge.router, prefix="/api/knowledge", tags=["knowledge"]
 app.include_router(absences.router, prefix="/api/absences", tags=["absences"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"])
 app.include_router(quick_notes.router, prefix="/api/quick-notes", tags=["quick-notes"])
+app.include_router(note_groups.router, prefix="/api/note-groups", tags=["note-groups"])
 app.include_router(personal_tasks.router, prefix="/api/personal-tasks", tags=["personal-tasks"])
 app.include_router(deadline_trackers.router, prefix="/api/deadline-trackers", tags=["deadline-trackers"])
 app.include_router(work_entities.router, prefix="/api/work-entities", tags=["work-entities"])

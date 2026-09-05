@@ -48,6 +48,7 @@ import {
 } from '@/components/WorkEntityPortfolio'
 import { WorkEntityProjectMap } from '@/components/WorkEntityProjectMap'
 import { WorkEntityWorkspacePanel } from '@/components/WorkEntityWorkspacePanel'
+import { NoteContextBacklinks } from '@/components/NoteContextBacklinks'
 import type {
   Contact,
   WorkEntity,
@@ -1746,6 +1747,12 @@ export function WorkEntitiesPage() {
                         </button>
                       )}
                     </div>
+
+                    <NoteContextBacklinks
+                      targetType="entity"
+                      targetId={selected.id}
+                      excludeNoteIds={links.flatMap((link) => link.target_type === 'quick_note' && link.target_id ? [link.target_id] : [])}
+                    />
 
                     {groupedLinks.length === 0 ? (
                       <div className="rounded-lg border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-500">

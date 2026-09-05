@@ -38,6 +38,7 @@ from app.models.activity import ActivityEvent
 from app.models.feedback import FeedbackRequest
 from app.models.contact import Contact
 from app.models.quick_note import QuickNote
+from app.models.note_group import NoteContextLink, NoteGroup, NoteShareBatch
 from app.models.quick_note_attachment import QuickNoteAttachment
 from app.models.quick_note_share import QuickNoteComment, QuickNoteShare
 from app.models.personal_task import PersonalTask, PersonalTaskCheckpoint, PersonalTaskEvent
@@ -50,7 +51,15 @@ from app.models.storage_quota import (
     UserStorageFile,
     UserStorageQuota,
 )
-from app.models.deadline_tracker import DeadlineTracker
+from app.models.deadline_tracker import (
+    DeadlineTracker,
+    DeadlineTrackerCategory,
+    DeadlineTrackerDelivery,
+    DeadlineTrackerEvent,
+    DeadlineTrackerGroup,
+    DeadlineTrackerOccurrence,
+    DeadlineTrackerReminder,
+)
 from app.models.audit import (
     AuditAIAtomDraft,
     AuditAIAtomizationAttempt,
@@ -129,6 +138,9 @@ __all__ = [
     "FeedbackRequest",
     "Contact",
     "QuickNote",
+    "NoteGroup",
+    "NoteContextLink",
+    "NoteShareBatch",
     "QuickNoteAttachment",
     "QuickNoteComment",
     "QuickNoteShare",
@@ -141,6 +153,12 @@ __all__ = [
     "UserStorageFile",
     "StorageQuotaRequest",
     "DeadlineTracker",
+    "DeadlineTrackerCategory",
+    "DeadlineTrackerDelivery",
+    "DeadlineTrackerEvent",
+    "DeadlineTrackerGroup",
+    "DeadlineTrackerOccurrence",
+    "DeadlineTrackerReminder",
     "AuditCase",
     "AuditAIAtomDraft",
     "AuditAIAtomizationAttempt",

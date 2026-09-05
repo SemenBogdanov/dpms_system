@@ -54,6 +54,7 @@ export type SidebarMenuButton = {
 }
 
 export type SidebarOrder = {
+  version: number
   groups: SidebarMenuButton[]
   items: Record<string, string[]>
   itemLabels: Record<string, string>
@@ -87,6 +88,8 @@ export const sidebarGroups: SidebarGroupDefinition[] = [
   { key: 'admin', label: 'Админ', icon: Users, placement: 'bottom' },
 ]
 
+export const SIDEBAR_MENU_SCHEMA_VERSION = 8
+
 export const sidebarNav: SidebarNavItem[] = [
   { id: 'personal-tasks', to: '/personal-tasks', label: 'Личные задачи', icon: ListChecks, section: 'personal', group: 'tasks' },
   { id: 'my-tasks', to: '/my-tasks', label: 'Q-план', icon: ClipboardList, section: 'task', group: 'tasks' },
@@ -99,7 +102,7 @@ export const sidebarNav: SidebarNavItem[] = [
   { id: 'quick-notes', to: '/quick-notes', label: 'Заметки', icon: StickyNote, section: 'personal', group: 'tasks' },
   { id: 'contacts', to: '/contacts', label: 'Контакты', icon: Contact, section: 'personal', group: 'tasks' },
   { id: 'messages', to: '/messages', label: 'Сообщения', icon: Mail, section: 'personal', group: 'tasks' },
-  { id: 'dashboard', to: '/', label: 'Дашборд', icon: LayoutDashboard, section: 'task', group: 'management', roles: ['teamlead', 'admin'] },
+  { id: 'dashboard', to: '/dashboard', label: 'Дашборд', icon: LayoutDashboard, section: 'task', group: 'management', roles: ['teamlead', 'admin'] },
   { id: 'reports', to: '/reports', label: 'Отчёты', icon: BarChart3, section: 'task', group: 'management', roles: ['teamlead', 'admin'] },
   { id: 'calibration', to: '/calibration', label: 'Калибровка', icon: Scale, section: 'task', group: 'management', roles: ['admin'] },
   { id: 'absences', to: '/absences', label: 'Отсутствия', icon: CalendarDays, section: 'task', group: 'management', roles: ['teamlead', 'admin'] },
@@ -112,6 +115,7 @@ export const sidebarNav: SidebarNavItem[] = [
 ]
 
 export const defaultSidebarOrder: SidebarOrder = {
+  version: SIDEBAR_MENU_SCHEMA_VERSION,
   groups: sidebarGroups
     .filter((group) => group.placement === 'main')
     .map((group) => ({
@@ -131,6 +135,7 @@ export const defaultSidebarOrder: SidebarOrder = {
 
 const builtinGroupByKey = new Map<string, SidebarGroupDefinition>(sidebarGroups.map((group) => [group.key, group]))
 const navById = new Map(sidebarNav.map((item) => [item.id, item]))
+export const requiredSidebarItemIds = new Set(['messages'])
 
 function cleanId(value: unknown, fallback: string) {
   const id = typeof value === 'string' ? value.trim() : ''
@@ -257,7 +262,22 @@ export function normalizeSidebarOrder(order?: SidebarOrderInput): SidebarOrder {
     assignedItemIds.add(itemId)
   }
 
+  for (const itemId of requiredSidebarItemIds) {
+    if (assignedItemIds.has(itemId)) continue
+    const navItem = navById.get(itemId)
+    if (!navItem) continue
+    const targetIndex = mergedGroups.findIndex((group) => group.id === navItem.group)
+    const fallbackIndex = targetIndex >= 0 ? targetIndex : 0
+    mergedGroups = mergedGroups.map((group, index) =>
+      index === fallbackIndex
+        ? { ...group, itemIds: [...group.itemIds, itemId] }
+        : group
+    )
+    assignedItemIds.add(itemId)
+  }
+
   return {
+    version: SIDEBAR_MENU_SCHEMA_VERSION,
     groups: mergedGroups,
     items: Object.fromEntries(mergedGroups.map((group) => [group.id, group.itemIds])),
     itemLabels: cleanItemLabels(order?.item_labels ?? order?.itemLabels),
@@ -272,7 +292,7 @@ export function sidebarOrderPayload(order: SidebarOrder) {
       .filter(([itemId, label]) => navById.has(itemId) && Boolean(label))
   )
   return {
-    version: 7,
+    version: SIDEBAR_MENU_SCHEMA_VERSION,
     groups: normalized.groups.map((group) => ({
       id: group.id,
       label: group.label.trim() || 'Кнопка',

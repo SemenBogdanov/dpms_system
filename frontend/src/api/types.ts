@@ -87,10 +87,21 @@ export type WorkEntityArtifactStatus = 'active' | 'archived'
 export type WorkEntityJournalEntryType = 'progress' | 'meeting' | 'decision' | 'blocker' | 'comment'
 
 export interface SidebarMenuOrder {
+  version?: number
   groups?: Array<string | { id?: string; key?: string; label?: string; item_ids?: string[]; itemIds?: string[] }>
   items?: Record<string, string[]>
   item_labels?: Record<string, string>
   itemLabels?: Record<string, string>
+}
+
+export interface SidebarMenuImportPreview {
+  sidebar_menu_order: SidebarMenuOrder
+  referenced_item_count: number
+  imported_count: number
+  skipped_inaccessible_count: number
+  skipped_unknown_count: number
+  skipped_duplicate_count: number
+  required_added_count: number
 }
 
 export interface User {
@@ -991,6 +1002,30 @@ export interface DeadlineTracker {
   linked_task_id: string | null
   personal_task_key: string | null
   personal_task_title: string | null
+  group_id?: string | null
+  category_id?: string | null
+  url?: string | null
+  recurrence?: {
+    frequency: 'day' | 'week' | 'month' | 'year'
+    interval: number
+    timezone: string
+    end_type: 'never' | 'until' | 'count'
+    until?: string | null
+    count?: number | null
+  } | null
+  reminders?: Array<{ value: number; unit: 'minute' | 'hour' | 'day' | 'week' }>
+  source?: 'standalone' | 'personal_task' | 'task'
+  source_available?: boolean
+  source_title?: string | null
+  source_responsible?: string | null
+  series_exhausted?: boolean
+  current_occurrence?: {
+    id: string
+    sequence: number
+    due_at: string
+    status: 'pending' | 'completed' | 'cancelled'
+    completed_at: string | null
+  } | null
   completed_at: string | null
   created_at: string
   updated_at: string
@@ -1008,6 +1043,11 @@ export interface DeadlineTrackerCreate {
   tags?: string[]
   personal_task_id?: string | null
   linked_task_id?: string | null
+  group_id?: string | null
+  category_id?: string | null
+  url?: string | null
+  recurrence?: DeadlineTracker['recurrence']
+  reminders?: DeadlineTracker['reminders']
 }
 
 export interface DeadlineTrackerUpdate {
@@ -1022,6 +1062,11 @@ export interface DeadlineTrackerUpdate {
   tags?: string[]
   personal_task_id?: string | null
   linked_task_id?: string | null
+  group_id?: string | null
+  category_id?: string | null
+  url?: string | null
+  recurrence?: DeadlineTracker['recurrence']
+  reminders?: DeadlineTracker['reminders']
 }
 
 export interface WorkEntity {
@@ -2534,6 +2579,7 @@ export interface NotificationRead {
 }
 
 export interface AttentionSummary {
+  revision?: string
   direct_count: number
   important_count: number
 }

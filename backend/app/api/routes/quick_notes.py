@@ -41,6 +41,7 @@ from app.services.quick_note_shares import (
     activate_quick_note_shares,
     revoke_quick_note_share,
 )
+from app.services.note_groups import lock_owner, owned_group
 
 router = APIRouter()
 
@@ -127,12 +128,19 @@ async def _broadcast(note_id: UUID, message: dict, *, exclude: UUID | None = Non
 async def list_quick_notes(
     status: str | None = Query(None),
     search: str | None = Query(None),
+    group_id: UUID | None = Query(None),
+    ungrouped: bool = Query(False),
     limit: int = Query(100, ge=1, le=300),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List current user's quick notes."""
     stmt = select(QuickNote).where(QuickNote.owner_id == current_user.id)
+    if group_id is not None:
+        await owned_group(db, group_id, current_user.id)
+        stmt = stmt.where(QuickNote.group_id == group_id)
+    elif ungrouped:
+        stmt = stmt.where(QuickNote.group_id.is_(None))
     if status and status != "all":
         if status not in {"draft", "processed", "archived"}:
             raise HTTPException(status_code=400, detail="Некорректный статус заметки")
@@ -169,7 +177,7 @@ async def list_shared_notes(
     return [
         SharedQuickNoteRead(
             share=_share_read(share, note_owner, current_user),
-            note=QuickNoteRead.model_validate(note),
+            note=QuickNoteRead.model_validate(note).model_copy(update={"group_id": None}),
         )
         for share, note, note_owner in rows
     ]
@@ -208,7 +216,7 @@ async def get_quick_note(
     share, note, note_owner = row
     return SharedQuickNoteRead(
         share=_share_read(share, note_owner, current_user),
-        note=QuickNoteRead.model_validate(note),
+        note=QuickNoteRead.model_validate(note).model_copy(update={"group_id": None}),
     )
 
 
@@ -219,6 +227,9 @@ async def create_quick_note(
     db: AsyncSession = Depends(get_db),
 ):
     """Create quick note for current user."""
+    if body.group_id is not None:
+        await lock_owner(db, current_user.id)
+        await owned_group(db, body.group_id, current_user.id, active=True)
     note = QuickNote(
         owner_id=current_user.id,
         title=body.title or _title_from_body(body.body),
@@ -226,6 +237,7 @@ async def create_quick_note(
         context=body.context,
         status="draft",
         tags=body.tags,
+        group_id=body.group_id,
     )
     db.add(note)
     await db.flush()

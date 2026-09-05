@@ -47,6 +47,7 @@ from app.schemas.work_entity import (
 from app.services.work_entities import (
     build_entity_summary,
     get_entity_access,
+    link_target_id,
     link_target_type,
     list_accessible_entities,
     list_link_options,
@@ -57,6 +58,8 @@ from app.services.work_entities import (
     serialize_links,
     target_column_values,
     target_is_accessible,
+    visible_work_entity_events_clause,
+    visible_work_entity_links_clause,
     would_create_structural_cycle,
 )
 
@@ -131,6 +134,7 @@ async def _get_owned_entity_or_404(
 async def _entity_reads(
     db: AsyncSession,
     rows: list[tuple[WorkEntity, str]],
+    user_id: UUID,
 ) -> list[WorkEntityRead]:
     if not rows:
         return []
@@ -153,7 +157,10 @@ async def _entity_reads(
         (
             await db.execute(
                 select(WorkEntityLink.entity_id, func.count(WorkEntityLink.id))
-                .where(WorkEntityLink.entity_id.in_(entity_ids))
+                .where(
+                    WorkEntityLink.entity_id.in_(entity_ids),
+                    visible_work_entity_links_clause(user_id),
+                )
                 .group_by(WorkEntityLink.entity_id)
             )
         ).all()
@@ -264,8 +271,9 @@ async def _entity_read(
     db: AsyncSession,
     entity: WorkEntity,
     access_role: str,
+    user_id: UUID,
 ) -> WorkEntityRead:
-    return (await _entity_reads(db, [(entity, access_role)]))[0]
+    return (await _entity_reads(db, [(entity, access_role)], user_id))[0]
 
 
 async def _member_open_responsibilities(
@@ -931,7 +939,7 @@ async def list_work_entities(
             or any(normalized_search in tag.lower() for tag in (entity.tags or []))
         )
     ]
-    return await _entity_reads(db, filtered)
+    return await _entity_reads(db, filtered, user.id)
 
 
 @router.post("", response_model=WorkEntityRead, status_code=status.HTTP_201_CREATED)
@@ -1005,7 +1013,7 @@ async def create_work_entity(
     )
     await db.commit()
     await db.refresh(entity)
-    return await _entity_read(db, entity, "owner")
+    return await _entity_read(db, entity, "owner", user.id)
 
 
 @router.get("/{entity_id}", response_model=WorkEntityRead)
@@ -1015,7 +1023,7 @@ async def get_work_entity(
     db: AsyncSession = Depends(get_db),
 ):
     entity, access_role = await _get_entity_or_404(db, entity_id, user)
-    return await _entity_read(db, entity, access_role)
+    return await _entity_read(db, entity, access_role, user.id)
 
 
 @router.get("/{entity_id}/readiness", response_model=WorkEntityReadinessRead)
@@ -1054,7 +1062,7 @@ async def update_work_entity(
         if getattr(entity, field) != value
     }
     if not changes:
-        return await _entity_read(db, entity, access_role)
+        return await _entity_read(db, entity, access_role, user.id)
     if "entity_type" in changes and entity.status != "draft":
         raise HTTPException(
             status_code=409,
@@ -1420,7 +1428,7 @@ async def update_work_entity(
     )
     await db.commit()
     await db.refresh(entity)
-    return await _entity_read(db, entity, access_role)
+    return await _entity_read(db, entity, access_role, user.id)
 
 
 @router.post("/{entity_id}/archive", response_model=WorkEntityRead)
@@ -1459,7 +1467,7 @@ async def archive_work_entity(
     )
     await db.commit()
     await db.refresh(entity)
-    return await _entity_read(db, entity, "owner")
+    return await _entity_read(db, entity, "owner", user.id)
 
 
 @router.get("/{entity_id}/summary", response_model=WorkEntitySummary)
@@ -1561,7 +1569,13 @@ async def create_work_entity_link(
     )
     db.add(link)
     await db.flush()
-    serialized_link = (await serialize_links(db, [link], user))[0]
+    serialized_links = await serialize_links(db, [link], user)
+    if not serialized_links:
+        raise HTTPException(
+            status_code=404,
+            detail="Связанный объект не найден или недоступен",
+        )
+    serialized_link = serialized_links[0]
     target_label = serialized_link.target_title or (
         f"{body.target_type}:{body.target_id}"
     )
@@ -1605,7 +1619,13 @@ async def create_work_entity_link(
         await db.rollback()
         raise HTTPException(status_code=409, detail="Связь уже существует") from exc
     await db.refresh(link)
-    return (await serialize_links(db, [link], user))[0]
+    serialized_links = await serialize_links(db, [link], user)
+    if not serialized_links:
+        raise HTTPException(
+            status_code=404,
+            detail="Связанный объект не найден или недоступен",
+        )
+    return serialized_links[0]
 
 
 @router.patch("/{entity_id}/links/{link_id}", response_model=WorkEntityLinkRead)
@@ -1644,7 +1664,13 @@ async def update_work_entity_link(
         if getattr(link, field) != value
     }
     if not changes:
-        return (await serialize_links(db, [link], user))[0]
+        serialized_links = await serialize_links(db, [link], user)
+        if not serialized_links:
+            raise HTTPException(
+                status_code=404,
+                detail="Связанный объект не найден или недоступен",
+            )
+        return serialized_links[0]
     next_relation = changes.get("relation_type", link.relation_type)
     if link.target_entity_id is not None:
         await lock_entity_graph(db)
@@ -1665,7 +1691,13 @@ async def update_work_entity_link(
     for field, value in changes.items():
         setattr(link, field, value)
     link.updated_at = datetime.now(timezone.utc)
-    serialized_link = (await serialize_links(db, [link], user))[0]
+    serialized_links = await serialize_links(db, [link], user)
+    if not serialized_links:
+        raise HTTPException(
+            status_code=404,
+            detail="Связанный объект не найден или недоступен",
+        )
+    serialized_link = serialized_links[0]
     target_label = serialized_link.target_title or f"Связь {link.id}"
     record_entity_event(
         db,
@@ -1674,6 +1706,8 @@ async def update_work_entity_link(
         "link_updated",
         {
             "schema_version": 1,
+            "target_type": link_target_type(link),
+            "target_id": str(link_target_id(link)),
             "object": {
                 "type": "link",
                 "id": str(link.id),
@@ -1697,7 +1731,13 @@ async def update_work_entity_link(
     )
     await db.commit()
     await db.refresh(link)
-    return (await serialize_links(db, [link], user))[0]
+    serialized_links = await serialize_links(db, [link], user)
+    if not serialized_links:
+        raise HTTPException(
+            status_code=404,
+            detail="Связанный объект не найден или недоступен",
+        )
+    return serialized_links[0]
 
 
 @router.delete("/{entity_id}/links/{link_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1730,7 +1770,13 @@ async def delete_work_entity_link(
         )
     if link.target_entity_id is not None:
         await lock_entity_graph(db)
-    serialized_link = (await serialize_links(db, [link], user))[0]
+    serialized_links = await serialize_links(db, [link], user)
+    if not serialized_links:
+        raise HTTPException(
+            status_code=404,
+            detail="Связанный объект не найден или недоступен",
+        )
+    serialized_link = serialized_links[0]
     target_label = serialized_link.target_title or f"Связь {link.id}"
     record_entity_event(
         db,
@@ -1748,6 +1794,7 @@ async def delete_work_entity_link(
             "action": "removed",
             "changes": [],
             "target_type": link_target_type(link),
+            "target_id": str(link_target_id(link)),
         },
         object_type="link",
         object_id=link.id,
@@ -2082,7 +2129,10 @@ async def list_work_entity_events(
     stmt = (
         select(WorkEntityEvent, User)
         .outerjoin(User, User.id == WorkEntityEvent.actor_id)
-        .where(WorkEntityEvent.entity_id == entity_id)
+        .where(
+            WorkEntityEvent.entity_id == entity_id,
+            visible_work_entity_events_clause(user.id),
+        )
     )
     if before_created_at is not None:
         cursor_filter = WorkEntityEvent.created_at < before_created_at

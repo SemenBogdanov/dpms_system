@@ -30,11 +30,18 @@ export function AttentionProvider({ children }: { children: ReactNode }) {
   const [stale, setStale] = useState(false)
   const [revision, setRevision] = useState(0)
   const inFlight = useRef<Promise<void> | null>(null)
+  const confirmedSummary = useRef<AttentionSummary | null>(null)
 
   const refresh = useCallback(async () => {
     if (inFlight.current) return inFlight.current
     const operation = api.get<AttentionSummary>('/api/messages/summary').then(
       (next) => {
+        const previous = confirmedSummary.current
+        confirmedSummary.current = next
+        // Background workers update the inbox without a process-local WebSocket hint.
+        if (previous && (previous.direct_count !== next.direct_count || previous.important_count !== next.important_count || previous.revision !== next.revision)) {
+          setRevision((value) => value + 1)
+        }
         setSummary(next)
         setStale(false)
       },
