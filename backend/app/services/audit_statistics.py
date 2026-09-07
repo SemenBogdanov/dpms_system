@@ -39,6 +39,11 @@ class AuditStatisticsAtomRecord:
     alpha_result: str | None
     commission_result: str | None
     created_at: datetime
+    legacy_transfer_id: UUID | None = None
+    legacy_effective_at: datetime | None = None
+    legacy_snapshot_state: str | None = None
+    alpha_date: date | None = None
+    commission_date: date | None = None
 
 
 @dataclass(frozen=True)
@@ -47,6 +52,29 @@ class AuditStatisticsStateEvent:
     created_at: datetime
     previous_state: str
     state: str
+    occurred_at: datetime | None = None
+    legacy_transfer_id: UUID | None = None
+
+    @property
+    def business_time(self) -> datetime | None:
+        if self.legacy_transfer_id is not None:
+            return self.occurred_at
+        return self.occurred_at or self.created_at
+
+
+@dataclass(frozen=True)
+class AuditStatisticsLegacyMetric:
+    case_id: UUID
+    metric_date: date
+    metric_type: str
+    value: int
+
+
+@dataclass(frozen=True)
+class AuditStatisticsReviewEvent:
+    atom_id: UUID
+    metric_date: date
+    metric_type: str
 
 
 def statistics_period(days: int, *, today: date | None = None) -> tuple[date, date]:
@@ -60,9 +88,13 @@ def period_start_utc(period_start: date) -> datetime:
 
 
 def _local_date(value: datetime) -> date:
+    return _utc(value).astimezone(AUDIT_STATISTICS_TIMEZONE).date()
+
+
+def _utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(AUDIT_STATISTICS_TIMEZONE).date()
+    return value.astimezone(timezone.utc)
 
 
 def _case_atom_counts(
@@ -99,46 +131,67 @@ def _verification_trend(
     *,
     period_start: date,
     period_end: date,
-) -> list[dict[str, int | str]]:
+) -> tuple[list[dict[str, int | str]], set[tuple[UUID, date, str]]]:
     atoms_by_id = {atom.id: atom for atom in atoms}
     events_by_atom: dict[UUID, list[AuditStatisticsStateEvent]] = defaultdict(list)
     for event in events:
-        if event.atom_id in atoms_by_id and period_start <= _local_date(event.created_at) <= period_end:
+        if event.atom_id in atoms_by_id and event.business_time is not None:
             events_by_atom[event.atom_id].append(event)
     for atom_events in events_by_atom.values():
-        atom_events.sort(key=lambda item: item.created_at)
+        atom_events.sort(key=lambda item: _utc(item.business_time))
 
-    transitions_by_day: dict[date, list[tuple[str | None, str]]] = defaultdict(list)
+    changes_by_day: dict[date, list[int]] = defaultdict(list)
+    coverage: set[tuple[UUID, date, str]] = set()
     baseline_verified = 0
     for atom in atoms:
         atom_events = events_by_atom.get(atom.id, [])
-        created_day = _local_date(atom.created_at)
-        if created_day >= period_start:
-            initial_state = atom_events[0].previous_state if atom_events else atom.state
-            if created_day <= period_end:
-                transitions_by_day[created_day].append((None, initial_state))
-        else:
-            state_at_period_start = atom.state
-            for event in reversed(atom_events):
-                state_at_period_start = event.previous_state
-            if state_at_period_start == "ready":
-                baseline_verified += 1
-        for event in atom_events:
-            transitions_by_day[_local_date(event.created_at)].append(
-                (event.previous_state, event.state)
+        snapshot_time = atom.created_at if atom.legacy_transfer_id is None else atom.legacy_effective_at
+        # This is a confirmed verification date, never the workbook/import date.
+        # Explicit source transitions replace this fallback entirely.
+        if any(
+            event.legacy_transfer_id is not None
+            for event in atom_events
+        ):
+            snapshot_time = None
+        transitions = [
+            (event.business_time, event.previous_state, event.state)
+            for event in atom_events
+        ]
+        if snapshot_time is not None:
+            initial_state = (
+                atom.legacy_snapshot_state
+                if atom.legacy_transfer_id is not None and atom.legacy_snapshot_state is not None
+                else atom_events[0].previous_state if atom_events else atom.state
             )
+            transitions.insert(0, (snapshot_time, None, initial_state))
+        transitions.sort(key=lambda item: _utc(item[0]))
+        # Track each atom independently: excluding an undated atom must not
+        # subtract another atom's known historical verification.
+        counted_ready = False
+        for business_time, previous_state, state in transitions:
+            day = _local_date(business_time)
+            if day > period_end:
+                break
+            change = 0
+            if previous_state != "ready" and state == "ready" and not counted_ready:
+                counted_ready = True
+                change = 1
+                coverage.add((atom.case_id, day, "verified"))
+            elif state != "ready" and counted_ready:
+                counted_ready = False
+                change = -1
+            if day < period_start:
+                baseline_verified += change
+            else:
+                changes_by_day[day].append(change)
 
     result: list[dict[str, int | str]] = []
     cumulative = baseline_verified
     current_day = period_start
     while current_day <= period_end:
-        verified_today = 0
-        for previous_state, state in transitions_by_day.get(current_day, []):
-            if previous_state != "ready" and state == "ready":
-                verified_today += 1
-                cumulative += 1
-            elif previous_state == "ready" and state != "ready":
-                cumulative = max(0, cumulative - 1)
+        changes = changes_by_day.get(current_day, [])
+        verified_today = sum(change == 1 for change in changes)
+        cumulative += sum(changes)
         result.append(
             {
                 "date": current_day.isoformat(),
@@ -147,6 +200,36 @@ def _verification_trend(
             }
         )
         current_day += timedelta(days=1)
+    return result, coverage
+
+
+def _aggregate_trend(
+    metrics: Iterable[AuditStatisticsLegacyMetric],
+    *,
+    incomplete_cells: set[tuple[date, str]],
+    period_start: date,
+    period_end: date,
+) -> list[dict]:
+    by_day: dict[date, dict[str, int]] = defaultdict(dict)
+    for metric in metrics:
+        if period_start <= metric.metric_date <= period_end:
+            values = by_day[metric.metric_date]
+            values[metric.metric_type] = values.get(metric.metric_type, 0) + metric.value
+    if not by_day and not incomplete_cells:
+        return []
+    result = []
+    day = period_start
+    while day <= period_end:
+        result.append({
+            "date": day.isoformat(),
+            # Missing facts and partial sums are gaps, not observed zeroes.
+            **{f"{kind}_count": (
+                None if (day, kind) in incomplete_cells else by_day.get(day, {}).get(kind)
+            ) for kind in (
+                "verified", "alpha_reviewed", "commission_reviewed",
+            )},
+        })
+        day += timedelta(days=1)
     return result
 
 
@@ -157,6 +240,8 @@ def build_audit_statistics(
     *,
     period_start: date,
     period_end: date,
+    metrics: Iterable[AuditStatisticsLegacyMetric] = (),
+    review_events: Iterable[AuditStatisticsReviewEvent] = (),
 ) -> dict:
     case_records = list(cases)
     atom_records = list(atoms)
@@ -174,16 +259,56 @@ def build_audit_statistics(
     alpha_reviewed = [atom for atom in ready_atoms if atom.alpha_result is not None]
     commission_reviewed = [atom for atom in ready_atoms if atom.commission_result is not None]
     case_stage_by_id = {audit_case.id: audit_case.workflow_stage for audit_case in case_records}
+    dated_history_atom_ids = {
+        event.atom_id for event in event_records
+        if event.legacy_transfer_id is not None and event.occurred_at is not None
+    }
+    trend, coverage = _verification_trend(
+        atom_records, event_records, period_start=period_start, period_end=period_end,
+    )
+    atom_by_id = {atom.id: atom for atom in atom_records}
+    for atom in atom_records:
+        for result, fact_date, metric_type in (
+            (atom.alpha_result, atom.alpha_date, "alpha_reviewed"),
+            (atom.commission_result, atom.commission_date, "commission_reviewed"),
+        ):
+            if result is not None and fact_date is not None:
+                coverage.add((atom.case_id, fact_date, metric_type))
+    for event in review_events:
+        atom = atom_by_id.get(event.atom_id)
+        if atom is not None:
+            coverage.add((atom.case_id, event.metric_date, event.metric_type))
+    visible_metrics = []
+    incomplete_cells: set[tuple[date, str]] = set()
+    aggregate_conflict_count = 0
+    for metric in metrics:
+        if metric.case_id not in case_stage_by_id or not period_start <= metric.metric_date <= period_end:
+            continue
+        # Live facts may be backdated after transfer commit. Keep imported facts
+        # immutable, but never present overlapping coverage as additive history.
+        if (metric.case_id, metric.metric_date, metric.metric_type) in coverage:
+            aggregate_conflict_count += 1
+            incomplete_cells.add((metric.metric_date, metric.metric_type))
+        else:
+            visible_metrics.append(metric)
 
     return {
         "date_from": period_start,
         "date_to": period_end,
-        "trend": _verification_trend(
-            atom_records,
-            event_records,
+        "aggregate_conflict_count": aggregate_conflict_count,
+        "undated_legacy_atoms": sum(
+            atom.legacy_transfer_id is not None
+            and atom.legacy_effective_at is None
+            and atom.id not in dated_history_atom_ids
+            for atom in atom_records
+        ),
+        "aggregate_trend": _aggregate_trend(
+            visible_metrics,
+            incomplete_cells=incomplete_cells,
             period_start=period_start,
             period_end=period_end,
         ),
+        "trend": trend,
         "contracts": {
             "total": len(case_records),
             "in_progress": sum(

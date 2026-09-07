@@ -11,7 +11,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import and_, delete, func, or_, select, text
+from sqlalchemy import and_, case as sql_case, delete, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -33,6 +33,7 @@ from app.models.audit import (
     AuditTeamMember,
 )
 from app.models.audit_runtime import AuditTZRun, AuditTZRuntimeJob
+from app.models.audit_legacy_transfer import AuditLegacyMetric, AuditLegacyTransfer
 from app.models.contact import Contact
 from app.models.user import User, UserRole
 from app.schemas.audit import (
@@ -112,9 +113,11 @@ from app.services.audit_model_comparison import evidence_text
 from app.services.audit_statistics import (
     AuditStatisticsAtomRecord,
     AuditStatisticsCaseRecord,
+    AuditStatisticsLegacyMetric,
+    AuditStatisticsReviewEvent,
     AuditStatisticsStateEvent,
     build_audit_statistics,
-    period_start_utc,
+    AUDIT_STATISTICS_TIMEZONE,
     statistics_period,
 )
 from app.services.activity import record_activity_event
@@ -461,27 +464,64 @@ async def get_audit_statistics(
                 AuditAtom.alpha_result,
                 AuditAtom.commission_result,
                 AuditAtom.created_at,
+                AuditAtom.legacy_transfer_id,
+                AuditAtom.legacy_effective_at,
+                AuditAtom.alpha_date,
+                AuditAtom.commission_date,
             )
         )
     ).all()
     event_rows = (
         await db.execute(
-            select(AuditEvent.atom_id, AuditEvent.created_at, AuditEvent.payload_json)
+            select(
+                AuditEvent.atom_id, AuditEvent.created_at, AuditEvent.payload_json,
+                AuditEvent.occurred_at, AuditEvent.legacy_transfer_id,
+                AuditEvent.event_type,
+            )
             .where(
-                AuditEvent.event_type == "atom_status_changed",
+                AuditEvent.event_type.in_({
+                    "atom_status_changed", "legacy_atom_snapshot", "alpha_reviewed",
+                    "commission_reviewed", "atom_alpha_decision_changed",
+                }),
                 AuditEvent.atom_id.is_not(None),
-                AuditEvent.created_at >= period_start_utc(date_from),
             )
             .order_by(AuditEvent.created_at.asc(), AuditEvent.id.asc())
         )
     ).all()
     state_events = []
-    for atom_id, created_at, payload in event_rows:
+    review_events = []
+    snapshot_states = {}
+    for atom_id, created_at, payload, occurred_at, legacy_transfer_id, event_type in event_rows:
+        payload = payload if isinstance(payload, dict) else {}
+        if event_type == "legacy_atom_snapshot":
+            snapshot_state = payload.get("state")
+            if legacy_transfer_id is not None and isinstance(snapshot_state, str) and snapshot_state in {"draft", "ready", "excluded"}:
+                snapshot_states.setdefault((atom_id, legacy_transfer_id), snapshot_state)
+            continue
+        if event_type != "atom_status_changed":
+            business_time = occurred_at if legacy_transfer_id is not None else occurred_at or created_at
+            metric_type = event_type
+            if event_type == "atom_alpha_decision_changed":
+                if payload.get("alpha_result") is None:
+                    continue
+                try:
+                    metric_date = date.fromisoformat(payload["alpha_date"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                metric_type = "alpha_reviewed"
+            elif business_time is not None:
+                if business_time.tzinfo is None:
+                    business_time = business_time.replace(tzinfo=timezone.utc)
+                metric_date = business_time.astimezone(AUDIT_STATISTICS_TIMEZONE).date()
+            else:
+                continue
+            review_events.append(AuditStatisticsReviewEvent(atom_id, metric_date, metric_type))
+            continue
         previous_state = (payload or {}).get("previous_state")
         next_state = (payload or {}).get("state")
-        if atom_id is None or previous_state not in {"draft", "ready", "excluded"}:
+        if atom_id is None or not isinstance(previous_state, str) or previous_state not in {"draft", "ready", "excluded"}:
             continue
-        if next_state not in {"draft", "ready", "excluded"}:
+        if not isinstance(next_state, str) or next_state not in {"draft", "ready", "excluded"}:
             continue
         state_events.append(
             AuditStatisticsStateEvent(
@@ -489,8 +529,24 @@ async def get_audit_statistics(
                 created_at=created_at,
                 previous_state=previous_state,
                 state=next_state,
+                occurred_at=occurred_at,
+                legacy_transfer_id=legacy_transfer_id,
             )
         )
+    metric_rows = (
+        await db.execute(
+            select(
+                AuditLegacyMetric.case_id, AuditLegacyMetric.metric_date,
+                AuditLegacyMetric.metric_type, AuditLegacyMetric.value,
+            )
+            .join(AuditLegacyTransfer, AuditLegacyTransfer.id == AuditLegacyMetric.transfer_id)
+            .where(
+                AuditLegacyTransfer.status == "committed",
+                AuditLegacyMetric.metric_date >= date_from,
+                AuditLegacyMetric.metric_date <= date_to,
+            )
+        )
+    ).all()
     return AuditStatisticsRead.model_validate(
         build_audit_statistics(
             [
@@ -509,12 +565,25 @@ async def get_audit_statistics(
                     alpha_result=row.alpha_result,
                     commission_result=row.commission_result,
                     created_at=row.created_at,
+                    legacy_transfer_id=row.legacy_transfer_id,
+                    legacy_effective_at=row.legacy_effective_at,
+                    legacy_snapshot_state=snapshot_states.get((row.id, row.legacy_transfer_id)),
+                    alpha_date=row.alpha_date,
+                    commission_date=row.commission_date,
                 )
                 for row in atom_rows
             ],
             state_events,
             period_start=date_from,
             period_end=date_to,
+            review_events=review_events,
+            metrics=[
+                AuditStatisticsLegacyMetric(
+                    case_id=row.case_id, metric_date=row.metric_date,
+                    metric_type=row.metric_type, value=row.value,
+                )
+                for row in metric_rows
+            ],
         )
     )
 
@@ -1250,15 +1319,22 @@ async def update_audit_atom(
 @router.get("/cases/{case_id}/events", response_model=list[AuditEventRead])
 async def list_audit_events(
     case_id: UUID,
-    _: User = Depends(require_audit_workspace_member),
+    user: User = Depends(require_audit_workspace_member),
     db: AsyncSession = Depends(get_db),
 ):
     await _get_case_or_404(db, case_id)
     result = await db.execute(
-        select(AuditEvent, User.full_name)
+        select(AuditEvent, User.full_name, AuditLegacyTransfer.source_id)
         .outerjoin(User, User.id == AuditEvent.actor_id)
+        .outerjoin(AuditLegacyTransfer, AuditLegacyTransfer.id == AuditEvent.legacy_transfer_id)
         .where(AuditEvent.case_id == case_id)
-        .order_by(AuditEvent.created_at.desc())
+        .order_by(
+            sql_case(
+                (AuditEvent.legacy_transfer_id.is_not(None), AuditEvent.occurred_at),
+                else_=func.coalesce(AuditEvent.occurred_at, AuditEvent.created_at),
+            ).desc().nulls_last(),
+            AuditEvent.created_at.desc(), AuditEvent.id.desc(),
+        )
         .limit(500)
     )
     return [
@@ -1267,18 +1343,40 @@ async def list_audit_events(
             case_id=event.case_id,
             atom_id=event.atom_id,
             import_batch_id=event.import_batch_id,
-            actor_id=event.actor_id,
-            actor_name=actor_name,
+            actor_id=event.actor_id if event.legacy_transfer_id is None else None,
+            actor_name=actor_name if event.legacy_transfer_id is None else event.historical_actor_name,
             event_type=event.event_type,
             message=event.message,
             payload_json={
                 key: value
                 for key, value in (event.payload_json or {}).items()
                 if key in SAFE_EVENT_PAYLOAD_FIELDS
+                and (
+                    event.legacy_transfer_id is None
+                    or (
+                        key in {
+                            "state", "previous_state", "alpha_result", "previous_alpha_result",
+                            "commission_result", "previous_commission_result", "scheduled_date",
+                        }
+                        and (value is None or isinstance(value, str) and len(value) <= 40)
+                    )
+                )
             } or None,
             created_at=event.created_at,
+            origin="legacy_import" if event.legacy_transfer_id is not None else "live",
+            occurred_at=(
+                event.occurred_at if event.legacy_transfer_id is not None
+                else event.occurred_at or event.created_at
+            ),
+            imported_at=event.created_at if event.legacy_transfer_id is not None else None,
+            historical_actor_name=event.historical_actor_name,
+            legacy_transfer_id=event.legacy_transfer_id,
+            legacy_source_url=(
+                f"/audit?view=legacy-imports&batch={source_id}"
+                if user.role == UserRole.admin and source_id is not None else None
+            ),
         )
-        for event, actor_name in result.all()
+        for event, actor_name, source_id in result.all()
     ]
 
 

@@ -13,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.deps import get_db, require_audit_role
 from app.models.audit_legacy import AuditLegacyImport, utc_now
+from app.models.audit_legacy_transfer import AuditLegacyTransfer
 from app.models.user import User
 from app.schemas.audit_legacy import (
     AuditLegacyBatchRead,
@@ -208,6 +209,9 @@ async def delete_legacy_import(
     await _lock_staging(db)
     batch = await _batch_or_404(db, batch_id, for_update=True)
     _check_revision(batch, revision)
+    linked = await db.scalar(select(AuditLegacyTransfer.id).where(AuditLegacyTransfer.source_id == batch_id).limit(1))
+    if linked is not None:
+        raise HTTPException(status_code=409, detail="Исходник связан с переносом и сохраняется вместе с его журналом, в том числе после отмены.")
     async with _staging_write(db):
         await _record_batch_activity(db, admin, batch, "audit_legacy_deleted")
         await db.delete(batch)

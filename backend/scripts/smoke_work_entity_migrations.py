@@ -269,9 +269,17 @@ async def verify_head_schema(database_url: URL) -> None:
                     text("SELECT version_num FROM alembic_version")
                 )
             ).scalar_one()
-            assert revision == "082_audit_legacy_upload"
+            assert revision == "083_audit_legacy_transfer"
             legacy_table = await connection.scalar(text("SELECT to_regclass('public.audit_legacy_imports')"))
             assert legacy_table is not None
+            for table_name in (
+                "audit_legacy_transfers", "audit_legacy_provenance",
+                "audit_legacy_transfer_rows", "audit_legacy_metrics",
+            ):
+                assert await connection.scalar(
+                    text("SELECT to_regclass(:table_name)"),
+                    {"table_name": f"public.{table_name}"},
+                ) is not None
             audit_context_default = (
                 await connection.execute(
                     text(
@@ -1190,6 +1198,27 @@ async def verify_legacy_conversion(
         await engine.dispose()
 
 
+async def legacy_transfer_guard_fixture(database_url: URL, source_id, transfer_id, *, cleanup=False):
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.begin() as connection:
+            if cleanup:
+                await connection.execute(text("DELETE FROM audit_legacy_transfers WHERE id = :id"), {"id": transfer_id})
+                await connection.execute(text("DELETE FROM audit_legacy_imports WHERE id = :id"), {"id": source_id})
+                return
+            await connection.execute(text("""
+                INSERT INTO audit_legacy_imports
+                    (id, sha256, size_bytes, source_bytes, inspection, status, revision, created_at, updated_at)
+                VALUES (:id, :sha, 1, :data, '{}'::jsonb, 'uploaded', 1, now(), now())
+            """), {"id": source_id, "sha": source_id.hex * 2, "data": b"x"})
+            await connection.execute(text("""
+                INSERT INTO audit_legacy_transfers (id, source_id, namespace, config)
+                VALUES (:id, :source_id, 'migration-guard-test', '{}'::jsonb)
+            """), {"id": transfer_id, "source_id": source_id})
+    finally:
+        await engine.dispose()
+
+
 def run() -> None:
     original_url = make_url(settings.DATABASE_URL)
     ensure_safe_target(original_url)
@@ -1203,6 +1232,22 @@ def run() -> None:
         asyncio.run(run_alembic(temporary_url, "upgrade", "head"))
         asyncio.run(verify_head_schema(temporary_url))
         asyncio.run(verify_head_integrity(temporary_url))
+
+        source_id, transfer_id = uuid.uuid4(), uuid.uuid4()
+        asyncio.run(legacy_transfer_guard_fixture(temporary_url, source_id, transfer_id))
+        try:
+            try:
+                asyncio.run(run_alembic(temporary_url, "downgrade", "082_audit_legacy_upload"))
+            except RuntimeError as error:
+                assert "Cannot downgrade nonempty legacy transfer" in str(error)
+            else:
+                raise AssertionError("A1.9 downgrade discarded a transfer journal")
+            asyncio.run(verify_head_schema(temporary_url))
+        finally:
+            asyncio.run(legacy_transfer_guard_fixture(temporary_url, source_id, transfer_id, cleanup=True))
+        asyncio.run(run_alembic(temporary_url, "downgrade", "082_audit_legacy_upload"))
+        asyncio.run(run_alembic(temporary_url, "upgrade", "head"))
+        asyncio.run(verify_head_schema(temporary_url))
 
         revision_event_id = asyncio.run(
             seed_acceptance_revision_event(temporary_url)

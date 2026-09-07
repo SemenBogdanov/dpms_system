@@ -645,6 +645,9 @@ test('acceptance draft survives navigation and requires explicit discard', async
   const continueButton = discardDialog.getByRole('button', { name: 'Продолжить редактирование' })
   const discardButton = discardDialog.getByRole('button', { name: 'Удалить черновик и закрыть' })
   await expect(continueButton).toBeFocused()
+  // React autoFocus precedes the modal hook's initial animation-frame focus.
+  await continueButton.click({ trial: true })
+  await expect(continueButton).toBeFocused()
   await page.keyboard.press('Tab')
   await expect(discardButton).toBeFocused()
   await page.keyboard.press('Shift+Tab')

@@ -7,8 +7,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
+from hashlib import sha256
+import json
 import posixpath
 import re
+from urllib.parse import urlsplit
 from xml.etree import ElementTree as ET
 from xml.parsers import expat
 from zipfile import BadZipFile, ZipFile
@@ -66,8 +69,16 @@ FIELD_ALIASES = {
     "metric_date": ("дата", "день"),
     "metric_type": ("метрика", "показатель"),
     "value": ("количество", "значение", "верифицировано"),
+    "workflow_stage": ("этап аудита", "этап договора"),
+    "contract_reference": ("полный номер договора", "реквизиты договора"),
+    "source_evidence_text": ("текстовое основание", "выдержка из тз"),
+    "notes": ("примечание", "примечания", "комментарий"),
+    "alpha_comment": ("комментарий альфа-проверки", "замечания альфа-проверки"),
+    "previous_state": ("предыдущий статус", "статус до изменения"),
+    "ended_at": ("дата завершения назначения", "назначение завершено"),
+    "assignment_key": ("код назначения", "id назначения"),
 }
-DATE_FIELDS = {"contract_date", "alpha_date", "commission_date", "assigned_at", "occurred_at", "metric_date"}
+DATE_FIELDS = {"contract_date", "alpha_date", "commission_date", "assigned_at", "ended_at", "occurred_at", "metric_date"}
 STATE_VALUES = {"draft", "ready", "excluded", "черновик", "принят", "готов", "исключен", "исключён"}
 ALPHA_VALUES = {"present", "not_present", "partial", "not_applicable", "needs_clarification", "1", "0", "да", "нет", "есть", "частично", "не применимо", "требует уточнения"}
 COMMISSION_VALUES = {"confirmed", "not_confirmed", "deferred", "not_applicable", "1", "0", "принято", "принят", "подтверждено", "не подтверждено", "в доработку", "отложено", "исключено", "не применимо"}
@@ -339,7 +350,7 @@ def _date_key(value: str, date1904: bool, *, timestamp: bool) -> str | None:
             return normalized(datetime.fromisoformat(value.replace("Z", "+00:00")))
         except ValueError:
             pass
-    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"):
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d.%m.%Y %H:%M", "%d.%m.%Y %H:%M:%S"):
         try:
             return normalized(datetime.strptime(value, fmt))
         except ValueError:
@@ -458,7 +469,7 @@ def preview_legacy_mapping(data: bytes, mapping: dict) -> dict:
         if len(preview_rows) < 30:
             safe = {}
             for field, value in values.items():
-                if field == "case_key":
+                if field in {"case_key", "contract_reference"}:
                     value = mask_contract_reference(value)
                 elif field == "system_url":
                     value = mask_system_url(value)
@@ -484,3 +495,171 @@ def preview_legacy_mapping(data: bytes, mapping: dict) -> dict:
         "unmapped_columns": sorted(known_columns - set(fields.values()), key=_column_number),
         "ready_for_import": False,
     }
+
+
+TRANSFER_ENUMS = {
+    "state": {"draft": "draft", "черновик": "draft", "ready": "ready", "принят": "ready", "готов": "ready", "excluded": "excluded", "исключен": "excluded"},
+    "alpha_result": {"present": "present", "да": "present", "есть": "present", "1": "present", "not_present": "not_present", "нет": "not_present", "0": "not_present", "partial": "partial", "частично": "partial", "not_applicable": "not_applicable", "не применимо": "not_applicable", "needs_clarification": "needs_clarification", "требует уточнения": "needs_clarification"},
+    "commission_result": {"confirmed": "confirmed", "принято": "confirmed", "принят": "confirmed", "подтверждено": "confirmed", "1": "confirmed", "not_confirmed": "not_confirmed", "не подтверждено": "not_confirmed", "в доработку": "not_confirmed", "0": "not_confirmed", "deferred": "deferred", "отложено": "deferred", "not_applicable": "not_applicable", "не применимо": "not_applicable", "исключено": "not_applicable"},
+    "is_current": {"true": True, "да": True, "1": True, "false": False, "нет": False, "0": False},
+    "metric_type": {"verified": "verified", "верифицировано": "verified", "alpha_reviewed": "alpha_reviewed", "альфа-проверка": "alpha_reviewed", "commission_reviewed": "commission_reviewed", "комиссия": "commission_reviewed"},
+    "event_type": {"atom_status_changed": "atom_status_changed", "изменение статуса": "atom_status_changed", "alpha_reviewed": "alpha_reviewed", "альфа-проверка": "alpha_reviewed", "commission_reviewed": "commission_reviewed", "комиссия": "commission_reviewed", "assignment": "assignment", "назначение": "assignment"},
+    "workflow_stage": {"unassigned": "unassigned", "не назначен": "unassigned", "atomization": "atomization", "атомизация": "atomization", "alpha_review": "alpha_review", "альфа-проверка": "alpha_review", "commission_pending": "commission_pending", "ожидает комиссии": "commission_pending", "fixes_required": "fixes_required", "требуется доработка": "fixes_required", "fixing": "fixing", "доработка": "fixing", "recommission_pending": "recommission_pending", "повторная комиссия": "recommission_pending", "ready": "ready", "готов": "ready"},
+}
+TRANSFER_ENUMS["previous_state"] = TRANSFER_ENUMS["state"]
+TRANSFER_LIMITS = {
+    "case_key": 500, "atom_key": 40, "event_key": 500, "assignment_key": 500, "digital_product": 255,
+    "title": 500, "source_clause": 500, "work_type": 255, "object_type": 255,
+    "system_url": 1000, "assignee_email": 255, "actor_name": 255,
+    "contract_reference": 255, "notes": 20000, "source_evidence_text": 20000,
+    "alpha_comment": 20000,
+}
+
+
+def normalize_legacy_datasets(data: bytes, datasets: list[dict]) -> dict:
+    """Server-only canonical rows; never return these unredacted through an API."""
+    if not isinstance(datasets, list) or not 1 <= len(datasets) <= 50:
+        _bad("Выберите от одного до 50 наборов данных")
+    book = _read_workbook(data)
+    sheets = {sheet.id: sheet for sheet in book.sheets}
+    records = []
+    issues_by_severity = {"error": [], "warning": []}
+    counts = {"error_count": 0, "warning_count": 0, "issue_count": 0, "total_rows": 0}
+
+    def issue(sheet_id, row, field, code, message, severity="error"):
+        counts["issue_count"] += 1
+        counts["error_count" if severity == "error" else "warning_count"] += 1
+        group = issues_by_severity[severity]
+        if len(group) < MAX_ISSUES:
+            group.append({"sheet_id": sheet_id, "row": row, "field": field, "code": code, "severity": severity, "message": message})
+
+    for dataset in datasets:
+        if not isinstance(dataset, dict):
+            _bad("Некорректный набор данных")
+        sheet_id, kind = dataset.get("sheet_id"), dataset.get("kind")
+        sheet, header = sheets.get(sheet_id), dataset.get("header_row")
+        if sheet is None or kind not in REQUIRED_FIELDS or type(header) is not int or header not in sheet.rows:
+            _bad("Выберите существующий лист, строку заголовков и тип данных")
+        fields, defaults, value_maps = dataset.get("fields", {}), dataset.get("defaults", {}), dataset.get("value_maps", {})
+        if any(not isinstance(value, dict) for value in (fields, defaults, value_maps)):
+            _bad("Некорректное сопоставление набора")
+        if any(field not in FIELD_ALIASES for source in (fields, defaults, value_maps) for field in source):
+            _bad("Неизвестное поле сопоставления")
+        columns = {item["column"] for item in _columns(sheet, header)}
+        if any(not isinstance(column, str) or column not in columns for column in fields.values()):
+            _bad("Выберите существующие столбцы")
+        if any(not isinstance(value, str) or len(value) > MAX_TEXT for value in defaults.values()):
+            _bad("Некорректное значение по умолчанию")
+        translations = {}
+        for field, pairs in value_maps.items():
+            if field not in TRANSFER_ENUMS or not isinstance(pairs, dict) or len(pairs) > 100:
+                _bad("Сопоставление значений доступно только для состояний, этапов и типов событий")
+            translated = {}
+            for label, target in pairs.items():
+                if not isinstance(label, str) or not isinstance(target, str) or len(label) > 500 or _norm(target) not in TRANSFER_ENUMS[field]:
+                    _bad("Выберите допустимое целевое значение")
+                label_key = _norm(label)
+                if label_key in translated and translated[label_key] != _norm(target):
+                    _bad("Одинаковым исходным значениям назначены разные состояния")
+                translated[label_key] = _norm(target)
+            translations[field] = translated
+        first = dataset.get("row_from") if dataset.get("row_from") is not None else header + 1
+        last = dataset.get("row_to") if dataset.get("row_to") is not None else 1048576
+        if type(first) is not int or type(last) is not int or not header < first <= last <= 1048576:
+            _bad("Некорректный диапазон строк")
+        key_mode = dataset.get("atom_key_mode", "column")
+        if key_mode not in {"column", "content"}:
+            _bad("Выберите способ определения кода атома")
+        for field, column in fields.items():
+            cell = sheet.rows.get(header, {}).get(column)
+            if cell and (cell.formula or cell.error):
+                issue(sheet_id, header, field, "invalid_header", "Заголовок содержит формулу или ошибку Excel")
+        if sheet.hidden:
+            issue(sheet_id, None, None, "hidden_sheet", "Выбран скрытый лист; подтвердите источник фактов", "warning")
+        dataset_rows = 0
+        for row, cells in sorted(sheet.rows.items()):
+            if not first <= row <= last or not any(cell.value is not None or cell.formula or cell.error for cell in cells.values()):
+                continue
+            counts["total_rows"] += 1
+            dataset_rows += 1
+            if counts["total_rows"] > MAX_ROWS:
+                _bad("Выбранные наборы превышают 30 000 строк; разделите пакет")
+            values = {field: _text(value) for field, value in defaults.items()}
+            for field, column in fields.items():
+                cell = cells.get(column) or Cell(None)
+                values[field] = cell.value or values.get(field)
+                if cell.formula or cell.error:
+                    issue(sheet_id, row, field, "formula_not_fact" if cell.formula else "excel_error", "Нужны исходные значения, не формула или ошибка Excel")
+                    values[field] = None
+                if (row, _column_number(column)) in sheet.merged_cells:
+                    issue(sheet_id, row, field, "merged_value", "Объединенная ячейка: разверните значения по строкам")
+            for field, value in list(values.items()):
+                if value is None:
+                    continue
+                if len(value) > TRANSFER_LIMITS.get(field, 500):
+                    issue(sheet_id, row, field, "value_too_long", "Значение превышает допустимую длину поля")
+                if field in DATE_FIELDS:
+                    value = _date_key(value, book.date1904, timestamp=field in {"occurred_at", "assigned_at", "ended_at"})
+                    if value is None:
+                        issue(sheet_id, row, field, "invalid_date", "Не распознана дата")
+                elif field in TRANSFER_ENUMS:
+                    label = _norm(value)
+                    label = translations.get(field, {}).get(label, label)
+                    if label not in TRANSFER_ENUMS[field]:
+                        issue(sheet_id, row, field, "unknown_value", "Неизвестное значение; задайте сопоставление")
+                        value = None
+                    else:
+                        value = TRANSFER_ENUMS[field][label]
+                elif field == "value":
+                    try:
+                        number = Decimal(value)
+                        if not number.is_finite() or number != number.to_integral_value() or not 0 <= number <= 1_000_000_000:
+                            raise ValueError
+                        value = int(number)
+                    except (InvalidOperation, ValueError):
+                        issue(sheet_id, row, field, "invalid_count", "Нужно целое неотрицательное количество до 1 000 000 000")
+                        value = None
+                elif field == "assignee_email":
+                    value = value.casefold()
+                    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
+                        issue(sheet_id, row, field, "invalid_email", "Укажите email или перенесите ФИО в поле имени участника")
+                elif field == "system_url":
+                    try:
+                        parsed = urlsplit(value)
+                        valid = parsed.scheme in {"http", "https"} and parsed.hostname and not parsed.username and not parsed.password
+                    except ValueError:
+                        valid = False
+                    if not valid:
+                        issue(sheet_id, row, field, "invalid_url", "Нужна HTTP(S)-ссылка без учетных данных")
+                values[field] = value
+            required = set(REQUIRED_FIELDS[kind])
+            if kind == "atoms" and key_mode == "content" and not values.get("atom_key"):
+                identity = [_norm(str(values.get(field) or "")) for field in ("case_key", "title", "source_clause", "work_type", "object_type")]
+                values["atom_key"] = "LEG-" + sha256(json.dumps(identity, ensure_ascii=True).encode()).hexdigest()[:32]
+            if kind == "assignments":
+                required.discard("assignee_email")
+                if not values.get("assignee_email") and not values.get("actor_name"):
+                    issue(sheet_id, row, "actor_name", "missing_actor", "Для назначения нужен email или имя исторического участника")
+            for field in sorted(required):
+                if values.get(field) is None or values.get(field) == "":
+                    issue(sheet_id, row, field, "required_value", f"Не заполнено поле: {FIELD_ALIASES[field][0]}")
+            if kind == "events":
+                event_type = values.get("event_type")
+                event_required = {"atom_status_changed": ("atom_key", "previous_state", "state"), "alpha_reviewed": ("atom_key", "alpha_result"), "commission_reviewed": ("atom_key", "commission_result"), "assignment": ()}.get(event_type, ())
+                for field in event_required:
+                    if not values.get(field):
+                        issue(sheet_id, row, field, "event_field_required", f"Для события нужно поле: {FIELD_ALIASES[field][0]}")
+            if kind == "atoms" and values.get("state") == "ready" and not values.get("occurred_at"):
+                issue(sheet_id, row, "occurred_at", "verification_date_unknown", "Дата верификации неизвестна: состояние сохранится без прироста в день загрузки", "warning")
+            if kind == "assignments" and not values.get("is_current"):
+                issue(sheet_id, row, "is_current", "historical_assignment", "Назначение сохранится в истории, не в текущем календаре", "warning")
+            if kind == "assignments" and values.get("ended_at"):
+                if values.get("is_current"):
+                    issue(sheet_id, row, "is_current", "ended_current_assignment", "Завершенное назначение не может быть текущим")
+                if values.get("assigned_at") and values["ended_at"] < values["assigned_at"]:
+                    issue(sheet_id, row, "ended_at", "invalid_assignment_period", "Окончание назначения раньше начала")
+            records.append({"kind": kind, "sheet_id": sheet_id, "row": row, "values": values})
+        if not dataset_rows:
+            issue(sheet_id, None, None, "empty_dataset", "В выбранном диапазоне нет данных")
+    issues = (issues_by_severity["error"] + issues_by_severity["warning"])[:MAX_ISSUES]
+    return {"parser_version": "a19-transfer-v1", "records": records, "issues": issues, **counts}

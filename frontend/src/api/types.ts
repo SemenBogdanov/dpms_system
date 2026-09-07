@@ -267,6 +267,12 @@ export interface AuditEvent {
   message: string
   payload_json: Record<string, unknown> | null
   created_at: string
+  origin: 'live' | 'legacy_import'
+  occurred_at: string | null
+  imported_at: string | null
+  historical_actor_name: string | null
+  legacy_transfer_id: string | null
+  legacy_source_url: string | null
 }
 
 export interface AuditCaseCreate {
@@ -569,6 +575,13 @@ export interface AuditVerificationTrendPoint {
   cumulative_verified_count: number
 }
 
+export interface AuditAggregateTrendPoint {
+  date: string
+  verified_count: number | null
+  alpha_reviewed_count: number | null
+  commission_reviewed_count: number | null
+}
+
 export interface AuditContractStatistics {
   total: number
   in_progress: number
@@ -592,6 +605,9 @@ export interface AuditStatistics {
   date_from: string
   date_to: string
   trend: AuditVerificationTrendPoint[]
+  aggregate_trend: AuditAggregateTrendPoint[]
+  aggregate_conflict_count: number
+  undated_legacy_atoms: number
   contracts: AuditContractStatistics
   atoms: AuditAtomStatistics
 }

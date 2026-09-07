@@ -14,6 +14,8 @@ AuditLegacyField = Literal[
     "alpha_date", "commission_result", "commission_date", "system_url",
     "assignee_email", "actor_name", "assigned_at", "is_current", "occurred_at",
     "event_key", "event_type", "metric_date", "metric_type", "value",
+    "workflow_stage", "contract_reference", "source_evidence_text", "notes",
+    "alpha_comment", "previous_state", "ended_at", "assignment_key",
 ]
 ColumnLetter = Annotated[str, Field(pattern=r"^[A-Z]{1,3}$")]
 
@@ -50,7 +52,7 @@ class AuditLegacyMapping(BaseModel):
     sheet_id: str = Field(min_length=1, max_length=512)
     header_row: int = Field(ge=1, le=1048576, strict=True)
     kind: AuditLegacyKind
-    fields: dict[AuditLegacyField, ColumnLetter] = Field(max_length=27)
+    fields: dict[AuditLegacyField, ColumnLetter] = Field(max_length=35)
 
     @field_validator("fields")
     @classmethod

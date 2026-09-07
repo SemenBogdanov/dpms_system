@@ -99,6 +99,7 @@ function requestTimeout(path: string, options: RequestInit, jsonRequest: boolean
     path.startsWith('/api/audit/synology')
     || path.includes('/ai-atomization/')
     || path.startsWith('/api/admin/integrations/ai')
+    || (requestMethod(options) === 'POST' && /^\/api\/audit\/legacy-transfers\/[^/]+\/(preview|commit|rollback)$/.test(path))
   ) {
     return INTEGRATION_TIMEOUT_MS
   }

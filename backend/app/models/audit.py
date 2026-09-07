@@ -498,6 +498,10 @@ class AuditAtom(Base):
         nullable=False,
         index=True,
     )
+    legacy_transfer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("audit_legacy_transfers.id", ondelete="RESTRICT"), nullable=True,
+    )
+    legacy_effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     item_code: Mapped[str] = mapped_column(String(40), nullable=False)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     digital_product: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -962,6 +966,11 @@ class AuditEvent(Base):
         nullable=True,
         index=True,
     )
+    legacy_transfer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("audit_legacy_transfers.id", ondelete="RESTRICT"), nullable=True,
+    )
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    historical_actor_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     event_type: Mapped[str] = mapped_column(String(40), nullable=False)
     message: Mapped[str] = mapped_column(String(255), nullable=False)
     payload_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

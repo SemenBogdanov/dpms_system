@@ -9,7 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import {
   Bar,
@@ -211,7 +211,11 @@ interface NormalizedAuditEvent {
   title: string
   body: string | null
   actorName: string | null
-  createdAt: string | null
+  occurredAt: string | null
+  importedAt: string | null
+  isLegacy: boolean
+  sourceUrl: string | null
+  transferId: string | null
 }
 
 interface NormalizedImportGroup {
@@ -329,6 +333,9 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   atom_created: 'Атом создан',
   atom_updated: 'Атом изменен',
   atom_status_changed: 'Статус атома изменен',
+  legacy_atom_snapshot: 'Исторический снимок атома',
+  alpha_reviewed: 'Историческая альфа-проверка',
+  commission_reviewed: 'Историческая альфа-комиссия',
   atom_alpha_decision_changed: 'Решение альфа-проверки изменено',
   alpha_review_started: 'Альфа-проверка начата',
   atom_imported: 'Атом импортирован',
@@ -538,7 +545,7 @@ function formatCountRu(value: number, one: string, few: string, many: string): s
   return `${value} ${many}`
 }
 
-function formatDateTime(value: string | null): string {
+function formatDateTime(value: string | null, timeZone?: string): string {
   if (!value) return '—'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return '—'
@@ -548,6 +555,7 @@ function formatDateTime(value: string | null): string {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone,
   })
 }
 
@@ -848,14 +856,25 @@ function normalizeAuditEvent(input: unknown): NormalizedAuditEvent | null {
   const source = input as AuditEventLike
   const id = getString(source, 'id', 'event_id') ?? `${getString(source, 'created_at', 'createdAt')}:${getString(source, 'event_type', 'type')}`
   if (!id) return null
+  const isLegacy = source.origin === 'legacy_import' || Boolean(source.legacy_transfer_id)
 
   return {
     id,
     type: getString(source, 'event_type', 'type') ?? 'updated',
     title: getString(source, 'title', 'label') ?? formatAuditEventType(getString(source, 'event_type', 'type') ?? 'updated'),
     body: getString(source, 'body', 'description', 'message'),
-    actorName: getString(source, 'actor_name', 'author_name', 'performed_by_name'),
-    createdAt: getString(source, 'created_at', 'createdAt'),
+    actorName: isLegacy
+      ? getString(source, 'historical_actor_name')
+      : getString(source, 'actor_name', 'author_name', 'performed_by_name'),
+    occurredAt: isLegacy
+      ? getString(source, 'occurred_at')
+      : getString(source, 'occurred_at', 'created_at', 'createdAt'),
+    importedAt: isLegacy ? getString(source, 'imported_at', 'created_at', 'createdAt') : null,
+    isLegacy,
+    transferId: isLegacy ? getString(source, 'legacy_transfer_id') : null,
+    sourceUrl: isLegacy && typeof source.legacy_source_url === 'string'
+      && /^\/audit\?view=legacy-imports&batch=[0-9a-f-]{36}$/.test(source.legacy_source_url)
+      ? source.legacy_source_url : null,
   }
 }
 
@@ -1797,8 +1816,8 @@ export function AuditPage() {
           .map((item) => normalizeAuditEvent(item))
           .filter((item): item is NormalizedAuditEvent => Boolean(item))
           .sort((left, right) => {
-            const leftTime = left.createdAt ? new Date(left.createdAt).getTime() : 0
-            const rightTime = right.createdAt ? new Date(right.createdAt).getTime() : 0
+            const leftTime = left.occurredAt ? new Date(left.occurredAt).getTime() : 0
+            const rightTime = right.occurredAt ? new Date(right.occurredAt).getTime() : 0
             return rightTime - leftTime
           })
         setEvents(nextEvents)
@@ -4047,7 +4066,12 @@ export function AuditPage() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">Подтверждённые атомы по дням</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">Столбцы показывают результат дня, линия — накопительный итог на конец дня.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Дата события, московское время</p>
+                  {statistics.undated_legacy_atoms > 0 && (
+                    <p className="mt-2 text-xs text-amber-700 dark:text-amber-300" role="status">
+                      Исторические атомы без даты: {AUDIT_NUMBER_FORMAT.format(statistics.undated_legacy_atoms)}. Дата верификации неизвестна.
+                    </p>
+                  )}
                 </div>
                 <span className="text-xs tabular-nums text-muted-foreground">
                   {formatDateOnly(statistics.date_from)} — {formatDateOnly(statistics.date_to)}
@@ -4063,13 +4087,54 @@ export function AuditPage() {
                       <YAxis yAxisId="total" orientation="right" allowDecimals={false} width={44} tick={{ fontSize: 11 }} />
                       <Tooltip labelFormatter={(value) => formatStatisticsDay(String(value))} />
                       <Legend wrapperStyle={{ fontSize: 12 }} />
-                      <Bar yAxisId="daily" dataKey="verified_count" name="Подтверждено за день" fill="hsl(var(--primary) / 0.72)" radius={[3, 3, 0, 0]} maxBarSize={28} />
-                      <Line yAxisId="total" type="monotone" dataKey="cumulative_verified_count" name="Подтверждено накопительно" stroke="#059669" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
+                      <Bar yAxisId="daily" dataKey="verified_count" name="Подтверждено за день" fill="hsl(var(--primary) / 0.72)" radius={[3, 3, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+                      <Line yAxisId="total" type="monotone" dataKey="cumulative_verified_count" name="Подтверждено накопительно" stroke="#059669" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
               </div>
             </div>
+
+            {(Boolean(statistics.aggregate_trend?.length) || statistics.aggregate_conflict_count > 0) && (
+              <section className="border-t border-border px-4 py-5 sm:px-5" aria-labelledby="audit-aggregate-history-title">
+                <h3 id="audit-aggregate-history-title" className="text-sm font-semibold text-foreground">Агрегированная история</h3>
+                <p className="mt-1 text-xs text-muted-foreground">Сводные показатели по договорам, без привязки к атомам</p>
+                {statistics.aggregate_conflict_count > 0 && (
+                  <p role="alert" className="mt-3 text-sm text-amber-700 dark:text-amber-300">
+                    Конфликтующие показатели: {AUDIT_NUMBER_FORMAT.format(statistics.aggregate_conflict_count)}.
+                    {' '}Исключены из графика. Требуется сверка с историей атомов.
+                    {' '}Затронутые дневные суммы неполны и не показаны.
+                  </p>
+                )}
+                {statistics.aggregate_trend?.some((point) => [point.verified_count, point.alpha_reviewed_count, point.commission_reviewed_count].some((value) => value != null)) && <div className="mt-4 overflow-x-auto pb-1">
+                  <div className="h-[280px] min-w-[640px]" role="img" aria-label="Агрегированная история по дням">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={statistics.aggregate_trend} margin={{ top: 8, right: 12, bottom: 4, left: 0 }}>
+                        <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="date" tickFormatter={formatStatisticsDay} tick={{ fontSize: 11 }} minTickGap={24} />
+                        <YAxis allowDecimals={false} width={44} tick={{ fontSize: 11 }} />
+                        <Tooltip filterNull={false} content={({ active, label, payload }) => active && payload?.length ? (
+                          <div role="tooltip" className="rounded-md border border-border bg-surface p-3 text-xs text-foreground shadow-sm">
+                            <p className="mb-2 font-medium">{formatStatisticsDay(String(label))}</p>
+                            <ul className="space-y-1">
+                              {payload.map((entry) => (
+                                <li key={String(entry.dataKey)}>
+                                  {entry.name}: {entry.value == null ? 'Нет полных данных' : AUDIT_NUMBER_FORMAT.format(Number(entry.value))}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null} />
+                        <Legend wrapperStyle={{ fontSize: 12 }} />
+                        <Bar dataKey="verified_count" name="Верифицировано" fill="#0284c7" radius={[3, 3, 0, 0]} maxBarSize={24} isAnimationActive={false} />
+                        <Bar dataKey="alpha_reviewed_count" name="Альфа-проверка" fill="#059669" radius={[3, 3, 0, 0]} maxBarSize={24} isAnimationActive={false} />
+                        <Bar dataKey="commission_reviewed_count" name="Альфа-комиссия" fill="#d97706" radius={[3, 3, 0, 0]} maxBarSize={24} isAnimationActive={false} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>}
+              </section>
+            )}
 
             <div className="grid border-t border-border lg:grid-cols-2 lg:divide-x lg:divide-border">
               <section className="px-4 py-5 sm:px-5" aria-labelledby="audit-contract-statistics-title">
@@ -5258,16 +5323,24 @@ export function AuditPage() {
                   <div className="rounded-md border border-border bg-surface-soft px-4 py-4">
                     <div className="space-y-4">
                       {events.map((event) => (
-                        <div key={event.id} className="border-l-2 border-primary/30 pl-4">
+                        <div key={event.id} className="min-w-0 break-words border-l-2 border-primary/30 pl-4" data-testid="audit-history-event">
                           <div className="flex flex-wrap items-center gap-2">
                             <StatusPill label={formatAuditEventType(event.type)} toneClass="border-border bg-surface text-muted-foreground" />
+                            {event.isLegacy && <StatusPill label="Исторический импорт" toneClass="border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300" />}
                             {event.title !== formatAuditEventType(event.type) ? (
                               <span className="text-sm font-medium text-foreground">{event.title}</span>
                             ) : null}
                           </div>
                           <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                            <span>{formatDateTime(event.createdAt)}</span>
-                            <span>{event.actorName ?? 'Система'}</span>
+                            <span>{event.occurredAt ? `Событие: ${formatDateTime(event.occurredAt, 'Europe/Moscow')} МСК` : 'Дата события неизвестна'}</span>
+                            <span>{event.actorName ?? (event.isLegacy ? 'Исполнитель неизвестен' : 'Система')}</span>
+                            {event.isLegacy && event.importedAt && <span>Импортировано: {formatDateTime(event.importedAt, 'Europe/Moscow')} МСК</span>}
+                            {event.transferId && <span title={event.transferId}>Перенос: <span className="font-mono">{event.transferId.slice(0, 8)}</span></span>}
+                            {user?.role === 'admin' && event.sourceUrl && (
+                              <Link to={event.sourceUrl} className="inline-flex items-center gap-1 text-primary hover:underline">
+                                <ExternalLink className="h-3 w-3" />Источник импорта
+                              </Link>
+                            )}
                           </div>
                           {event.body ? (
                             <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{event.body}</p>

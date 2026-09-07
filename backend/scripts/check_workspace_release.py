@@ -20,6 +20,16 @@ async def main():
                 'audit-proverka-istoricheskogo-xlsx'
             )
         """))
+        transfer_guide_ready = await db.scalar(text("""
+            SELECT EXISTS (
+                SELECT 1 FROM knowledge_articles
+                WHERE slug = 'audit-proverka-istoricheskogo-xlsx'
+                  AND status = 'published'
+                  AND title = 'Аудит: проверка и перенос исторического XLSX'
+                  AND body LIKE '%## Предварительный просмотр%'
+                  AND body LIKE '%## Отмена%'
+            )
+        """))
         invalid_note_groups = await db.scalar(text("""
             SELECT count(*) FROM quick_notes n JOIN note_groups g ON g.id = n.group_id
             WHERE n.owner_id <> g.owner_id
@@ -35,8 +45,9 @@ async def main():
             AND (personal_task_id IS NOT NULL OR linked_task_id IS NOT NULL)
         """))
         checks = {
-            "migration_head": revision == "082_audit_legacy_upload",
+            "migration_head": revision == "083_audit_legacy_transfer",
             "knowledge_articles": article_count == 5,
+            "legacy_transfer_guide": bool(transfer_guide_ready),
             "note_group_owner_isolation": invalid_note_groups == 0,
             "tracker_organization_owner_isolation": invalid_tracker_groups == 0,
             "linked_trackers_one_time": invalid_series == 0,

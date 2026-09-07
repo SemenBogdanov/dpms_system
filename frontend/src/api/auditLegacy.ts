@@ -7,6 +7,11 @@ export interface LegacyMapping {
   header_row: number
   kind: LegacyKind
   fields: Record<string, string>
+  defaults?: Record<string, string>
+  value_maps?: Record<string, Record<string, string>>
+  atom_key_mode?: 'column' | 'content'
+  row_from?: number
+  row_to?: number
 }
 export interface LegacySheet {
   id: string
@@ -59,6 +64,11 @@ export const LEGACY_FIELDS = {
   assignee_email: 'Email ответственного', actor_name: 'Имя участника', assigned_at: 'Дата назначения',
   is_current: 'Текущее назначение', occurred_at: 'Дата события', event_key: 'Код события', event_type: 'Тип события',
   metric_date: 'Дата показателя', metric_type: 'Тип показателя', value: 'Значение',
+  workflow_stage: 'Этап работы', contract_reference: 'Реквизиты договора',
+  source_evidence_text: 'Текст подтверждения', notes: 'Примечания',
+  alpha_comment: 'Комментарий альфа-проверки', previous_state: 'Предыдущий статус',
+  ended_at: 'Назначение завершено',
+  assignment_key: 'Код назначения',
 } as const
 export type LegacyField = keyof typeof LEGACY_FIELDS
 export const LEGACY_REQUIRED: Record<LegacyKind, LegacyField[]> = {

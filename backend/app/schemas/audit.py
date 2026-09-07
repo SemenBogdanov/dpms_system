@@ -1,5 +1,5 @@
 """Schemas for audit atomization slice."""
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Literal
 from uuid import UUID
 
@@ -278,6 +278,13 @@ class AuditVerificationTrendPoint(BaseModel):
     cumulative_verified_count: int = 0
 
 
+class AuditAggregateTrendPoint(BaseModel):
+    date: date
+    verified_count: int | None = None
+    alpha_reviewed_count: int | None = None
+    commission_reviewed_count: int | None = None
+
+
 class AuditContractStatistics(BaseModel):
     total: int = 0
     in_progress: int = 0
@@ -301,6 +308,9 @@ class AuditStatisticsRead(BaseModel):
     date_from: date
     date_to: date
     trend: list[AuditVerificationTrendPoint] = Field(default_factory=list)
+    aggregate_trend: list[AuditAggregateTrendPoint] = Field(default_factory=list)
+    aggregate_conflict_count: int = 0
+    undated_legacy_atoms: int = 0
     contracts: AuditContractStatistics
     atoms: AuditAtomStatistics
 
@@ -418,6 +428,19 @@ class AuditEventRead(BaseModel):
     message: str
     payload_json: dict | None = None
     created_at: datetime
+    origin: Literal["live", "legacy_import"] = "live"
+    occurred_at: datetime | None = None
+    imported_at: datetime | None = None
+    historical_actor_name: str | None = None
+    legacy_transfer_id: UUID | None = None
+    legacy_source_url: str | None = None
+
+    @field_validator("created_at", "occurred_at", "imported_at")
+    @classmethod
+    def explicit_event_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
 
 
 class AuditImportIssue(BaseModel):

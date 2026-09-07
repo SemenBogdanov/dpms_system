@@ -71,6 +71,10 @@ run_backend_smoke smoke_messages.py --allow-compose-db
 run_backend_smoke smoke_attention_snapshot.py
 run_backend_smoke check_workspace_release.py
 run_backend_smoke smoke_audit_legacy_upload.py
+step "Audit historical transfer on a disposable PostgreSQL database"
+"${compose[@]}" exec -T \
+  -e DPMS_MIGRATION_SMOKE_ALLOW_CREATE_DATABASE=1 \
+  backend python scripts/smoke_audit_legacy_transfer_acceptance.py --allow-create-database
 run_backend_smoke smoke_email_outbox.py
 run_backend_smoke smoke_auth_session.py
 run_backend_smoke smoke_admin_user_audit.py
@@ -106,6 +110,12 @@ npm --prefix frontend run build
 if [[ "$PROFILE" == "full" ]]; then
   step "Audit historical workbook staging"
   npm --prefix frontend run test:audit-legacy
+
+  step "Audit historical transfer and rollback workflow"
+  npm --prefix frontend run test:audit-legacy-transfer
+
+  step "Audit business-date history and statistics"
+  npm --prefix frontend run test:audit-legacy-history
 
   step "ID 64A start screen, menu portability, and Knowledge Base splitter"
   npm --prefix frontend run test:id64a

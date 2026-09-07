@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test'
+import { expect, test, type Locator, type Page, type Route } from '@playwright/test'
 
 const userId = '11111111-1111-4111-8111-111111111111'
 const caseId = '22222222-2222-4222-8222-222222222222'
@@ -740,22 +740,46 @@ test('sequential draft and alpha review saves every decision before advancing', 
   expect(overflow).toBeLessThanOrEqual(1)
 })
 
+async function acceptReviewAtomWithKeyboard(page: Page, dialog: Locator, atomId: string) {
+  await expect(dialog).toBeVisible()
+  // DialogShell schedules focus after opening; page.keyboard does not wait for it.
+  await expect(dialog.locator('[tabindex="-1"]')).toBeFocused()
+  await expect(dialog.getByRole('button', { name: 'Принять', exact: true })).toBeEnabled()
+  const response = page.waitForResponse((result) => (
+    result.request().method() === 'PATCH'
+    && new URL(result.url()).pathname === `/api/audit/cases/${caseId}/atoms/${atomId}`
+  ))
+  await page.keyboard.press('Space')
+  return response
+}
+
 test('failed save keeps the current atom and allows a retry', async ({ page }) => {
   const state = newState()
+  const initialVersion = state.atoms[0].updated_at
+  const secondAtom = structuredClone(state.atoms[1])
   state.failNextPatch = true
   await openAudit(page, state)
 
   await page.getByRole('button', { name: 'Проверить черновики' }).click()
   const dialog = page.getByRole('dialog', { name: 'Проверка черновиков атомов' })
-  await page.keyboard.press('Space')
+  const failedSave = await acceptReviewAtomWithKeyboard(page, dialog, firstAtomId)
+  expect(failedSave.status()).toBe(409)
+  expect(failedSave.request().postDataJSON()).toEqual({ state: 'ready', expected_updated_at: initialVersion })
 
   await expect(dialog.getByText('Атом уже изменен другим пользователем. Обновите данные и повторите решение.')).toBeVisible()
   await expect(dialog.getByRole('heading', { name: 'Экран списка заявок' })).toBeVisible()
   expect(state.atoms[0].state).toBe('draft')
+  expect(state.atoms[0].updated_at).toBe(initialVersion)
+  expect(state.patchCalls).toBe(1)
 
-  await page.keyboard.press('Space')
+  const retry = await acceptReviewAtomWithKeyboard(page, dialog, firstAtomId)
+  expect(retry.status()).toBe(200)
+  expect(retry.request().postDataJSON()).toEqual({ state: 'ready', expected_updated_at: initialVersion })
   await expect(dialog.getByRole('heading', { name: 'Фильтр по периоду' })).toBeVisible()
   expect(state.atoms[0].state).toBe('ready')
+  expect(state.atoms[0].updated_at).not.toBe(initialVersion)
+  expect(state.atoms[1]).toEqual(secondAtom)
+  expect(state.patchCalls).toBe(2)
 })
 
 test('undo uses the captured version and cannot overwrite a later edit', async ({ page }) => {
@@ -764,13 +788,25 @@ test('undo uses the captured version and cannot overwrite a later edit', async (
 
   await page.getByRole('button', { name: 'Проверить черновики' }).click()
   const dialog = page.getByRole('dialog', { name: 'Проверка черновиков атомов' })
-  await page.keyboard.press('Space')
+  const accepted = await acceptReviewAtomWithKeyboard(page, dialog, firstAtomId)
+  expect(accepted.status()).toBe(200)
   await expect(dialog.getByRole('heading', { name: 'Фильтр по периоду' })).toBeVisible()
+  const acceptedVersion = state.atoms[0].updated_at
 
   state.atoms[0].updated_at = '2026-08-24T08:05:00Z'
+  const concurrentEdit = structuredClone(state.atoms[0])
+  const undoResponse = page.waitForResponse((result) => (
+    result.request().method() === 'PATCH'
+    && new URL(result.url()).pathname === `/api/audit/cases/${caseId}/atoms/${firstAtomId}`
+  ))
   await dialog.getByRole('button', { name: 'Отменить последнее' }).click()
+  const rejectedUndo = await undoResponse
+  expect(rejectedUndo.status()).toBe(409)
+  expect(rejectedUndo.request().postDataJSON()).toEqual({ state: 'draft', expected_updated_at: acceptedVersion })
 
   await expect(dialog.getByText(/уже изменен другим пользователем/)).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Отменить последнее' })).toHaveCount(0)
   expect(state.atoms[0].state).toBe('ready')
+  expect(state.atoms[0]).toEqual(concurrentEdit)
+  expect(state.patchCalls).toBe(2)
 })

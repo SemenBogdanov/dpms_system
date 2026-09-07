@@ -16,6 +16,8 @@
     "test:messages": "playwright test --config playwright.messages.config.ts",
     "test:audit-review": "playwright test --config playwright.audit-review.config.ts",
     "test:audit-legacy": "playwright test --config playwright.audit-legacy.config.ts",
+    "test:audit-legacy-transfer": "playwright test --config playwright.audit-legacy-transfer.config.ts",
+    "test:audit-legacy-history": "vite build --outDir /tmp/dpms-a19-history-build && playwright test --config tests/audit-legacy-history.config.ts",
     "test:id64a": "playwright test --config playwright.id64a.config.ts",
     "test:trackers": "playwright test --config playwright.trackers.config.ts",
     "test:note-groups": "playwright test --config playwright.note-groups.config.ts",

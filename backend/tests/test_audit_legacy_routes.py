@@ -31,6 +31,7 @@ from app.api.deps import get_current_user, get_db
 from app.api.routes import audit_legacy as routes
 from app.models.activity import ActivityEvent
 from app.models.audit_legacy import AuditLegacyImport
+from app.models.audit_legacy_transfer import AuditLegacyTransfer
 from app.models.user import UserRole
 
 
@@ -90,6 +91,7 @@ class AuditLegacyRouteTests(unittest.IsolatedAsyncioTestCase):
         users = Table("users", metadata, Column("id", postgresql.UUID(as_uuid=True), primary_key=True))
         Table("tasks", metadata, Column("id", postgresql.UUID(as_uuid=True), primary_key=True))
         AuditLegacyImport.__table__.to_metadata(metadata)
+        AuditLegacyTransfer.__table__.to_metadata(metadata)
         activity_table = ActivityEvent.__table__.to_metadata(metadata)
         activity_table.c.metadata.type = JSON()
         self.targets = [
@@ -171,6 +173,17 @@ class AuditLegacyRouteTests(unittest.IsolatedAsyncioTestCase):
         response = await self.upload(data)
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()
+
+    async def test_source_with_transfer_configuration_cannot_be_deleted(self):
+        batch = await self.create_batch()
+        async with self.sessions.begin() as db:
+            db.add(AuditLegacyTransfer(
+                source_id=UUID(batch["id"]), namespace="source-retention-test", config={},
+            ))
+        response = await self.client.delete(f"{BASE}/{batch['id']}?revision=1")
+        self.assertEqual(response.status_code, 409, response.text)
+        async with self.sessions() as db:
+            self.assertIsNotNone(await db.get(AuditLegacyImport, UUID(batch["id"])))
 
     async def update_mapping(self, batch, mapping=None, *, revision=None):
         return await self.client.put(f"{BASE}/{batch['id']}/mapping", json={

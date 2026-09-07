@@ -1,10 +1,11 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
 import { UNSAFE_NavigationContext, useSearchParams } from 'react-router-dom'
-import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Loader2, RefreshCcw, Trash2, Upload } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, CheckCircle2, Download, FileSpreadsheet, Loader2, RefreshCcw, SlidersHorizontal, Trash2, Upload } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { auditLegacy, LEGACY_FIELDS, LEGACY_KINDS, LEGACY_MAX_FILE_BYTES, LEGACY_REQUIRED, type LegacyBatch, type LegacyField, type LegacyKind, type LegacyMapping, type LegacyReport, type LegacySheet } from '@/api/auditLegacy'
 import { protectPersonalTaskPop } from '@/components/PersonalTaskFormNavigation'
 import { cn } from '@/lib/utils'
+import { AuditLegacyTransfer } from './AuditLegacyTransfer'
 
 const control = 'h-11 min-h-11 w-full min-w-0 rounded-md border border-border bg-surface px-3 text-base text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-50'
 const button = 'inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-50 disabled:cursor-not-allowed'
@@ -95,7 +96,7 @@ function Report({ report, mapping }: { report: LegacyReport; mapping: LegacyMapp
           <div key={label}><dt className="text-sm text-muted-foreground">{label}</dt><dd className="mt-1 text-lg font-semibold tabular-nums">{value}</dd></div>
         ))}
       </dl>
-      <p className="text-sm text-muted-foreground">Проверка завершена. Данные ожидают следующего этапа. Рабочий реестр не изменён.</p>
+      <p className="text-sm text-muted-foreground">Проверка файла завершена. Рабочий реестр не изменён.</p>
       {report.issue_count > 0 ? <div>
         <h4 className="mb-2 text-sm font-medium">Замечания: {report.issue_count}</h4>
         <ul className="max-h-80 divide-y divide-border overflow-auto" aria-label="Замечания проверки" tabIndex={0}>
@@ -125,6 +126,9 @@ function Report({ report, mapping }: { report: LegacyReport; mapping: LegacyMapp
 export function AuditLegacyImport() {
   const [params, setParams] = useSearchParams()
   const selectedId = params.get('batch') || ''
+  const transferId = params.get('transfer') || ''
+  const [transferDirty, setTransferDirty] = useState(false)
+  const [transferBusy, setTransferBusy] = useState(false)
   const [batches, setBatches] = useState<LegacyBatch[]>([])
   const [listLoading, setListLoading] = useState(true)
   const [listError, setListError] = useState('')
@@ -148,13 +152,19 @@ export function AuditLegacyImport() {
   const mounted = useRef(true)
   const listRequest = useRef(0)
   const dirty = signature(draft) !== baseline
-  useStagingNavigationGuard(dirty || Boolean(file), busy, bypass)
+  useStagingNavigationGuard(dirty || Boolean(file) || transferDirty, busy, bypass)
   const selectedBatch = batch?.id === selectedId ? batch : null
   const sheet = selectedBatch?.inspection.sheets.find((item) => item.id === draft?.sheet_id)
   const checkedColumns = selectedBatch?.report?.sheet_id === draft?.sheet_id && selectedBatch?.report?.header_row === Number(draft?.header_row)
     ? selectedBatch?.report?.columns : null
   const mappingColumns = checkedColumns ?? sheet?.columns.map((column) => ({ ...column, label: Number(draft?.header_row) === sheet.header_row ? column.label : '' })) ?? []
-  const blocked = Boolean(action) || loading
+  const blocked = Boolean(action) || loading || transferBusy
+  useEffect(() => {
+    if (!transferId || !selectedBatch) return
+    const next = draftFor(selectedBatch)
+    setDraft(next); setBaseline(signature(next)); setFile(null)
+    if (fileInput.current) fileInput.current.value = ''
+  }, [transferId, selectedBatch])
 
   const refreshList = useCallback(async () => {
     const request = ++listRequest.current
@@ -197,8 +207,15 @@ export function AuditLegacyImport() {
 
   const selectBatch = (id: string, internal = false) => {
     const next = new URLSearchParams(params)
+    next.delete('transfer')
     if (id) next.set('batch', id)
     else next.delete('batch')
+    bypass.current = internal
+    try { setParams(next) } finally { bypass.current = false }
+  }
+  const selectTransfer = (id: string, internal = false) => {
+    const next = new URLSearchParams(params)
+    if (id) next.set('transfer', id); else next.delete('transfer')
     bypass.current = internal
     try { setParams(next) } finally { bypass.current = false }
   }
@@ -302,27 +319,27 @@ export function AuditLegacyImport() {
   return <section aria-labelledby="legacy-title" className="min-w-0 space-y-5 text-foreground">
     <header className="border-b border-border pb-4">
       <h2 id="legacy-title" className="flex items-center gap-2 text-lg font-semibold"><FileSpreadsheet aria-hidden="true" className="h-5 w-5 shrink-0 text-primary" />Исторический импорт</h2>
-      <p className="mt-1 text-sm text-muted-foreground">Подготовка данных · без записи в рабочий реестр</p>
+      <p className="mt-1 text-sm text-muted-foreground">{transferId ? 'Источники и перенос данных' : 'Подготовка данных · без записи в рабочий реестр'}</p>
     </header>
     <form onSubmit={(event) => void upload(event)} noValidate className="space-y-2">
       <label htmlFor="legacy-file" className="block text-sm font-medium">Исходный файл XLSX · до 10 МиБ</label>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
-        <input ref={fileInput} id="legacy-file" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={blocked}
+        <input ref={fileInput} id="legacy-file" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={blocked || Boolean(transferId)}
           className={cn(control, 'py-1 file:mr-2 file:min-h-9 file:rounded file:border-0 file:bg-muted file:px-2 file:text-sm file:text-foreground')}
           aria-invalid={Boolean(fileError)} aria-describedby={fileError ? 'legacy-file-error' : undefined}
           onChange={(event) => { setFile(event.target.files?.[0] ?? null); setFileError(''); setUploadNotice('') }} />
-        <button type="submit" disabled={blocked} className={cn(secondary, 'shrink-0')}>
+        <button type="submit" disabled={blocked || Boolean(transferId)} className={cn(secondary, 'shrink-0')}>
           {action === 'upload' ? <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin motion-reduce:animate-none" /> : <Upload aria-hidden="true" className="h-4 w-4" />}Загрузить файл
         </button>
       </div>
       {fileError && <p id="legacy-file-error" role="alert" className="text-sm text-rose-700 dark:text-rose-300">{fileError}</p>}
     </form>
-    {uploadNotice && <p role="status" className="text-sm">{uploadNotice}</p>}
+    {uploadNotice && !transferId && <p role="status" className="text-sm">{uploadNotice}</p>}
     <div className="border-y border-border py-4">
       <div className="flex items-end gap-2">
         <div className="min-w-0 flex-1">
           <label htmlFor="legacy-batch" className="mb-1 block text-sm font-medium">Сохранённые файлы</label>
-          <select id="legacy-batch" className={control} value={selectedId} disabled={Boolean(action)} onChange={(event) => selectBatch(event.target.value)}>
+          <select id="legacy-batch" className={control} value={selectedId} disabled={Boolean(action) || transferBusy} onChange={(event) => selectBatch(event.target.value)}>
             <option value="">{listLoading ? 'Загрузка списка...' : batches.length ? 'Выберите файл' : 'Нет сохранённых файлов'}</option>
             {selectedId && !batches.some((item) => item.id === selectedId) && <option value={selectedId}>{selectedBatch ? batchLabel(selectedBatch) : 'Выбранный файл'}</option>}
             {batches.map((item) => <option key={item.id} value={item.id}>{batchLabel(item)} · {item.status === 'checked' ? 'Проверен' : 'Сохранён'}</option>)}
@@ -341,16 +358,17 @@ export function AuditLegacyImport() {
     {selectedBatch && <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-1 text-sm">
-          <p>{uploadNotice === notice ? null : notice}</p>
+          {!transferId && <p>{uploadNotice === notice ? null : notice}</p>}
           <p className="text-muted-foreground">{selectedBatch.status === 'checked' ? 'Проверен' : 'Сохранён'} · Ревизия {selectedBatch.revision} · {(selectedBatch.size_bytes / 1024).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} КиБ</p>
           <p className="break-all text-xs text-muted-foreground">SHA-256: {selectedBatch.sha256}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" disabled={blocked} onClick={() => void download()} className={secondary}><Download aria-hidden="true" className="h-4 w-4" />Скачать исходник</button>
-          <button type="button" aria-label="Удалить сохранённый файл" title="Удалить сохранённый файл" disabled={blocked || conflict} onClick={() => void remove()} className={cn(secondary, 'h-11 w-11 p-0 text-rose-700 dark:text-rose-300')}><Trash2 aria-hidden="true" className="h-4 w-4" /></button>
+          <button type="button" aria-label="Удалить сохранённый файл" title="Удалить сохранённый файл" disabled={blocked || conflict || Boolean(transferId)} onClick={() => void remove()} className={cn(secondary, 'h-11 w-11 p-0 text-rose-700 dark:text-rose-300')}><Trash2 aria-hidden="true" className="h-4 w-4" /></button>
+          <button type="button" disabled={blocked} className={secondary} onClick={() => selectTransfer(transferId ? '' : 'new')}>{transferId ? <ArrowLeft aria-hidden="true" className="h-4 w-4" /> : <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />}{transferId ? 'Вернуться к проверке файла' : 'Настроить перенос'}</button>
         </div>
       </div>
-      {draft && sheet ? <form ref={formRef} onSubmit={(event) => void check(event)} noValidate className="min-w-0 space-y-4" aria-label="Сопоставление столбцов" aria-busy={action === 'check'}>
+      {transferId ? <AuditLegacyTransfer key={selectedBatch.id} batch={selectedBatch} selectedId={transferId} onSelect={selectTransfer} busy={busy} onBusy={setTransferBusy} onDirty={setTransferDirty} /> : draft && sheet ? <form ref={formRef} onSubmit={(event) => void check(event)} noValidate className="min-w-0 space-y-4" aria-label="Сопоставление столбцов" aria-busy={action === 'check'}>
         <div className="grid min-w-0 gap-3 md:grid-cols-3">
           <div className="min-w-0"><label htmlFor="legacy-sheet" className="mb-1 block text-sm font-medium">Лист</label>
             <select id="legacy-sheet" name="sheet_id" className={control} value={draft.sheet_id} disabled={blocked} onChange={(event) => {
@@ -381,7 +399,7 @@ export function AuditLegacyImport() {
           {dirty && <p role="status" className="text-sm text-muted-foreground">Есть несохраненные изменения</p>}
         </div>
       </form> : <p role="status" className="text-sm">В файле нет доступных листов для сопоставления.</p>}
-      {selectedBatch.report && (selectedBatch.mapping && signature(draft) === signature({ ...selectedBatch.mapping, header_row: String(selectedBatch.mapping.header_row) })
+      {!transferId && selectedBatch.report && (selectedBatch.mapping && signature(draft) === signature({ ...selectedBatch.mapping, header_row: String(selectedBatch.mapping.header_row) })
         ? <Report report={selectedBatch.report} mapping={selectedBatch.mapping} />
         : <p className="border-t border-border pt-4 text-sm text-muted-foreground">Сопоставление изменено. Для актуального отчета выполните проверку.</p>)}
     </>}
