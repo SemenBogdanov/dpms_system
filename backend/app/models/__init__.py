@@ -86,6 +86,7 @@ from app.models.ai_provider import (
     AuditAtomizationSkillVersion,
 )
 from app.models.audit_runtime import AuditTZArtifact, AuditTZRun, AuditTZRuntimeJob
+from app.models.audit_legacy import AuditLegacyImport
 from app.models.execution_contract import WorkEntityExecutionContract
 from app.models.work_entity import (
     WorkEntity,
@@ -169,6 +170,7 @@ __all__ = [
     "AuditAssignment",
     "AuditAtom",
     "AuditImportBatch",
+    "AuditLegacyImport",
     "AuditDocument",
     "AuditSynologyConnection",
     "AuditSynologyEvent",

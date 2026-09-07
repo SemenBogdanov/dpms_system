@@ -269,7 +269,9 @@ async def verify_head_schema(database_url: URL) -> None:
                     text("SELECT version_num FROM alembic_version")
                 )
             ).scalar_one()
-            assert revision == "081_personal_task_form_guide"
+            assert revision == "082_audit_legacy_upload"
+            legacy_table = await connection.scalar(text("SELECT to_regclass('public.audit_legacy_imports')"))
+            assert legacy_table is not None
             audit_context_default = (
                 await connection.execute(
                     text(

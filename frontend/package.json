@@ -15,6 +15,7 @@
     "test:realtime-notes": "npm run build && playwright test --config playwright.realtime-notes.config.ts",
     "test:messages": "playwright test --config playwright.messages.config.ts",
     "test:audit-review": "playwright test --config playwright.audit-review.config.ts",
+    "test:audit-legacy": "playwright test --config playwright.audit-legacy.config.ts",
     "test:id64a": "playwright test --config playwright.id64a.config.ts",
     "test:trackers": "playwright test --config playwright.trackers.config.ts",
     "test:note-groups": "playwright test --config playwright.note-groups.config.ts",

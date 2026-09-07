@@ -70,6 +70,7 @@ step "Backend unit tests"
 run_backend_smoke smoke_messages.py --allow-compose-db
 run_backend_smoke smoke_attention_snapshot.py
 run_backend_smoke check_workspace_release.py
+run_backend_smoke smoke_audit_legacy_upload.py
 run_backend_smoke smoke_email_outbox.py
 run_backend_smoke smoke_auth_session.py
 run_backend_smoke smoke_admin_user_audit.py
@@ -103,6 +104,9 @@ npm --prefix frontend run lint
 npm --prefix frontend run build
 
 if [[ "$PROFILE" == "full" ]]; then
+  step "Audit historical workbook staging"
+  npm --prefix frontend run test:audit-legacy
+
   step "ID 64A start screen, menu portability, and Knowledge Base splitter"
   npm --prefix frontend run test:id64a
 

@@ -105,10 +105,11 @@ import type {
 } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
+import { AuditLegacyImport } from '@/components/audit/AuditLegacyImport'
 
 type UnknownRecord = Record<string, unknown>
 type DetailTab = 'materials' | 'atoms' | 'history'
-type WorkspaceView = 'dashboard' | 'registry' | 'assignments' | 'case' | 'team'
+type WorkspaceView = 'dashboard' | 'registry' | 'assignments' | 'case' | 'team' | 'legacy-imports'
 type CaseDialogMode = 'create' | 'edit'
 type AtomDialogMode = 'create' | 'edit'
 type AuditStageFormValue = AuditWorkflowStage | 'archived'
@@ -1514,7 +1515,7 @@ function serializeFormState(value: CaseFormState | AtomFormState): string {
 export function AuditPage() {
   const { user } = useAuth()
   const [searchParams, setSearchParams] = useSearchParams()
-  const workspaceView = (['dashboard', 'registry', 'assignments', 'case', 'team'].includes(searchParams.get('view') ?? '')
+  const workspaceView = (['dashboard', 'registry', 'assignments', 'case', 'team', 'legacy-imports'].includes(searchParams.get('view') ?? '')
     ? searchParams.get('view')
     : 'dashboard') as WorkspaceView
   const requestedStatisticsDays = Number(searchParams.get('stats_days'))
@@ -3865,6 +3866,15 @@ export function AuditPage() {
                 <span>{label}</span>
               </button>
             ))}
+            {user?.role === 'admin' && <button
+              type="button"
+              onClick={() => setWorkspaceView('legacy-imports')}
+              aria-current={workspaceView === 'legacy-imports' ? 'page' : undefined}
+              className={cn(
+                'inline-flex min-h-11 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md px-3 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 xl:min-w-0 xl:justify-start',
+                workspaceView === 'legacy-imports' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              )}
+            ><History aria-hidden="true" className="h-4 w-4 shrink-0" /><span>Исторический импорт</span></button>}
           </nav>
           {!canManage ? (
             <div className="mt-2 border-t border-border pt-2">
@@ -3973,6 +3983,10 @@ export function AuditPage() {
       </div>
 
       <div className="min-w-0 space-y-4">
+      {workspaceView === 'legacy-imports' && (user?.role === 'admin' ? <AuditLegacyImport /> : <section role="alert" className="space-y-2 py-4">
+        <h2 className="flex items-center gap-2 text-lg font-semibold text-foreground"><Lock aria-hidden="true" className="h-5 w-5" />Доступ запрещён</h2>
+        <p className="text-sm text-muted-foreground">Исторический импорт доступен только администратору.</p>
+      </section>)}
       {workspaceView === 'dashboard' ? (
       <section className="overflow-hidden rounded-lg border border-border bg-surface shadow-sm" aria-labelledby="audit-statistics-title">
         <div className="flex flex-col gap-4 px-4 py-4 sm:px-5 lg:flex-row lg:items-start lg:justify-between">

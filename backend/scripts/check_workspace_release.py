@@ -16,7 +16,8 @@ async def main():
                 'soobshcheniya-perenos-menyu-i-chtenie-bazy-znanij',
                 'trekery-gruppy-povtoreniya-napominaniya',
                 'lichnye-gruppy-zametok-i-kontekst',
-                'lichnaya-zadacha-bystroe-sozdanie'
+                'lichnaya-zadacha-bystroe-sozdanie',
+                'audit-proverka-istoricheskogo-xlsx'
             )
         """))
         invalid_note_groups = await db.scalar(text("""
@@ -34,8 +35,8 @@ async def main():
             AND (personal_task_id IS NOT NULL OR linked_task_id IS NOT NULL)
         """))
         checks = {
-            "migration_head": revision == "081_personal_task_form_guide",
-            "knowledge_articles": article_count == 4,
+            "migration_head": revision == "082_audit_legacy_upload",
+            "knowledge_articles": article_count == 5,
             "note_group_owner_isolation": invalid_note_groups == 0,
             "tracker_organization_owner_isolation": invalid_tracker_groups == 0,
             "linked_trackers_one_time": invalid_series == 0,
