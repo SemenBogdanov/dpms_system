@@ -1,0 +1,11 @@
+# Fail closed until the exact local-model route and tailnet policy are reviewed.
+# Own table only: never flush the host, UFW, Docker, or Tailscale ruleset.
+add table inet dpms_llm_tailnet_guard
+flush table inet dpms_llm_tailnet_guard
+add chain inet dpms_llm_tailnet_guard output { type filter hook output priority -10; policy accept; }
+add chain inet dpms_llm_tailnet_guard input { type filter hook input priority -10; policy accept; }
+add chain inet dpms_llm_tailnet_guard forward { type filter hook forward priority -10; policy accept; }
+add rule inet dpms_llm_tailnet_guard output oifname "tailscale0" counter reject with icmpx type admin-prohibited
+add rule inet dpms_llm_tailnet_guard input iifname "tailscale0" counter drop
+add rule inet dpms_llm_tailnet_guard forward oifname "tailscale0" counter reject with icmpx type admin-prohibited
+add rule inet dpms_llm_tailnet_guard forward iifname "tailscale0" counter drop

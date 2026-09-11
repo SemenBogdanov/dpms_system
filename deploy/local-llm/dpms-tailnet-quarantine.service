@@ -1,0 +1,11 @@
+[Unit]
+Description=DPMS local-model tailnet fail-closed preparation
+Before=tailscaled.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/dpms/local-llm/tailscale-quarantine.nft
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
