@@ -221,6 +221,7 @@ class AuditRuntimeRouteTests(unittest.IsolatedAsyncioTestCase):
             patch.object(audit_runtime, "_get_case_or_404", AsyncMock(return_value=audit_case)),
             patch.object(audit_runtime, "_ensure_case_atom_editor", AsyncMock()),
             patch.object(audit_runtime, "get_ready_ai_provider", AsyncMock(return_value=provider)),
+            patch.object(audit_runtime, "freeze_attempt_atom_origins", AsyncMock()) as freeze_origins,
             patch.object(audit_runtime, "_verify_atomization_consent_token"),
             patch.object(audit_runtime, "_serialize_run", AsyncMock(return_value=serialized)),
         ):
@@ -235,6 +236,7 @@ class AuditRuntimeRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(result, serialized)
         self.assertEqual(attempt.status, "running")
         self.assertEqual(attempt.provider_config_id, next_provider_id)
+        freeze_origins.assert_awaited_once_with(db, attempt)
         self.assertEqual(attempt.model_name, "second-model")
         self.assertIsNone(attempt.commit_key_hash)
         self.assertEqual(run.status, "atomization_queued")
@@ -313,6 +315,7 @@ class AuditRuntimeRouteTests(unittest.IsolatedAsyncioTestCase):
             patch.object(audit_runtime, "_get_case_or_404", AsyncMock(return_value=audit_case)),
             patch.object(audit_runtime, "_ensure_case_atom_editor", AsyncMock()),
             patch.object(audit_runtime, "get_ready_ai_provider", AsyncMock(return_value=provider)),
+            patch.object(audit_runtime, "freeze_attempt_atom_origins", AsyncMock()),
             patch.object(audit_runtime, "_verify_atomization_consent_token"),
             patch.object(audit_runtime, "_serialize_run", AsyncMock(return_value=serialized)),
         ):

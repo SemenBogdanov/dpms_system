@@ -52,6 +52,10 @@ const SYNOLOGY_SESSION_ERROR_CODES = new Set([
   'profile_changed',
 ])
 
+function formatSkillVersion(version: string) {
+  return version.startsWith('sha256-') ? `SHA ${version.slice(7, 19)}` : `v${version}`
+}
+
 function formatBytes(value: number) {
   if (value < 1024) return `${value} Б`
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} КБ`
@@ -632,8 +636,10 @@ export function AdminIntegrationsPage() {
       if (skillFileInputRef.current) skillFileInputRef.current.value = ''
       toast.success(
         result.runtime_ready
-          ? `${result.name}: версия ${result.version} установлена и активна`
-          : `${result.name}: пакет принят, self-test runtime поставлен в очередь`
+          ? `${result.name}: ${formatSkillVersion(result.version)} установлена${result.is_active ? ' и активна' : ''}`
+          : result.package_format === 'trusted_skill_archive'
+            ? `${result.name}: пакет принят, self-test runtime поставлен в очередь`
+            : `${result.name}: версия установлена, пока недоступна`
       )
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось установить skill')
@@ -648,7 +654,7 @@ export function AdminIntegrationsPage() {
     try {
       await api.post<AuditAtomizationSkillVersion>(`/api/admin/integrations/ai/skills/${version.id}/activate`, {})
       await reloadAuditSkills()
-      toast.success(`${version.name}: версия ${version.version} активирована`)
+      toast.success(`${version.name}: ${formatSkillVersion(version.version)} активирована`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось активировать версию skill')
     } finally {
@@ -657,7 +663,7 @@ export function AdminIntegrationsPage() {
   }
 
   async function handleRetryAuditSkillSelftest(version: AuditAtomizationSkillVersion) {
-    if (skillBusy || version.runtime_status === 'pending_worker') return
+    if (skillBusy || version.package_format !== 'trusted_skill_archive' || version.runtime_status === 'pending_worker') return
     setSkillBusy(true)
     try {
       await api.post<AuditAtomizationSkillVersion>(
@@ -1057,7 +1063,7 @@ export function AdminIntegrationsPage() {
               <FileJson2 className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
               <div>
                 <h2 id="audit-skills-title" className="font-semibold text-foreground">Skills атомизации аудита</h2>
-                <p className="mt-1 text-sm text-muted-foreground">JSON-правила либо доверенный архив. Код архива сохраняется неизменяемо и не исполняется в API.</p>
+                <p className="mt-1 text-sm text-muted-foreground">Методики JSON и .skill · доверенный runtime .skill</p>
               </div>
             </div>
             <span className="shrink-0 text-xs text-muted-foreground">JSON / .skill · schema 1.0</span>
@@ -1103,9 +1109,9 @@ export function AdminIntegrationsPage() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="truncate text-sm font-semibold text-foreground">{version.name}</span>
-                        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">v{version.version}</span>
+                        <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">{formatSkillVersion(version.version)}</span>
                         <span className="rounded border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
-                          {version.is_trusted_archive ? '.skill · доверенный' : 'JSON · данные'}
+                          {version.package_format === 'trusted_skill_archive' ? '.skill · доверенный runtime' : version.package_format === 'declarative_archive' ? '.skill · методика' : 'JSON · методика'}
                         </span>
                         {version.is_active ? (
                           <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">Активна</span>
@@ -1117,7 +1123,7 @@ export function AdminIntegrationsPage() {
                               ? 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200'
                               : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'
                           )}>
-                            {version.runtime_status === 'runtime_failed' ? 'Runtime заблокирован' : 'Self-test runtime выполняется'}
+                            {version.package_format !== 'trusted_skill_archive' ? 'Методика недоступна' : version.runtime_status === 'runtime_failed' ? 'Runtime заблокирован' : 'Self-test runtime выполняется'}
                           </span>
                         ) : null}
                         {version.is_trusted_archive && version.runtime_ready && !version.is_active ? (
@@ -1132,11 +1138,11 @@ export function AdminIntegrationsPage() {
                           Self-test: {String(version.runtime_selftest.passed_count ?? 0)} пройдено
                           {Number(version.runtime_selftest.skipped_count ?? 0) > 0 ? ` · ${String(version.runtime_selftest.skipped_count)} пропущено` : ''}
                         </p>
-                      ) : version.runtime_status === 'runtime_failed' ? (
+                      ) : version.package_format === 'trusted_skill_archive' && version.runtime_status === 'runtime_failed' ? (
                         <p className="mt-1 font-mono text-xs text-rose-700 dark:text-rose-300">{version.runtime_error_code ?? 'skill_selftest_failed'}</p>
                       ) : null}
                     </div>
-                    {version.runtime_status === 'runtime_failed' ? (
+                    {version.package_format === 'trusted_skill_archive' && version.runtime_status === 'runtime_failed' ? (
                       <button
                         type="button"
                         onClick={() => void handleRetryAuditSkillSelftest(version)}
@@ -1151,7 +1157,7 @@ export function AdminIntegrationsPage() {
                         type="button"
                         onClick={() => void handleActivateAuditSkill(version)}
                         disabled={skillBusy || version.is_active || !version.is_enabled || !version.runtime_ready}
-                        title={!version.runtime_ready ? 'Отдельный runtime проверяет пакет' : undefined}
+                        title={!version.runtime_ready ? version.package_format === 'trusted_skill_archive' ? 'Отдельный runtime проверяет пакет' : 'Методика пока недоступна' : undefined}
                         className={cn(
                           'inline-flex min-h-10 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium disabled:opacity-50',
                           version.is_active

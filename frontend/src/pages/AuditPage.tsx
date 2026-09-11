@@ -66,20 +66,22 @@ import {
 import { api, ApiError } from '@/api/client'
 import type {
   AuditAtom,
+  AuditAtomProvenance as AuditAtomOrigin,
   AuditAlphaResult,
   AuditAtomCreate,
   AuditAtomUpdate,
   AuditAIAtomDraft,
   AuditAIAtomizationAttempt,
   AuditAIAtomizationCommitResult,
+  AuditAIPrivacyPreview,
   AuditAIModelComparison,
   AuditAIModelComparisonCommitResult,
   AuditAIModelComparisonDraft,
   AuditAIModelRegistry,
   AuditAIModelRegistryList,
+  AuditAIModelRegistryPublishResult,
   AuditAIProviderOption,
   AuditAIProviderOptionList,
-  AuditAIPrivacyPreview,
   AuditAssignment,
   AuditAssignmentList,
   AuditAtomizationSkillList,
@@ -106,6 +108,7 @@ import type {
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
 import { AuditLegacyImport } from '@/components/audit/AuditLegacyImport'
+import { AuditAtomProvenance } from '@/components/audit/AuditAtomProvenance'
 
 type UnknownRecord = Record<string, unknown>
 type DetailTab = 'materials' | 'atoms' | 'history'
@@ -134,6 +137,28 @@ const ACTIVE_CANONICAL_RUN_STATUSES = new Set([
 const CANONICAL_RUN_POLL_INTERVAL_MS = 3_000
 const CANONICAL_RUN_RETRY_WAIT_POLL_INTERVAL_MS = 10_000
 
+const ATOM_SOURCE_LABELS: Record<AuditAtomOrigin['kind'], string> = {
+  historical_import: 'Историческая загрузка',
+  manual_register: 'Ручной реестр',
+  manual: 'Вручную',
+  ai: 'ИИ',
+  unknown: 'Источник не указан',
+}
+
+function formatSkillVersion(version: string) {
+  return version.startsWith('sha256-') ? `SHA ${version.slice(7, 19)}` : `v${version}`
+}
+
+function isPDFDocument(document: AuditDocument) {
+  return document.content_type === 'application/pdf' || document.original_filename.toLowerCase().endsWith('.pdf')
+}
+
+function matchesAtomSource(atom: NormalizedAuditAtom, filter: string) {
+  if (filter === 'all') return true
+  if (filter.startsWith('registry:')) return atom.provenance.some((origin) => (origin.source_register_id ?? origin.registry_id) === filter.slice(9))
+  return atom.provenance.length === 0 ? filter === 'unknown' : atom.provenance.some((origin) => origin.kind === filter)
+}
+
 interface NormalizedAuditCaseSummary {
   id: string
   code: string
@@ -161,6 +186,7 @@ interface NormalizedAuditCaseSummary {
 
 interface NormalizedAuditAtom {
   id: string
+  provenance: AuditAtomOrigin[]
   itemCode: string
   title: string
   digitalProduct: string
@@ -802,6 +828,11 @@ function normalizeAuditAtom(input: unknown): NormalizedAuditAtom | null {
   return {
     id,
     itemCode: getString(source, 'item_code', 'code', 'audit_item_code') ?? '—',
+    provenance: getArray(source, 'provenance').filter(isRecord).map((origin) => ({
+      ...origin,
+      kind: ['historical_import', 'manual_register', 'manual', 'ai', 'unknown'].includes(String(origin.kind))
+        ? origin.kind : 'unknown',
+    })) as AuditAtomOrigin[],
     title: getString(source, 'title', 'name', 'label') ?? 'Без названия',
     digitalProduct: getString(source, 'digital_product', 'digitalProduct', 'product_name') ?? '—',
     objectType: getString(source, 'object_type', 'objectType') ?? '—',
@@ -1599,6 +1630,7 @@ export function AuditPage() {
 
   const [atomQuery, setAtomQuery] = useState('')
   const [atomStatusFilter, setAtomStatusFilter] = useState('all')
+  const atomSourceFilter = searchParams.get('atomSource') ?? 'all'
   const [atomObjectTypeFilter, setAtomObjectTypeFilter] = useState('all')
   const [atomWorkTypeFilter, setAtomWorkTypeFilter] = useState('all')
   const [selectedAtomIds, setSelectedAtomIds] = useState<string[]>([])
@@ -1675,9 +1707,13 @@ export function AuditPage() {
   const [aiSelectedDocumentId, setAiSelectedDocumentId] = useState('')
   const [aiContractIdentifiers, setAiContractIdentifiers] = useState('')
   const [aiPrivacyPreview, setAiPrivacyPreview] = useState<AuditAIPrivacyPreview | null>(null)
+  const [legacyAttempts, setLegacyAttempts] = useState<AuditAIAtomizationAttempt[]>([])
+  const [legacyAttemptOpen, setLegacyAttemptOpen] = useState(false)
+  const legacyAttemptsRequestRef = useRef(0)
   const [aiTransferConfirmed, setAiTransferConfirmed] = useState(false)
   const [aiAttempt, setAiAttempt] = useState<AuditAIAtomizationAttempt | null>(null)
   const [canonicalRun, setCanonicalRun] = useState<AuditTZRun | null>(null)
+  const [canonicalRuns, setCanonicalRuns] = useState<AuditTZRun[]>([])
   const [canonicalAtomizationPreview, setCanonicalAtomizationPreview] = useState<AuditTZAtomizationPreview | null>(null)
   const [aiProviders, setAiProviders] = useState<AuditAIProviderOption[]>([])
   const [aiSelectedProviderId, setAiSelectedProviderId] = useState('')
@@ -1691,6 +1727,7 @@ export function AuditPage() {
   const [modelComparisons, setModelComparisons] = useState<AuditAIModelComparison[]>([])
   const [modelWorkspaceLoading, setModelWorkspaceLoading] = useState(false)
   const [modelWorkspaceError, setModelWorkspaceError] = useState<string | null>(null)
+  const [publishingRegistryId, setPublishingRegistryId] = useState<string | null>(null)
   const [comparisonDialogOpen, setComparisonDialogOpen] = useState(false)
   const [modelComparison, setModelComparison] = useState<AuditAIModelComparison | null>(null)
   const [comparisonDrafts, setComparisonDrafts] = useState<EditableAIModelComparisonDraft[]>([])
@@ -2049,7 +2086,7 @@ export function AuditPage() {
       selectedCaseSummary.status !== 'archived' &&
       (canManage || selectedCaseSummary.responsibleUserId === user?.id)
   )
-  const workingAtomRegistryExists = (detail?.atomsTotal ?? 0) > 0
+  const comparisonReadOnly = !canEditSelectedAtoms || modelComparison?.status === 'committed' || modelComparison?.review_only !== true
   const selectedModelAtomCount = useMemo(() => {
     const selected = new Set(selectedModelRegistryIds)
     return modelRegistries.reduce(
@@ -2062,31 +2099,23 @@ export function AuditPage() {
     [modelComparisons]
   )
   const isSingleModelDraft = (modelComparison?.registry_ids.length ?? 0) === 1
-  const aiEligibleDocuments = useMemo(
-    () => documents.filter((document) => {
-      if (document.kind !== 'technical_spec') return false
-      const contentType = document.content_type.toLowerCase()
-      if (
-        contentType === 'application/pdf'
-        || contentType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-      ) return true
-      const filename = document.original_filename.toLowerCase()
-      return filename.endsWith('.pdf') || filename.endsWith('.docx')
-    }),
-    [documents]
-  )
   const selectedAIAtomizationSkill = useMemo(
     () => aiAtomizationSkills.find((skill) => skill.id === aiSelectedSkillId) ?? null,
     [aiAtomizationSkills, aiSelectedSkillId]
   )
-  const isCanonicalSkill = selectedAIAtomizationSkill?.package_format === 'trusted_skill_archive'
-  const canonicalEligibleDocuments = useMemo(
-    () => aiEligibleDocuments.filter((document) => (
-      document.content_type.includes('wordprocessingml')
-      || document.original_filename.toLowerCase().endsWith('.docx')
+  const aiEligibleDocuments = useMemo(
+    () => documents.filter((document) => document.kind === 'technical_spec' && (
+      document.content_type.includes('wordprocessingml') || document.content_type === 'application/pdf'
+      || /\.(docx|pdf)$/i.test(document.original_filename)
     )),
-    [aiEligibleDocuments]
+    [documents]
   )
+  const canonicalEligibleDocuments = useMemo(() => aiEligibleDocuments.filter((document) => (
+    selectedAIAtomizationSkill?.package_format !== 'trusted_skill_archive' || !isPDFDocument(document)
+  )), [aiEligibleDocuments, selectedAIAtomizationSkill])
+  const selectedAIDocument = aiEligibleDocuments.find((document) => document.id === aiSelectedDocumentId)
+  const isLegacyAIFlow = legacyAttemptOpen
+  const isTrustedSkill = selectedAIAtomizationSkill?.package_format === 'trusted_skill_archive'
   const usedCanonicalModelLanes = useMemo(() => {
     if (!canonicalRun) return new Set<string>()
     return new Set(
@@ -2100,7 +2129,12 @@ export function AuditPage() {
   const canonicalRunPhase = canonicalRun?.current_phase ?? null
 
   useEffect(() => {
-    if (!isCanonicalSkill) return
+    if (!canonicalRun) return
+    setCanonicalRuns((current) => [canonicalRun, ...current.filter((run) => run.id !== canonicalRun.id)])
+  }, [canonicalRun])
+
+  useEffect(() => {
+    if (!aiAtomizationDialogOpen || legacyAttemptOpen) return
     if (canonicalEligibleDocuments.some((document) => document.id === aiSelectedDocumentId)) return
     setAiSelectedDocumentId(canonicalEligibleDocuments[0]?.id ?? '')
     setCanonicalRun(null)
@@ -2108,7 +2142,8 @@ export function AuditPage() {
     setAiTransferConfirmed(false)
     setAiAttempt(null)
     setAiDrafts([])
-  }, [aiSelectedDocumentId, canonicalEligibleDocuments, isCanonicalSkill])
+    setAiPreparingNextModel(false)
+  }, [aiAtomizationDialogOpen, aiSelectedDocumentId, canonicalEligibleDocuments, legacyAttemptOpen])
 
   useEffect(() => {
     if (
@@ -2225,6 +2260,8 @@ export function AuditPage() {
           setAiSelectedProviderId(result.provider_config_id)
           setAiDrafts(result.drafts.map((draft) => ({ ...draft, included: true })))
           setAiAtomizationError(null)
+          void loadModelWorkspace(selectedCaseId)
+          void loadCaseBundle(selectedCaseId)
         })
         .catch((error: unknown) => {
           if (!cancelled) setAiAtomizationError(error instanceof Error ? error.message : 'Не удалось загрузить черновик атомов')
@@ -2239,7 +2276,7 @@ export function AuditPage() {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [aiAtomizationDialogOpen, aiAttempt, aiPreparingNextModel, canonicalRun, selectedCaseId])
+  }, [aiAtomizationDialogOpen, aiAttempt, aiPreparingNextModel, canonicalRun, loadCaseBundle, loadModelWorkspace, selectedCaseId])
 
   const atomStatusOptions = useMemo(() => {
     const dynamic = compactOptions(detail?.atoms.map((atom) => atom.status) ?? [])
@@ -2260,6 +2297,7 @@ export function AuditPage() {
   const filteredAtoms = useMemo(() => {
     const query = atomQuery.trim().toLowerCase()
     return (detail?.atoms ?? []).filter((atom) => {
+      if (!matchesAtomSource(atom, atomSourceFilter)) return false
       if (atomStatusFilter !== 'all' && atom.status !== atomStatusFilter) return false
       if (atomObjectTypeFilter !== 'all' && atom.objectType !== atomObjectTypeFilter) return false
       if (atomWorkTypeFilter !== 'all' && atom.workType !== atomWorkTypeFilter) return false
@@ -2278,7 +2316,32 @@ export function AuditPage() {
         .toLowerCase()
         .includes(query)
     })
-  }, [atomObjectTypeFilter, atomQuery, atomStatusFilter, atomWorkTypeFilter, detail])
+  }, [atomObjectTypeFilter, atomQuery, atomSourceFilter, atomStatusFilter, atomWorkTypeFilter, detail])
+
+  const changeAtomSourceFilter = (value: string) => {
+    setSelectedAtomIds([])
+    setSelectedAtomId(null)
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      if (value === 'all') next.delete('atomSource')
+      else next.set('atomSource', value)
+      return next
+    }, { replace: true })
+  }
+
+  const publishedRegistryItems = useMemo(() => {
+    const items = new Map<string, Set<string>>()
+    for (const atom of detail?.atoms ?? []) {
+      for (const origin of atom.provenance) {
+        const registryId = origin.source_register_id ?? origin.registry_id
+        if (!registryId || !origin.registry_item_id) continue
+        const ids = items.get(registryId) ?? new Set<string>()
+        ids.add(origin.registry_item_id)
+        items.set(registryId, ids)
+      }
+    }
+    return items
+  }, [detail])
 
   const selectedAtom = useMemo(
     () => detail?.atoms.find((atom) => atom.id === selectedAtomId) ?? null,
@@ -2323,11 +2386,7 @@ export function AuditPage() {
   const documentDirty = documentFiles.length > 0 || Boolean(documentProduct.trim())
   const materialDirty = materialFiles.length > 0 || Boolean(materialDisplayName.trim())
   const deleteCaseDirty = Boolean(deleteCaseConfirmation.trim() || deleteCaseReason.trim())
-  const aiAtomizationDirty = !isCanonicalSkill && Boolean(
-    aiContractIdentifiers.trim() || aiPrivacyPreview
-  ) || Boolean(
-    (aiAttempt && aiAttempt.status === 'draft_ready' && !isCanonicalSkill) || aiTransferConfirmed
-  )
+  const aiAtomizationDirty = aiTransferConfirmed || (isLegacyAIFlow && Boolean(aiAttempt || aiPrivacyPreview || aiContractIdentifiers.trim()))
   const assignmentDirty = useMemo(
     () => [...assignmentCaseIds].sort().join(',') !== [...assignmentInitialCaseIds].sort().join(','),
     [assignmentCaseIds, assignmentInitialCaseIds]
@@ -2473,12 +2532,14 @@ export function AuditPage() {
   }
 
   const resetAIAtomizationDialog = () => {
+    legacyAttemptsRequestRef.current += 1
     setAiAtomizationDialogOpen(false)
+    setAiContractIdentifiers('')
+    setAiPrivacyPreview(null)
+    setLegacyAttemptOpen(false)
     setAiAtomizationSkills([])
     setAiSelectedSkillId('')
     setAiSelectedDocumentId('')
-    setAiContractIdentifiers('')
-    setAiPrivacyPreview(null)
     setAiTransferConfirmed(false)
     setAiAttempt(null)
     setCanonicalRun(null)
@@ -2497,16 +2558,22 @@ export function AuditPage() {
 
   const openAIAtomizationDialog = async () => {
     if (!selectedCaseId || !canEditSelectedAtoms) return
-    if (aiEligibleDocuments.length === 0) {
-      toast.error('Добавьте неизменяемое ТЗ в формате PDF или DOCX')
-      setDetailTab('materials')
-      return
-    }
     setAiAtomizationDialogOpen(true)
-    setAiSelectedDocumentId(aiEligibleDocuments[0].id)
-    setAiSelectedSkillId('')
     setAiContractIdentifiers('')
     setAiPrivacyPreview(null)
+    setLegacyAttemptOpen(false)
+    setLegacyAttempts([])
+    const legacyRequest = ++legacyAttemptsRequestRef.current
+    void api.get<AuditAIAtomizationAttempt[]>(`/api/audit/cases/${selectedCaseId}/ai-atomization/attempts`)
+      .then((items) => { if (legacyRequest === legacyAttemptsRequestRef.current) setLegacyAttempts(items.filter((attempt) => attempt.status === 'draft_ready')) })
+      .catch((error: unknown) => {
+        if (legacyRequest !== legacyAttemptsRequestRef.current) return
+        if (!(error instanceof ApiError && error.status === 404)) {
+          setAiAtomizationError(error instanceof Error ? error.message : 'Не удалось загрузить прежние черновики')
+        }
+      })
+    setAiSelectedDocumentId(aiEligibleDocuments[0]?.id ?? '')
+    setAiSelectedSkillId('')
     setAiTransferConfirmed(false)
     setAiAttempt(null)
     setCanonicalRun(null)
@@ -2517,32 +2584,29 @@ export function AuditPage() {
     setAiAtomizationError(null)
     setAiAtomizationBusy(true)
     try {
-      const [result, providerResult, registryResult] = await Promise.all([
+      const [result, providerResult, registryResult, runs] = await Promise.all([
         api.get<AuditAtomizationSkillList>('/api/audit/ai-atomization/skills'),
         api.get<AuditAIProviderOptionList>('/api/audit/ai-providers'),
         api.get<AuditAIModelRegistryList>(`/api/audit/cases/${selectedCaseId}/model-registries`),
+        api.get<{ items: AuditTZRun[] }>(`/api/audit/cases/${selectedCaseId}/canonical-preflight/runs`),
       ])
-      const selectedSkill = (
-        canonicalEligibleDocuments.length > 0
-          ? result.items.find((skill) => skill.package_format === 'trusted_skill_archive')
-          : null
-      ) ?? result.items[0]
-      const selectedDocument = selectedSkill?.package_format === 'trusted_skill_archive'
-        ? canonicalEligibleDocuments[0]
-        : aiEligibleDocuments[0]
-      setAiAtomizationSkills(result.items)
+      const availableSkills = result.items.filter((skill) => skill.is_active && skill.is_enabled && skill.runtime_ready)
+      const selectedSkill = (!aiEligibleDocuments.some((document) => !isPDFDocument(document))
+        ? availableSkills.find((skill) => skill.package_format !== 'trusted_skill_archive') : null) ?? availableSkills[0]
+      const selectedDocument = aiEligibleDocuments.find((document) => selectedSkill?.package_format !== 'trusted_skill_archive' || !isPDFDocument(document))
+      setAiAtomizationSkills(availableSkills)
+      setCanonicalRuns(runs.items)
       setAiProviders(providerResult.items)
       setModelRegistries(registryResult.items)
       setAiSelectedSkillId(selectedSkill?.id ?? '')
       setAiSelectedDocumentId(selectedDocument?.id ?? '')
       let nextProvider: AuditAIProviderOption | undefined = providerResult.items[0]
       let nextProviderError: string | null = null
-      if (result.items.length === 0) {
+      if (availableSkills.length === 0) {
         setAiAtomizationError('Администратор еще не установил и не активировал skill атомизации')
       } else if (providerResult.items.length === 0) {
         setAiAtomizationError('Нет проверенных активных ИИ-подключений')
-      } else if (selectedSkill?.package_format === 'trusted_skill_archive') {
-        const runs = await api.get<{ items: AuditTZRun[] }>(`/api/audit/cases/${selectedCaseId}/canonical-preflight/runs`)
+      } else if (selectedSkill) {
         const resumableRun = runs.items.find((run) => (
           run.document_id === selectedDocument?.id
           && run.skill_version_id === selectedSkill.id
@@ -2597,7 +2661,7 @@ export function AuditPage() {
   }
 
   const startCanonicalPreflight = async () => {
-    if (!selectedCaseId || !aiSelectedDocumentId || !aiSelectedSkillId || aiAtomizationBusy) return
+    if (!selectedCaseId || !selectedAIDocument || (isTrustedSkill && isPDFDocument(selectedAIDocument)) || !selectedAIAtomizationSkill?.runtime_ready || aiAtomizationBusy) return
     setAiAtomizationBusy(true)
     setAiAtomizationError(null)
     try {
@@ -2616,8 +2680,46 @@ export function AuditPage() {
     }
   }
 
+  const selectAIContext = (documentId: string, skillId: string) => {
+    if ((legacyAttemptOpen || (isLegacyAIFlow && aiAttempt)) && !requestDiscard('Изменения прежнего черновика не сохранены. Сменить выбор?')) return
+    setLegacyAttemptOpen(false)
+    setAiPrivacyPreview(null)
+    setAiContractIdentifiers('')
+    const run = canonicalRuns.find((item) => item.document_id === documentId && item.skill_version_id === skillId) ?? null
+    setAiSelectedDocumentId(documentId)
+    setAiSelectedSkillId(skillId)
+    setCanonicalRun(run)
+    setCanonicalAtomizationPreview(null)
+    setAiTransferConfirmed(false)
+    setAiAttempt(null)
+    setAiDrafts([])
+    setAiAtomizationError(null)
+    const completed = Boolean(run && ['draft_ready', 'committed'].includes(run.status))
+    setAiPreparingNextModel(completed)
+    const used = new Set(modelRegistries.filter((item) => item.canonical_run_id === run?.id)
+      .map((item) => `${item.provider_config_id}:${item.provider_config_version}:${item.model_name}`))
+    const available = aiProviders.filter((item) => !used.has(`${item.id}:${item.config_version}:${item.model_name}`))
+    setAiSelectedProviderId(available.find((item) => item.id === aiSelectedProviderId)?.id ?? available[0]?.id ?? '')
+  }
+
+  const openLegacyAttempt = (attempt: AuditAIAtomizationAttempt) => {
+    if (aiAtomizationDirty && !requestDiscard('Открыть прежний черновик без сохранения текущих изменений?')) return
+    setLegacyAttemptOpen(true)
+    setAiSelectedDocumentId(attempt.document_id)
+    setAiSelectedSkillId(attempt.skill_version_id)
+    setAiSelectedProviderId(attempt.provider_config_id)
+    setCanonicalRun(null)
+    setCanonicalAtomizationPreview(null)
+    setAiPrivacyPreview(null)
+    setAiTransferConfirmed(false)
+    setAiAttempt(attempt)
+    setAiDrafts(attempt.drafts.map((draft) => ({ ...draft, included: draft.review_status !== 'rejected' })))
+    setAiAtomizationError(null)
+  }
+
   const startCanonicalAtomization = async () => {
     if (!selectedCaseId || !canonicalRun || !canonicalAtomizationPreview || !aiSelectedProviderId || !aiTransferConfirmed || aiAtomizationBusy) return
+    if (canonicalRun.document_id !== aiSelectedDocumentId || canonicalRun.skill_version_id !== aiSelectedSkillId || canonicalAtomizationPreview.provider_id !== aiSelectedProviderId) return
     setAiAtomizationBusy(true)
     setAiAtomizationError(null)
     try {
@@ -2698,7 +2800,7 @@ export function AuditPage() {
   }
 
   const generateAIAtomDrafts = async () => {
-    if (!selectedCaseId || !aiSelectedDocumentId || !aiSelectedSkillId || !aiTransferConfirmed || !aiPrivacyPreview) return
+    if (!selectedCaseId || !aiSelectedDocumentId || !aiSelectedSkillId || !aiTransferConfirmed || !aiPrivacyPreview || aiAtomizationBusy) return
     const contractIdentifiers = contractIdentifierList()
     setAiAtomizationBusy(true)
     setAiAtomizationError(null)
@@ -2780,15 +2882,34 @@ export function AuditPage() {
 
   const finishCanonicalModelResult = async () => {
     if (!selectedCaseId) return
-    await loadModelWorkspace(selectedCaseId)
+    await Promise.all([loadCases(), loadCaseBundle(selectedCaseId), loadModelWorkspace(selectedCaseId)])
     resetAIAtomizationDialog()
-    toast.success('Результат модели сохранен отдельно')
+    toast.success('Результат модели сохранен; генеральный реестр обновлен')
   }
 
   const toggleModelRegistry = (registryId: string) => {
     setSelectedModelRegistryIds((current) => current.includes(registryId)
       ? current.filter((id) => id !== registryId)
       : [...current, registryId])
+  }
+
+  const publishModelRegistry = async (registryId: string) => {
+    if (!selectedCaseId || !canEditSelectedAtoms || publishingRegistryId) return
+    setPublishingRegistryId(registryId)
+    setModelWorkspaceError(null)
+    try {
+      const result = await api.post<AuditAIModelRegistryPublishResult>(
+        `/api/audit/cases/${selectedCaseId}/model-registries/${registryId}/publish`, undefined
+      )
+      await Promise.all([loadCases(), loadCaseBundle(selectedCaseId), loadModelWorkspace(selectedCaseId)])
+      toast.success(result.already_published ? 'Результаты уже в генеральном реестре' : `Добавлено черновиков: ${result.atoms_created}`)
+    } catch (error) {
+      setModelWorkspaceError(error instanceof ApiError && error.status === 409
+        ? 'Публикация недоступна на текущем этапе. Верните договор на этап «Атомизация» через редактирование договора и повторите добавление.'
+        : error instanceof Error ? error.message : 'Не удалось добавить черновики в генеральный реестр')
+    } finally {
+      setPublishingRegistryId(null)
+    }
   }
 
   const showModelComparison = (comparison: AuditAIModelComparison) => {
@@ -2803,6 +2924,12 @@ export function AuditPage() {
 
   const runModelComparison = async (registryIds = selectedModelRegistryIds) => {
     if (!selectedCaseId || registryIds.length < 1 || comparisonBusy) return
+    const selected = modelRegistries.filter((registry) => registryIds.includes(registry.id))
+    if (selected.length > 1 && selected.some((registry) => !registry.document_id || !registry.document_sha256
+      || registry.document_id !== selected[0].document_id || registry.document_sha256 !== selected[0].document_sha256)) {
+      setModelWorkspaceError('Для сравнения выберите реестры одного документа с одинаковым SHA-256.')
+      return
+    }
     setComparisonBusy(true)
     setComparisonError(null)
     try {
@@ -2812,7 +2939,7 @@ export function AuditPage() {
       setModelComparisons((current) => [result, ...current.filter((item) => item.id !== result.id)])
       showModelComparison(result)
     } catch (error) {
-      setModelWorkspaceError(error instanceof Error ? error.message : 'Не удалось подготовить рабочий реестр')
+      setModelWorkspaceError(error instanceof Error ? error.message : 'Не удалось подготовить сравнение')
     } finally {
       setComparisonBusy(false)
     }
@@ -2830,6 +2957,9 @@ export function AuditPage() {
 
   const closeComparisonDialog = () => {
     if (comparisonBusy) return
+    const initialDrafts = modelComparison?.drafts.map((draft) => ({ ...draft, included: draft.review_status !== 'rejected' })) ?? []
+    if (!comparisonReadOnly && JSON.stringify(initialDrafts) !== JSON.stringify(comparisonDrafts)
+      && !requestDiscard('Изменения сравнения не сохранены. Закрыть окно?')) return
     setComparisonDialogOpen(false)
     setModelComparison(null)
     setComparisonDrafts([])
@@ -2837,10 +2967,10 @@ export function AuditPage() {
   }
 
   const commitModelComparison = async () => {
-    if (!selectedCaseId || !modelComparison || comparisonBusy) return
+    if (!selectedCaseId || !modelComparison || comparisonBusy || comparisonReadOnly) return
     const included = comparisonDrafts.filter((draft) => draft.included)
     if (included.length === 0) {
-      setComparisonError('Выберите хотя бы один атом рабочего реестра')
+      setComparisonError('Выберите хотя бы одно предложение для сохранения сравнения')
       return
     }
     if (included.some((draft) => !draft.title.trim() || !draft.digital_product.trim())) {
@@ -2850,7 +2980,7 @@ export function AuditPage() {
     setComparisonBusy(true)
     setComparisonError(null)
     try {
-      const result = await api.post<AuditAIModelComparisonCommitResult>(
+      await api.post<AuditAIModelComparisonCommitResult>(
         `/api/audit/cases/${selectedCaseId}/model-comparisons/${modelComparison.id}/commit`,
         {
           request_id: window.crypto.randomUUID(),
@@ -2871,9 +3001,9 @@ export function AuditPage() {
       setComparisonDrafts([])
       await Promise.all([loadCases(), loadCaseBundle(selectedCaseId), loadModelWorkspace(selectedCaseId)])
       setDetailTab('atoms')
-      toast.success(`В рабочий реестр записано атомов: ${result.atoms_created}`)
+      toast.success('Сравнение сохранено. Генеральный реестр не изменен.')
     } catch (error) {
-      setComparisonError(error instanceof Error ? error.message : 'Не удалось опубликовать рабочий реестр')
+      setComparisonError(error instanceof Error ? error.message : 'Не удалось сохранить сравнение')
     } finally {
       setComparisonBusy(false)
     }
@@ -3128,6 +3258,7 @@ export function AuditPage() {
       }
     }
     const queueIds = reviewDetail.atoms
+      .filter((atom) => matchesAtomSource(atom, atomSourceFilter))
       .filter((atom) => mode === 'draft'
         ? atom.status === 'draft'
         : atom.status === 'ready' && !atom.alphaResult)
@@ -4765,7 +4896,7 @@ export function AuditPage() {
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <div>
                         <h3 id="model-registries-title" className="text-sm font-semibold text-foreground">Модельные реестры</h3>
-                        <p className="mt-1 text-xs text-muted-foreground">Выберите один результат для подготовки рабочего реестра или несколько для сравнительного анализа.</p>
+                        <p className="mt-1 text-xs text-muted-foreground">Независимые результаты моделей и методик</p>
                       </div>
                       {canEditSelectedAtoms ? (
                         <div className="flex flex-wrap gap-2">
@@ -4776,31 +4907,30 @@ export function AuditPage() {
                           {draftReadyModelComparison ? (
                             <button type="button" onClick={() => showModelComparison(draftReadyModelComparison)} className="inline-flex min-h-10 items-center gap-2 rounded-md border border-primary px-3 text-sm font-medium text-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30">
                               <Boxes className="h-4 w-4" aria-hidden="true" />
-                              {workingAtomRegistryExists
-                                ? 'Открыть анализ'
-                                : draftReadyModelComparison.registry_ids.length === 1
-                                  ? 'Продолжить подготовку'
-                                  : 'Продолжить сравнение'}
+                              Продолжить сравнение
                             </button>
                           ) : null}
                           {modelRegistries.length > 0 ? (
                             <button type="button" onClick={() => void runModelComparison()} disabled={comparisonBusy || selectedModelRegistryIds.length < 1} className="inline-flex min-h-10 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 disabled:cursor-not-allowed disabled:opacity-50">
                               {comparisonBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Boxes className="h-4 w-4" aria-hidden="true" />}
-                              {selectedModelRegistryIds.length === 1 ? 'Подготовить рабочий реестр' : 'Сравнить выбранные'}
+                              {selectedModelRegistryIds.length === 1 ? 'Рассмотреть результат' : 'Сравнить выбранные'}
                             </button>
                           ) : null}
                         </div>
                       ) : null}
                     </div>
                     {modelWorkspaceError ? (
-                      <div className="mt-4 rounded-md border border-rose-500/25 bg-rose-500/10 px-3 py-3 text-sm text-rose-700 dark:text-rose-300">
+                      <div role="alert" className="mt-4 rounded-md border border-rose-500/25 bg-rose-500/10 px-3 py-3 text-sm text-rose-700 dark:text-rose-300">
                         {modelWorkspaceError}
                       </div>
-                    ) : modelWorkspaceLoading ? (
+                    ) : null}
+                    {modelWorkspaceLoading && modelRegistries.length === 0 ? (
                       <div className="mt-4 flex min-h-14 items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Проверяем модельные реестры…</div>
                     ) : modelRegistries.length > 0 ? (
                       <div className="mt-3 divide-y divide-border overflow-hidden rounded-md border border-border">
-                        {modelRegistries.map((registry) => (
+                        {modelRegistries.map((registry) => {
+                          const publishedCount = registry.published_atom_count ?? publishedRegistryItems.get(registry.id)?.size ?? 0
+                          return (
                           <details key={registry.id} className="group bg-surface">
                             <summary className="flex min-h-14 cursor-pointer list-none items-center gap-3 px-3 py-2 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30">
                               {canEditSelectedAtoms ? (
@@ -4816,6 +4946,9 @@ export function AuditPage() {
                               <span className="min-w-0 flex-1">
                                 <span className="block truncate text-sm font-semibold text-foreground">{registry.provider_name}</span>
                                 <span className="block truncate font-mono text-xs text-muted-foreground">{registry.model_name} · конфигурация v{registry.provider_config_version}</span>
+                                <span className="mt-1 block break-words text-xs text-muted-foreground">{registry.skill_name ?? registry.skill_slug ?? 'Методика не указана'}{registry.skill_version ? ` · ${formatSkillVersion(registry.skill_version)}` : ''}{registry.skill_sha256 && !registry.skill_version?.startsWith('sha256-') ? ` · SHA ${registry.skill_sha256.slice(0, 12)}` : ''}</span>
+                                <span className="block break-words text-xs text-muted-foreground" title={registry.document_sha256 ?? undefined}>Документ: {registry.document_created_at ? formatDateTime(registry.document_created_at) : 'дата не указана'} · SHA {registry.document_sha256?.slice(0, 12) ?? 'не указан'}</span>
+                                <span className="block break-words text-xs text-muted-foreground">{formatDateTime(registry.created_at)} · В генеральном: {publishedCount}/{registry.atom_count}</span>
                               </span>
                               <span className="shrink-0 text-right">
                                 <span className="block text-sm font-semibold tabular-nums text-foreground">{registry.atom_count}</span>
@@ -4823,6 +4956,13 @@ export function AuditPage() {
                               </span>
                               <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
                             </summary>
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2">
+                              <span className="text-xs text-muted-foreground">{publishedCount >= registry.atom_count ? 'Результаты уже в генеральном реестре' : `Не добавлено в генеральный: ${registry.atom_count - publishedCount}`}</span>
+                              {canEditSelectedAtoms && publishedCount < registry.atom_count ? <button type="button" onClick={() => void publishModelRegistry(registry.id)} disabled={Boolean(publishingRegistryId)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
+                                {publishingRegistryId === registry.id ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" /> : <Plus className="h-4 w-4 shrink-0" aria-hidden="true" />}
+                                Добавить в генеральный реестр
+                              </button> : null}
+                            </div>
                             <div className="max-h-80 overflow-auto border-t border-border bg-surface-soft px-3 py-2">
                               {registry.items.map((item, index) => (
                                 <div key={item.id} className="grid gap-1 border-b border-border/70 py-2 text-xs last:border-b-0 sm:grid-cols-[3rem_minmax(0,1fr)_minmax(12rem,0.7fr)]">
@@ -4833,7 +4973,7 @@ export function AuditPage() {
                               ))}
                             </div>
                           </details>
-                        ))}
+                        )})}
                       </div>
                     ) : (
                       <div className="mt-3 rounded-md border border-dashed border-border px-4 py-5 text-sm text-muted-foreground">
@@ -4845,10 +4985,11 @@ export function AuditPage() {
                 <section className="rounded-lg border border-border bg-surface px-4 py-4 shadow-sm sm:px-5" aria-labelledby="working-atom-register-title">
                 <div className="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0">
-                    <h3 id="working-atom-register-title" className="text-base font-semibold text-foreground">Реестр атомов</h3>
+                    <h3 id="working-atom-register-title" className="text-base font-semibold text-foreground">Генеральный реестр атомов</h3>
                     <p className="mt-1 text-xs text-muted-foreground">
                       Принято: {detail?.atomsReady ?? 0} · черновиков: {detail?.atomsDraft ?? 0} · альфа: {alphaReviewedCount}/{(detail?.atoms ?? []).filter((atom) => atom.status === 'ready').length}
                     </p>
+                    <p className="mt-1 text-xs tabular-nums text-muted-foreground" role="status">Показано: {filteredAtoms.length} из {detail?.atoms.length ?? 0} · {atomSourceFilter === 'all' ? 'все источники' : 'выбранный источник'} · без объединения записей</p>
                   </div>
                   {canEditSelectedAtoms ? (
                     <div className="flex flex-wrap items-center gap-2 sm:justify-end">
@@ -4888,7 +5029,7 @@ export function AuditPage() {
                 </div>
 
                 {(detail?.atomsTotal ?? 0) > 0 ? (
-                <div className="mt-4 flex flex-col gap-3 border-b border-border pb-4 lg:flex-row lg:items-end">
+                <div className="mt-4 grid min-w-0 gap-3 border-b border-border pb-4 sm:grid-cols-2 xl:grid-cols-3">
                   <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm font-medium text-foreground">
                     Поиск по атомам
                     <div className="flex min-h-11 items-center gap-2 rounded-md border border-border bg-surface px-3">
@@ -4900,6 +5041,14 @@ export function AuditPage() {
                         className="min-w-0 flex-1 bg-transparent py-2 text-base text-foreground outline-none placeholder:text-muted-foreground sm:text-sm"
                       />
                     </div>
+                  </label>
+                  <label className="flex min-w-0 flex-col gap-1 text-sm font-medium text-foreground">
+                    Источник
+                    <select aria-label="Источник атомов" value={atomSourceFilter} onChange={(event) => changeAtomSourceFilter(event.target.value)} className="min-h-11 w-full min-w-0 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary sm:text-sm">
+                      <option value="all">Все источники</option>
+                      {Object.entries(ATOM_SOURCE_LABELS).map(([kind, label]) => <option key={kind} value={kind}>{label} ({detail?.atoms.filter((atom) => matchesAtomSource(atom, kind)).length ?? 0})</option>)}
+                      {modelRegistries.map((registry) => <option key={registry.id} value={`registry:${registry.id}`}>{registry.provider_name} · {registry.model_name} · {registry.skill_name ?? 'методика не указана'} · {formatDateTime(registry.created_at)}</option>)}
+                    </select>
                   </label>
                   <label className="flex min-w-[180px] flex-col gap-1 text-sm font-medium text-foreground">
                     Статус
@@ -4991,7 +5140,7 @@ export function AuditPage() {
                         <div className="min-w-0">
                           <h3 className="text-base font-semibold text-foreground">Модельный реестр готов</h3>
                           <p className="mt-1 text-sm text-muted-foreground">
-                            ИИ сформировал {selectedModelAtomCount || modelRegistries.reduce((total, registry) => total + registry.atom_count, 0)} атомов. Проверьте состав и запишите его в рабочий реестр договора.
+                            В модельных реестрах: {selectedModelAtomCount || modelRegistries.reduce((total, registry) => total + registry.atom_count, 0)} предложений. В генеральный реестр они еще не добавлены.
                           </p>
                         </div>
                       </div>
@@ -5006,7 +5155,7 @@ export function AuditPage() {
                             className="inline-flex min-h-11 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                           >
                             {comparisonBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ClipboardList className="h-4 w-4" />}
-                            {draftReadyModelComparison ? 'Продолжить подготовку' : 'Подготовить рабочий реестр'}
+                            {draftReadyModelComparison ? 'Продолжить сравнение' : 'Рассмотреть результаты'}
                           </button>
                         </div>
                       ) : null}
@@ -5047,6 +5196,7 @@ export function AuditPage() {
                               {canEditSelectedAtoms ? <th className="w-12 px-3 py-3"><span className="sr-only">Выбор</span></th> : null}
                               <th className="px-3 py-3">Код</th>
                               <th className="px-3 py-3">Атом</th>
+                              <th className="px-3 py-3">Источник</th>
                               <th className="px-3 py-3">Объект</th>
                               <th className="px-3 py-3">Работы</th>
                               <th className="px-3 py-3">Пункт</th>
@@ -5088,6 +5238,7 @@ export function AuditPage() {
                                       {atom.digitalProduct}
                                     </div>
                                   </td>
+                                  <td className="min-w-[12rem] max-w-xs px-3 py-3"><AuditAtomProvenance origins={atom.provenance} compact /></td>
                                   <td className="px-3 py-3 text-muted-foreground">{atom.objectType}</td>
                                   <td className="px-3 py-3 text-muted-foreground">{atom.workType}</td>
                                   <td className="min-w-[12rem] px-3 py-3 text-muted-foreground">{atom.sourceClause}</td>
@@ -5158,6 +5309,7 @@ export function AuditPage() {
                                 </button>
                               ) : null}
                             </div>
+                            <AuditAtomProvenance origins={atom.provenance} compact />
                             <div className="mt-3 grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
                               <div>
                                 <div className="text-[11px] uppercase tracking-wide">Объект</div>
@@ -5204,6 +5356,7 @@ export function AuditPage() {
                               <StatusPill label={formatAtomStatus(selectedAtom.status)} toneClass={atomStatusTone(selectedAtom.status)} />
                             </div>
                             <h4 className="mt-2 text-base font-semibold text-foreground">{selectedAtom.title}</h4>
+                            <AuditAtomProvenance origins={selectedAtom.provenance} />
                             <div className="mt-3 grid gap-3 text-sm text-muted-foreground sm:grid-cols-2">
                               <div>
                                 <div className="text-[11px] uppercase tracking-wide">Цифровой продукт</div>
@@ -5582,6 +5735,7 @@ export function AuditPage() {
                 <h3 id="atom-review-title" className="mt-3 break-words text-xl font-semibold text-foreground text-pretty">
                   {atomReviewCurrent.title}
                 </h3>
+                <AuditAtomProvenance origins={atomReviewCurrent.provenance} />
 
                 {atomReviewEditOpen ? (
                   <div className="mt-5 grid gap-4 border-t border-border pt-5 sm:grid-cols-2">
@@ -6027,6 +6181,7 @@ export function AuditPage() {
           </div>
         }
       >
+        {atomDialogMode === 'edit' ? <AuditAtomProvenance origins={detail?.atoms.find((atom) => atom.id === editingAtomId)?.provenance ?? []} /> : null}
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="flex flex-col gap-1 text-sm font-medium text-foreground">
             Код атома (необязательно)
@@ -6139,10 +6294,8 @@ export function AuditPage() {
 
       <DialogShell
         open={aiAtomizationDialogOpen}
-        title={isCanonicalSkill ? 'Атомизация технического задания' : 'ИИ-атомизация технического задания'}
-        description={isCanonicalSkill
-          ? 'DPMS проверит DOCX, передаст настроенной модели только обезличенные фрагменты и покажет найденные элементы до записи в реестр. Номер договора не требуется.'
-          : 'ИИ сформирует только проверяемый черновик. Атомы появятся в реестре после вашего подтверждения.'}
+        title="Атомизация технического задания"
+        description="На этапе атомизации новые результаты добавляются в генеральный реестр как черновики. Принятие требует решения аудитора."
         sizeClassName="max-w-6xl"
         busy={aiAtomizationBusy}
         onRequestClose={closeAIAtomizationDialog}
@@ -6150,30 +6303,21 @@ export function AuditPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-xs text-muted-foreground">
               {aiAttempt
-                ? isCanonicalSkill
-                  ? `${aiAttempt.provider_name} · ${aiAttempt.model_name}: сохранено ${aiDrafts.length} атомов в отдельном модельном реестре.`
-                  : `Выбрано ${aiDrafts.filter((draft) => draft.included).length} из ${aiDrafts.length}. Исходный документ не изменяется.`
-                : isCanonicalSkill
-                  ? canonicalRun
-                    ? canonicalRun.status === 'preflight_pass'
-                      ? '634 и подобные значения здесь означают исходные фрагменты, а не атомы. Итоговый список сформирует модель.'
-                      : canonicalRun.status === 'atomizing'
-                        ? `Обработано пакетов: ${canonicalRun.completed_batch_count} из ${canonicalRun.total_batch_count}. Прогресс сохраняется.`
-                        : canonicalRun.status === 'paused'
-                          ? `Сохранено пакетов: ${canonicalRun.completed_batch_count} из ${canonicalRun.total_batch_count}. Возобновление продолжит с этого места.`
-                        : canonicalRun.current_phase === 'atomization_retry_wait'
-                          ? `Готово пакетов: ${canonicalRun.completed_batch_count} из ${canonicalRun.total_batch_count}. Повтор начнется автоматически${canonicalRetryAt(canonicalRun) ? ` ${formatDateTime(canonicalRetryAt(canonicalRun) as string)}` : ''}.`
-                        : `${canonicalRunLabel(canonicalRun)}. Результат сохраняется в истории аудита.`
-                    : 'Сначала документ проверяется локально. Внешний запрос возможен только после отдельного подтверждения.'
-                : aiPrivacyPreview
-                  ? `Обезличивание проверено: ${aiPrivacyPreview.replacement_count} замен. Подтверждение действует до ${formatDateTime(aiPrivacyPreview.expires_at)}.`
-                  : 'Сначала выполните локальный предпросмотр обезличивания. До подтверждения внешний запрос не выполняется.'}
+                ? `${aiAttempt.provider_name} · ${aiAttempt.model_name}: ${aiDrafts.length} атомов в модельном реестре.`
+                : canonicalRun
+                  ? canonicalRun.status === 'paused'
+                    ? `Сохранено пакетов: ${canonicalRun.completed_batch_count} из ${canonicalRun.total_batch_count}. Возобновление продолжит с этого места.`
+                    : `${canonicalRunLabel(canonicalRun)}. Состояние запуска сохранено.`
+                  : isLegacyAIFlow ? 'Прежний черновик' : isTrustedSkill ? 'Документ DOCX. Номер договора не требуется.' : 'DOCX или текстовый PDF. Номер договора не требуется.'}
             </div>
             <div className="flex flex-col gap-2 sm:flex-row">
               <button type="button" onClick={closeAIAtomizationDialog} disabled={aiAtomizationBusy} className="inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-surface px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
                 Отмена
               </button>
-              {aiAttempt && isCanonicalSkill ? (
+              {isLegacyAIFlow ? (
+                aiAttempt ? <button type="button" onClick={() => void commitAIAtomDrafts()} disabled={aiAtomizationBusy || aiDrafts.every((draft) => !draft.included)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"><Save className="h-4 w-4" />Записать в реестр</button>
+                  : <button type="button" onClick={() => void generateAIAtomDrafts()} disabled={aiAtomizationBusy || !aiPrivacyPreview || !aiTransferConfirmed} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"><Sparkles className="h-4 w-4" />Сформировать черновик</button>
+              ) : aiAttempt ? (
                 <>
                   <button type="button" onClick={prepareNextCanonicalModel} disabled={aiAtomizationBusy || aiProviders.length === 0} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border bg-surface px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
                     <RefreshCcw className="h-4 w-4" />
@@ -6184,14 +6328,9 @@ export function AuditPage() {
                     Готово
                   </button>
                 </>
-              ) : aiAttempt ? (
-                <button type="button" onClick={() => void commitAIAtomDrafts()} disabled={aiAtomizationBusy || aiDrafts.every((draft) => !draft.included)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">
-                  {aiAtomizationBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                  Записать в реестр
-                </button>
-              ) : isCanonicalSkill ? (
+              ) : (
                 !canonicalRun ? (
-                  <button type="button" onClick={() => void startCanonicalPreflight()} disabled={aiAtomizationBusy || Boolean(canonicalRun) || !aiSelectedDocumentId || !aiSelectedSkillId} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">
+                  <button type="button" onClick={() => void startCanonicalPreflight()} disabled={aiAtomizationBusy || Boolean(canonicalRun) || !aiSelectedDocumentId || !aiSelectedSkillId || Boolean(isTrustedSkill && selectedAIDocument && isPDFDocument(selectedAIDocument))} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">
                     {aiAtomizationBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
                     Подготовить документ
                   </button>
@@ -6218,11 +6357,7 @@ export function AuditPage() {
                     Новая проверка
                   </button>
                 ) : null
-              ) : (
-                <button type="button" onClick={() => void generateAIAtomDrafts()} disabled={aiAtomizationBusy || !aiSelectedDocumentId || !aiSelectedSkillId || !aiTransferConfirmed || !aiPrivacyPreview} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">
-                  {aiAtomizationBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  Сформировать черновик
-                </button>
+
               )}
             </div>
           </div>
@@ -6235,60 +6370,75 @@ export function AuditPage() {
             </div>
           ) : null}
 
-          {isCanonicalSkill && !aiAttempt ? (
-            <>
               <div className="grid gap-4 sm:grid-cols-2">
                 <label className="flex min-w-0 flex-col gap-1 text-sm font-medium text-foreground">
                   Неизменяемое ТЗ
-                  <select value={aiSelectedDocumentId} onChange={(event) => { setAiSelectedDocumentId(event.target.value); setCanonicalRun(null); setCanonicalAtomizationPreview(null); setAiTransferConfirmed(false) }} disabled={aiAtomizationBusy || Boolean(canonicalRun)} className="min-h-11 w-full min-w-0 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-50 sm:text-sm">
-                    {canonicalEligibleDocuments.length === 0 ? <option value="">Нет подходящего DOCX</option> : null}
+                  <select aria-label="Неизменяемое ТЗ" value={aiSelectedDocumentId} onChange={(event) => selectAIContext(event.target.value, aiSelectedSkillId)} disabled={aiAtomizationBusy} className="min-h-11 w-full min-w-0 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-50 sm:text-sm">
+                    {canonicalEligibleDocuments.length === 0 ? <option value="">{isTrustedSkill ? 'Нет подходящего DOCX' : 'Нет подходящего PDF или DOCX'}</option> : null}
                     {canonicalEligibleDocuments.map((document) => (
-                      <option key={document.id} value={document.id}>{document.display_name}</option>
+                      <option key={document.id} value={document.id}>{document.display_name} · {formatDateTime(document.created_at)} · SHA {document.sha256.slice(0, 12)}</option>
                     ))}
                   </select>
-                  <span className="break-words text-xs font-normal text-muted-foreground">Canonical audit-tz v0.3.0 принимает DOCX. Версия файла фиксируется по SHA-256.</span>
+                  {selectedAIDocument ? <span className="break-all text-xs font-normal text-muted-foreground" title={`SHA-256: ${selectedAIDocument.sha256}`}>{isPDFDocument(selectedAIDocument) ? 'PDF' : 'DOCX'} · {formatDateTime(selectedAIDocument.created_at)} · SHA {selectedAIDocument.sha256}</span> : null}
                 </label>
                 <label className="flex min-w-0 flex-col gap-1 text-sm font-medium text-foreground">
                   Проверенная методика
-                  <select value={aiSelectedSkillId} onChange={(event) => { setAiSelectedSkillId(event.target.value); invalidateAIPrivacyPreview() }} disabled={aiAtomizationBusy || Boolean(canonicalRun) || aiAtomizationSkills.length === 0} className="min-h-11 w-full min-w-0 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-50 sm:text-sm">
+                  <select aria-label="Проверенная методика" value={aiSelectedSkillId} onChange={(event) => selectAIContext(aiSelectedDocumentId, event.target.value)} disabled={aiAtomizationBusy || aiAtomizationSkills.length === 0} className="min-h-11 w-full min-w-0 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-50 sm:text-sm">
+                    {legacyAttemptOpen && aiAttempt && !aiAtomizationSkills.some((skill) => skill.id === aiAttempt.skill_version_id) ? <option value={aiAttempt.skill_version_id}>{aiAttempt.skill_name} · {formatSkillVersion(aiAttempt.skill_version)}</option> : null}
+                    {aiAtomizationSkills.length === 0 ? <option value="">Нет активной методики</option> : null}
                     {aiAtomizationSkills.map((skill) => (
-                      <option key={skill.id} value={skill.id}>{skill.name} · v{skill.version}</option>
+                      <option key={skill.id} value={skill.id}>{skill.name} · {formatSkillVersion(skill.version)}{!skill.version.startsWith('sha256-') ? ` · SHA ${skill.content_sha256.slice(0, 12)}` : ''}</option>
                     ))}
                   </select>
-                  <span className="break-words text-xs font-normal text-muted-foreground">Активная версия прошла hash-проверку и встроенный self-test отдельного runtime.</span>
+                  {selectedAIAtomizationSkill ? <span className="break-all text-xs font-normal text-muted-foreground" title={`SHA-256: ${selectedAIAtomizationSkill.content_sha256}`}>{isTrustedSkill ? '.skill · доверенный runtime' : selectedAIAtomizationSkill.package_format === 'declarative_archive' ? '.skill · методика' : 'JSON · методика'} · SHA {selectedAIAtomizationSkill.content_sha256}</span> : null}
                 </label>
               </div>
 
-              <label className="flex min-w-0 flex-col gap-1 text-sm font-medium text-foreground">
+              {!isLegacyAIFlow ? <label className="flex min-w-0 flex-col gap-1 text-sm font-medium text-foreground">
                 ИИ-подключение для этого прогона
                 <select
+                  aria-label="ИИ-подключение для этого прогона"
                   value={aiSelectedProviderId}
                   onChange={(event) => {
                     setAiSelectedProviderId(event.target.value)
                     setCanonicalAtomizationPreview(null)
                     setAiTransferConfirmed(false)
+                    setAiAtomizationError(null)
+                    setAiAttempt(null)
+                    setAiDrafts([])
+                    setAiPreparingNextModel(Boolean(canonicalRun && ['draft_ready', 'committed'].includes(canonicalRun.status)))
                   }}
                   disabled={aiAtomizationBusy || ['atomization_queued', 'atomizing', 'paused'].includes(canonicalRun?.status ?? '') || aiProviders.length === 0}
                   className="min-h-11 w-full rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-50 sm:text-sm"
                 >
                   {aiProviders.length === 0 ? <option value="">Нет проверенных подключений</option> : null}
+                  {aiProviders.length > 0 && !aiSelectedProviderId ? <option value="">Выберите доступное подключение</option> : null}
                   {aiProviders.map((provider) => {
                     const laneUsed = usedCanonicalModelLanes.has(`${provider.id}:${provider.config_version}:${provider.model_name}`)
                     return (
                       <option key={provider.id} value={provider.id} disabled={laneUsed}>
-                        {provider.display_name} · {provider.model_name}{laneUsed ? ' · реестр уже сформирован' : ''}
+                        {provider.display_name} · {provider.model_name} · конфигурация v{provider.config_version}{laneUsed ? ' · реестр уже сформирован' : ''}
                       </option>
                     )
                   })}
                 </select>
-                <span className="text-xs font-normal text-muted-foreground">Результат точной версии профиля сохранится отдельно и не перезапишет результаты других моделей.</span>
-              </label>
+              </label> : null}
 
+          {legacyAttempts.length > 0 ? <label className="flex min-w-0 flex-col gap-1 text-sm font-medium text-foreground">
+            Прежние черновики
+            <select aria-label="Прежние черновики" value={legacyAttemptOpen ? aiAttempt?.id ?? '' : ''} onChange={(event) => { const attempt = legacyAttempts.find((item) => item.id === event.target.value); if (attempt) openLegacyAttempt(attempt) }} disabled={aiAtomizationBusy} className="min-h-11 w-full min-w-0 rounded-md border border-border bg-surface px-3 text-base text-foreground sm:text-sm">
+              <option value="">Выберите черновик</option>
+              {legacyAttempts.map((attempt) => <option key={attempt.id} value={attempt.id}>{attempt.provider_name} · {attempt.model_name} · {attempt.skill_name} · {formatSkillVersion(attempt.skill_version)} · {formatDateTime(attempt.created_at)}</option>)}
+            </select>
+          </label> : null}
+
+          {!aiAttempt && !isLegacyAIFlow ? (
+            <>
               <section className="rounded-md border border-border bg-surface-soft" aria-label="Этапы canonical atomization">
                 <div className="grid divide-y divide-border sm:grid-cols-3 sm:divide-x sm:divide-y-0">
                   <div className="px-4 py-3">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><CheckCircle2 className="h-4 w-4 text-emerald-600" />1. Runtime</div>
-                    <p className="mt-1 text-xs text-muted-foreground">Пакет и self-test подтверждены</p>
+                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><CheckCircle2 className="h-4 w-4 text-emerald-600" />1. Методика</div>
+                    <p className="mt-1 text-xs text-muted-foreground">{!selectedAIAtomizationSkill ? 'Не выбрана' : isTrustedSkill ? 'Доверенный runtime · self-test пройден' : 'Неизменяемые правила и ссылки · без исполнения кода'}</p>
                   </div>
                   <div className="px-4 py-3">
                     <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -6322,7 +6472,7 @@ export function AuditPage() {
                             : <Lock className="h-4 w-4" />}
                       3. Атомизация
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">ИИ-черновик, проверка человеком и запись в реестр</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Черновики в генеральном реестре · требуют проверки</p>
                   </div>
                 </div>
               </section>
@@ -6453,7 +6603,7 @@ export function AuditPage() {
               ) : (
                 <div className="border-l-2 border-primary bg-primary/5 px-4 py-3 text-sm text-muted-foreground">
                   <div className="font-medium text-foreground">Что получится после нажатия</div>
-                  <p className="mt-1">DPMS локально зафиксирует выбранный DOCX по SHA-256 и подготовит доказуемый набор исходных фрагментов. Содержимое документа на этом этапе не отправляется в интернет.</p>
+                  <p className="mt-1">{isTrustedSkill ? 'DOCX' : 'DOCX или текстовый PDF'} · подготовка без внешнего запроса</p>
                 </div>
               )}
 
@@ -6497,7 +6647,7 @@ export function AuditPage() {
                     />
                     <span>
                       Подтверждаю передачу перечисленных обезличенных данных для формирования черновика атомов.
-                      <span className="mt-1 block text-xs text-muted-foreground">Атомы не попадут в реестр автоматически: сначала вы увидите и проверите полный список.</span>
+                      <span className="mt-1 block text-xs text-muted-foreground">На этапе атомизации результат добавится в генеральный реестр как черновики, без автоматического принятия. На поздних этапах сохранится только модельный реестр.</span>
                     </span>
                   </label>
                 </section>
@@ -6505,28 +6655,6 @@ export function AuditPage() {
             </>
           ) : !aiAttempt ? (
             <>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <label className="flex min-w-0 flex-col gap-1 text-sm font-medium text-foreground">
-                  Неизменяемое ТЗ
-                  <select value={aiSelectedDocumentId} onChange={(event) => { setAiSelectedDocumentId(event.target.value); invalidateAIPrivacyPreview() }} disabled={aiAtomizationBusy} className="min-h-11 w-full min-w-0 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-50 sm:text-sm">
-                    {aiEligibleDocuments.map((document) => (
-                      <option key={document.id} value={document.id}>{document.display_name}</option>
-                    ))}
-                  </select>
-                  <span className="break-words text-xs font-normal text-muted-foreground">Поддерживаются PDF и DOCX. Версия фиксируется по SHA-256.</span>
-                </label>
-                <label className="flex min-w-0 flex-col gap-1 text-sm font-medium text-foreground">
-                  Skill атомизации
-                  <select value={aiSelectedSkillId} onChange={(event) => { setAiSelectedSkillId(event.target.value); invalidateAIPrivacyPreview() }} disabled={aiAtomizationBusy || aiAtomizationSkills.length === 0} className="min-h-11 w-full min-w-0 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-50 sm:text-sm">
-                    {aiAtomizationSkills.length === 0 ? <option value="">Нет активного skill</option> : null}
-                    {aiAtomizationSkills.map((skill) => (
-                      <option key={skill.id} value={skill.id}>{skill.name} · v{skill.version}</option>
-                    ))}
-                  </select>
-                  <span className="break-words text-xs font-normal text-muted-foreground">Используется активная версия, установленная администратором.</span>
-                </label>
-              </div>
-
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
                 <label className="flex flex-col gap-1 text-sm font-medium text-foreground">
                   Номер договора и точные варианты написания
@@ -6599,8 +6727,8 @@ export function AuditPage() {
             <>
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <MetricTile label="Найдено атомов" value={String(aiDrafts.length)} tone="primary" />
-                <MetricTile label={isCanonicalSkill ? 'Сохранено в реестре модели' : 'Будет записано'} value={String(aiDrafts.filter((draft) => draft.included).length)} tone="success" />
-                <MetricTile label="Skill" value={`v${aiAttempt.skill_version}`} hint={aiAttempt.skill_name} />
+                <MetricTile label={isLegacyAIFlow ? "Будет записано" : "Сохранено в реестре модели"} value={String(aiDrafts.filter((draft) => draft.included).length)} tone="success" />
+                <MetricTile label="Skill" value={formatSkillVersion(aiAttempt.skill_version)} hint={aiAttempt.skill_name} />
                 <MetricTile label="Модель" value={aiAttempt.model_name} hint="зафиксирована для попытки" />
               </div>
 
@@ -6624,10 +6752,10 @@ export function AuditPage() {
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
                 <div>
-                  <h3 className="text-sm font-semibold text-foreground">{isCanonicalSkill ? 'Результат выбранной модели' : 'Проверка черновика'}</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">{isCanonicalSkill ? 'Этот снимок неизменяем. Ручная правка выполняется после сравнительного анализа.' : 'Отредактируйте формулировки и исключите неподходящие варианты до публикации.'}</p>
+                  <h3 className="text-sm font-semibold text-foreground">Результат выбранной модели</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">{isLegacyAIFlow ? 'Прежний черновик · изменения еще не записаны в реестр' : 'Неизменяемый результат. Черновики проверяются в генеральном реестре.'}</p>
                 </div>
-                {!isCanonicalSkill ? <label className="inline-flex min-h-10 items-center gap-2 text-sm font-medium text-foreground">
+                {isLegacyAIFlow ? <label className="inline-flex min-h-10 items-center gap-2 text-sm font-medium text-foreground">
                   <input
                     type="checkbox"
                     checked={aiDrafts.length > 0 && aiDrafts.every((draft) => draft.included)}
@@ -6642,7 +6770,8 @@ export function AuditPage() {
                 {aiDrafts.map((draft, index) => (
                   <section key={draft.id} className={cn('px-3 py-4 sm:px-4', !draft.included && 'bg-muted/35 opacity-70')}>
                     <div className="flex items-start gap-3">
-                      {!isCanonicalSkill ? <input type="checkbox" checked={draft.included} onChange={(event) => updateAIAtomDraft(draft.id, 'included', event.target.checked)} className="mt-1 h-5 w-5 shrink-0 rounded border-input text-primary focus:ring-primary" aria-label={`Включить атом ${index + 1}`} /> : null}
+
+                      {isLegacyAIFlow ? <input type="checkbox" checked={draft.included} onChange={(event) => updateAIAtomDraft(draft.id, 'included', event.target.checked)} className="mt-1 h-5 w-5 shrink-0 rounded border-input text-primary focus:ring-primary" aria-label={`Включить атом ${index + 1}`} /> : null}
                       <div className="min-w-0 flex-1 space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <span className="font-mono text-xs font-medium text-muted-foreground">Черновик {index + 1}</span>
@@ -6651,19 +6780,19 @@ export function AuditPage() {
                         <div className="grid gap-3 lg:grid-cols-2">
                           <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground lg:col-span-2">
                             Название атома
-                            <textarea value={draft.title} onChange={(event) => updateAIAtomDraft(draft.id, 'title', event.target.value)} rows={2} disabled={isCanonicalSkill || !draft.included} className="min-h-[72px] resize-y rounded-md border border-border bg-surface px-3 py-2 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
+                            <textarea value={draft.title} onChange={(event) => updateAIAtomDraft(draft.id, 'title', event.target.value)} rows={2} readOnly={!isLegacyAIFlow} disabled={isLegacyAIFlow && !draft.included} className="min-h-[72px] resize-y rounded-md border border-border bg-surface px-3 py-2 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
                           </label>
                           <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
                             Цифровой продукт
-                            <input value={draft.digital_product} onChange={(event) => updateAIAtomDraft(draft.id, 'digital_product', event.target.value)} disabled={isCanonicalSkill || !draft.included} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
+                            <input value={draft.digital_product} onChange={(event) => updateAIAtomDraft(draft.id, 'digital_product', event.target.value)} readOnly={!isLegacyAIFlow} disabled={isLegacyAIFlow && !draft.included} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
                           </label>
                           <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
                             Вид работ
-                            <input value={draft.work_type ?? ''} onChange={(event) => updateAIAtomDraft(draft.id, 'work_type', event.target.value)} disabled={isCanonicalSkill || !draft.included} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
+                            <input value={draft.work_type ?? ''} onChange={(event) => updateAIAtomDraft(draft.id, 'work_type', event.target.value)} readOnly={!isLegacyAIFlow} disabled={isLegacyAIFlow && !draft.included} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
                           </label>
                           <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
                             Тип объекта
-                            <input value={draft.object_type ?? ''} onChange={(event) => updateAIAtomDraft(draft.id, 'object_type', event.target.value)} disabled={isCanonicalSkill || !draft.included} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
+                            <input value={draft.object_type ?? ''} onChange={(event) => updateAIAtomDraft(draft.id, 'object_type', event.target.value)} readOnly={!isLegacyAIFlow} disabled={isLegacyAIFlow && !draft.included} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
                           </label>
                           <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
                             Пункт источника
@@ -6671,7 +6800,7 @@ export function AuditPage() {
                           </label>
                           <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground lg:col-span-2">
                             Комментарий аудитора
-                            <textarea value={draft.notes ?? ''} onChange={(event) => updateAIAtomDraft(draft.id, 'notes', event.target.value)} rows={2} disabled={isCanonicalSkill || !draft.included} className="min-h-[72px] resize-y rounded-md border border-border bg-surface px-3 py-2 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
+                            <textarea value={draft.notes ?? ''} onChange={(event) => updateAIAtomDraft(draft.id, 'notes', event.target.value)} rows={2} readOnly={!isLegacyAIFlow} disabled={isLegacyAIFlow && !draft.included} className="min-h-[72px] resize-y rounded-md border border-border bg-surface px-3 py-2 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
                           </label>
                         </div>
                         <div className="border-l-2 border-border pl-3">
@@ -6697,30 +6826,22 @@ export function AuditPage() {
 
       <DialogShell
         open={comparisonDialogOpen}
-        title={isSingleModelDraft ? 'Подготовка рабочего реестра' : 'Сравнительный анализ моделей'}
-        description={workingAtomRegistryExists
-          ? isSingleModelDraft
-            ? 'Просмотрите сохраненный результат модели. Уже опубликованный рабочий реестр не будет изменен или перезаписан.'
-            : 'Сравните независимые результаты моделей. Уже опубликованный рабочий реестр не будет изменен или перезаписан.'
-          : isSingleModelDraft
-            ? 'Проверьте атомы и их основания. После подтверждения они появятся в рабочей таблице договора как черновики.'
-            : 'Проверьте расхождения, отредактируйте итоговые формулировки и только затем запишите генеральный реестр.'}
+        title={isSingleModelDraft ? 'Проверка результата модели' : 'Сравнительный анализ моделей'}
+        description="Сохраняются только решения сравнения. Генеральный реестр не изменяется."
         sizeClassName="max-w-6xl"
         busy={comparisonBusy}
         onRequestClose={closeComparisonDialog}
         footer={
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <span className="text-xs text-muted-foreground">
-              {workingAtomRegistryExists
-                ? 'Анализ сохранен отдельно. Текущий рабочий реестр остается без изменений.'
-                : `Выбрано ${comparisonDrafts.filter((draft) => draft.included).length} из ${comparisonDrafts.length}. Исходный результат модели сохраняется.`}
+              {comparisonReadOnly ? 'Сохраненное сравнение · только просмотр' : 'Сохраняются только решения сравнения. Генеральный реестр остается без изменений.'}
             </span>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <button type="button" onClick={closeComparisonDialog} disabled={comparisonBusy} className="inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-surface px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">{workingAtomRegistryExists ? 'Закрыть' : 'Отмена'}</button>
-              {!workingAtomRegistryExists ? (
-                <button type="button" onClick={() => void commitModelComparison()} disabled={comparisonBusy || comparisonDrafts.every((draft) => !draft.included)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50">
+              <button type="button" onClick={closeComparisonDialog} disabled={comparisonBusy} className="inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-surface px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">Закрыть</button>
+              {!comparisonReadOnly ? (
+                <button type="button" onClick={() => void commitModelComparison()} disabled={comparisonBusy} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50">
                   {comparisonBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                  {isSingleModelDraft ? 'Записать рабочий реестр' : 'Записать генеральный реестр'}
+                  Сохранить сравнение
                 </button>
               ) : null}
             </div>
@@ -6735,22 +6856,14 @@ export function AuditPage() {
             <div className="grid gap-3 sm:grid-cols-3">
               <MetricTile label={isSingleModelDraft ? 'Источник' : 'Модельных реестров'} value={isSingleModelDraft ? '1 модель' : String(modelComparison.registry_ids.length)} />
               <MetricTile label={isSingleModelDraft ? 'Атомов к проверке' : 'Итоговых кандидатов'} value={String(comparisonDrafts.length)} tone="primary" />
-              <MetricTile
-                label={isSingleModelDraft ? 'С текстовым основанием' : 'Полное согласие'}
-                value={String(isSingleModelDraft
-                  ? comparisonDrafts.filter((draft) => draft.source_refs.length > 0).length
-                  : comparisonDrafts.filter((draft) => draft.agreement_count === draft.registry_count).length)}
-                tone="success"
-              />
+              <MetricTile label="С текстовым основанием" value={String(comparisonDrafts.filter((draft) => draft.source_refs.length > 0).length)} />
             </div>
           ) : null}
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
             <p className="text-xs text-muted-foreground">
-              {isSingleModelDraft
-                ? 'Результат ИИ не считается принятым автоматически. Аудитор выбирает состав рабочего реестра.'
-                : 'Согласие показывает, сколько независимых реестров содержат сопоставимый атом. Оно не заменяет решение аудитора.'}
+              Предложения разных методик не считаются автоматически эквивалентными. Победитель не назначается.
             </p>
-            {!workingAtomRegistryExists ? (
+            {!comparisonReadOnly ? (
               <label className="inline-flex min-h-10 items-center gap-2 text-sm font-medium text-foreground">
                 <input type="checkbox" checked={comparisonDrafts.length > 0 && comparisonDrafts.every((draft) => draft.included)} onChange={(event) => setComparisonDrafts((current) => current.map((draft) => ({ ...draft, included: event.target.checked })))} className="h-5 w-5 rounded border-input text-primary focus:ring-primary" />
                 Выбрать все
@@ -6761,26 +6874,26 @@ export function AuditPage() {
             {comparisonDrafts.map((draft, index) => (
               <section key={draft.id} className={cn('px-3 py-4 sm:px-4', !draft.included && 'bg-muted/35 opacity-70')}>
                 <div className="flex items-start gap-3">
-                  <input type="checkbox" checked={draft.included} onChange={(event) => updateComparisonDraft(draft.id, 'included', event.target.checked)} disabled={workingAtomRegistryExists} className="mt-1 h-5 w-5 shrink-0 rounded border-input text-primary focus:ring-primary disabled:opacity-60" aria-label={`Включить атом ${index + 1} в рабочий реестр`} />
+                  <input type="checkbox" checked={draft.included} onChange={(event) => updateComparisonDraft(draft.id, 'included', event.target.checked)} disabled={comparisonReadOnly} className="mt-1 h-5 w-5 shrink-0 rounded border-input text-primary focus:ring-primary disabled:opacity-60" aria-label={`Включить атом ${index + 1} в сравнение`} />
                   <div className="min-w-0 flex-1 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-mono text-xs text-muted-foreground">{isSingleModelDraft ? 'Атом' : 'Кандидат'} {index + 1}</span>
-                      <span className={cn('rounded px-2 py-1 text-xs font-medium', draft.agreement_count === draft.registry_count ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200' : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200')}>
-                        {isSingleModelDraft ? 'Результат модели' : `Согласие ${draft.agreement_count}/${draft.registry_count}`}
+                      <span className="rounded border border-border px-2 py-1 text-xs text-muted-foreground">
+                        Вариантов: {draft.model_variants.length}
                       </span>
                     </div>
                     <div className="grid gap-3 lg:grid-cols-2">
                       <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground lg:col-span-2">Название атома
-                        <textarea value={draft.title} onChange={(event) => updateComparisonDraft(draft.id, 'title', event.target.value)} rows={2} disabled={!draft.included || workingAtomRegistryExists} className="min-h-[72px] resize-y rounded-md border border-border bg-surface px-3 py-2 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
+                        <textarea value={draft.title} onChange={(event) => updateComparisonDraft(draft.id, 'title', event.target.value)} rows={2} disabled={!draft.included || comparisonReadOnly} className="min-h-[72px] resize-y rounded-md border border-border bg-surface px-3 py-2 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
                       </label>
                       <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">Цифровой продукт
-                        <input value={draft.digital_product} onChange={(event) => updateComparisonDraft(draft.id, 'digital_product', event.target.value)} disabled={!draft.included || workingAtomRegistryExists} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
+                        <input value={draft.digital_product} onChange={(event) => updateComparisonDraft(draft.id, 'digital_product', event.target.value)} disabled={!draft.included || comparisonReadOnly} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
                       </label>
                       <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">Тип объекта
-                        <input value={draft.object_type ?? ''} onChange={(event) => updateComparisonDraft(draft.id, 'object_type', event.target.value)} disabled={!draft.included || workingAtomRegistryExists} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
+                        <input value={draft.object_type ?? ''} onChange={(event) => updateComparisonDraft(draft.id, 'object_type', event.target.value)} disabled={!draft.included || comparisonReadOnly} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
                       </label>
                       <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">Вид работ
-                        <input value={draft.work_type ?? ''} onChange={(event) => updateComparisonDraft(draft.id, 'work_type', event.target.value)} disabled={!draft.included || workingAtomRegistryExists} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
+                        <input value={draft.work_type ?? ''} onChange={(event) => updateComparisonDraft(draft.id, 'work_type', event.target.value)} disabled={!draft.included || comparisonReadOnly} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
                       </label>
                       <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">Пункт источника
                         <input value={draft.source_clause} readOnly className="min-h-11 rounded-md border border-border bg-muted/45 px-3 text-base text-foreground sm:text-sm" />
@@ -6797,12 +6910,25 @@ export function AuditPage() {
                         ))}
                       </div>
                     </div>
+                    <AuditAtomProvenance origins={draft.model_variants.map((variant) => {
+                      const snapshot = modelComparison?.registry_snapshot.find((item) => (item.registry_id ?? item.id) === variant.registry_id)
+                      const registry = snapshot ?? modelRegistries.find((item) => item.id === variant.registry_id)
+                      return {
+                        ...registry, kind: 'ai' as const, label: variant.skill_name ?? registry?.skill_name ?? 'Результат модели',
+                        provider_name: variant.provider_name, model_name: variant.model_name,
+                        source_register_id: variant.registry_id, registry_item_id: variant.registry_item_id,
+                        skill_name: variant.skill_name ?? registry?.skill_name,
+                        skill_version_id: variant.skill_version_id ?? registry?.skill_version_id,
+                        skill_version: variant.skill_version ?? registry?.skill_version,
+                        skill_sha256: variant.skill_sha256 ?? registry?.skill_sha256,
+                      }
+                    })} />
                     <details className="text-xs text-muted-foreground">
                       <summary className="cursor-pointer font-medium text-primary">{isSingleModelDraft ? 'Исходный вариант модели' : `Варианты моделей (${draft.model_variants.length})`}</summary>
                       <div className="mt-2 divide-y divide-border border-y border-border">
                         {draft.model_variants.map((variant) => (
                           <div key={variant.registry_item_id} className="grid gap-1 py-2 sm:grid-cols-[minmax(10rem,0.4fr)_minmax(0,1fr)]">
-                            <span>{variant.provider_name} · <span className="font-mono">{variant.model_name}</span></span>
+                            <span className="break-words">{variant.provider_name} · <span className="font-mono">{variant.model_name}</span><span className="mt-1 block">{variant.skill_name ?? modelRegistries.find((registry) => registry.id === variant.registry_id)?.skill_name ?? 'Методика не указана'}{variant.skill_version ? ` · ${formatSkillVersion(variant.skill_version)}` : ''}</span></span>
                             <span className="text-foreground">{variant.title}</span>
                           </div>
                         ))}

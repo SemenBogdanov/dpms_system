@@ -489,6 +489,12 @@ class AuditAtom(Base):
             unique=True,
             postgresql_where=text("ai_comparison_draft_id IS NOT NULL"),
         ),
+        Index(
+            "uq_audit_atoms_ai_registry_item_id",
+            "ai_registry_item_id",
+            unique=True,
+            postgresql_where=text("ai_registry_item_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -516,6 +522,14 @@ class AuditAtom(Base):
     source_sheet: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_row: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    provenance_json: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'"),
+    )
+    ai_registry_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_ai_model_registry_items.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
     import_batch_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("audit_import_batches.id", ondelete="SET NULL"),

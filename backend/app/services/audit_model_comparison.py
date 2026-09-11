@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from hashlib import sha256
 import json
 import re
@@ -34,34 +33,27 @@ def _normalized_title(value: str) -> str:
 
 
 def _source_ids(item) -> set[str]:
+    # Unit numbers are local to an extractor; different methods may reuse U000001.
     return {
-        str(ref.get("source_unit_id"))
+        json.dumps(
+            [str(ref.get("locator") or ""), str(ref.get("excerpt") or "")],
+            ensure_ascii=False,
+        )
         for ref in (item.source_refs_json or [])
-        if isinstance(ref, dict) and ref.get("source_unit_id")
+        if isinstance(ref, dict) and ref.get("locator") and ref.get("excerpt")
     }
 
 
-def _match_score(item, group: list[tuple[object, object]]) -> float:
-    item_title = _normalized_title(item.title)
+def _comparison_signature(item) -> tuple | None:
     item_sources = _source_ids(item)
-    best = 0.0
-    for _, candidate in group:
-        if item.source_fingerprint == candidate.source_fingerprint:
-            return 1.0
-        title_score = SequenceMatcher(None, item_title, _normalized_title(candidate.title)).ratio()
-        candidate_sources = _source_ids(candidate)
-        union = item_sources | candidate_sources
-        source_score = len(item_sources & candidate_sources) / len(union) if union else 0.0
-        same_object = bool(
-            item.object_type
-            and candidate.object_type
-            and item.object_type.casefold() == candidate.object_type.casefold()
-        )
-        if source_score == 0 and not (title_score >= 0.88 and same_object):
-            continue
-        score = source_score * 0.68 + title_score * 0.27 + (0.05 if same_object else 0.0)
-        best = max(best, score)
-    return best
+    if not item_sources:
+        return None
+    # Preserve case-sensitive identifiers, product scope and verification conditions.
+    fields = ("title", "digital_product", "object_type", "work_type", "notes", "source_clause")
+    return (
+        *(" ".join(str(getattr(item, field, None) or "").split()) for field in fields),
+        tuple(sorted(item_sources)),
+    )
 
 
 def _clean_ref(ref: dict) -> dict | None:
@@ -102,32 +94,25 @@ def build_model_comparison(registries: list[object]) -> list[ModelComparisonDraf
             entries.append((registry, item))
 
     groups: list[list[tuple[object, object]]] = []
+    group_indexes: dict[tuple, list[int]] = {}
+    group_registries: list[set[object]] = []
     for registry, item in entries:
-        best_index: int | None = None
-        best_score = 0.0
-        for index, group in enumerate(groups):
-            if any(existing_registry.id == registry.id for existing_registry, _ in group):
-                continue
-            score = _match_score(item, group)
-            if score >= 0.48 and score > best_score:
-                best_index = index
-                best_score = score
+        signature = _comparison_signature(item)
+        best_index = next((index for index in group_indexes.get(signature, [])
+                           if registry.id not in group_registries[index]), None)
         if best_index is None:
+            best_index = len(groups)
             groups.append([(registry, item)])
+            group_registries.append({registry.id})
+            if signature is not None:
+                group_indexes.setdefault(signature, []).append(best_index)
         else:
             groups[best_index].append((registry, item))
+            group_registries[best_index].add(registry.id)
 
     drafts: list[ModelComparisonDraft] = []
     for index, group in enumerate(groups, start=1):
-        representative_registry, representative = max(
-            group,
-            key=lambda pair: (
-                pair[1].confidence_percent if pair[1].confidence_percent is not None else -1,
-                len(pair[1].source_refs_json or []),
-                -pair[1].sort_order,
-            ),
-        )
-        del representative_registry
+        _, representative = group[0]
         refs: list[dict] = []
         seen_refs: set[tuple[str, str, str]] = set()
         variants: list[dict] = []
@@ -185,11 +170,7 @@ def build_model_comparison(registries: list[object]) -> list[ModelComparisonDraf
                 source_refs=refs,
                 model_variants=variants,
                 source_fingerprint=fingerprint,
-                confidence_percent=(
-                    round(sum(confidence_values) / len(confidence_values))
-                    if confidence_values
-                    else None
-                ),
+                confidence_percent=confidence_values[0] if len(group) == 1 and confidence_values else None,
                 agreement_count=len({str(registry.id) for registry, _ in group}),
                 registry_count=registry_count,
                 sort_order=index * 10,

@@ -191,6 +191,47 @@ export type AuditCommissionResult = 'confirmed' | 'not_confirmed' | 'deferred' |
 export type AuditTeamRole = 'leader' | 'member'
 export type AuditDocumentKind = 'technical_spec' | 'atom_register' | 'audit_result' | 'protocol' | 'other'
 
+export type AuditAtomOriginKind = 'historical_import' | 'manual_register' | 'manual' | 'ai' | 'unknown'
+
+export interface AuditAtomProvenance {
+  kind: AuditAtomOriginKind
+  label?: string | null
+  id?: string | null
+  registry_id?: string | null
+  registry_item_id?: string | null
+  source_register_id?: string | null
+  source_register_created_at?: string | null
+  source_sha256?: string | null
+  historical_effective_at?: string | null
+  canonical_run_id?: string | null
+  attempt_id?: string | null
+  comparison_id?: string | null
+  model_version?: string | null
+  prompt_sha256?: string | null
+  response_sha256?: string | null
+  document_version?: string | null
+  import_batch_id?: string | null
+  legacy_transfer_id?: string | null
+  source_sheet?: string | null
+  source_row?: number | null
+  actor_name?: string | null
+  created_at?: string | null
+  occurred_at?: string | null
+  imported_at?: string | null
+  provider_config_id?: string | null
+  provider_config_version?: number | null
+  provider_name?: string | null
+  model_name?: string | null
+  skill_version_id?: string | null
+  skill_name?: string | null
+  skill_slug?: string | null
+  skill_version?: string | null
+  skill_sha256?: string | null
+  document_id?: string | null
+  document_created_at?: string | null
+  document_sha256?: string | null
+}
+
 export interface AuditAtom {
   id: string
   case_id: string
@@ -209,6 +250,7 @@ export interface AuditAtom {
   source_row: number | null
   source_fingerprint: string | null
   import_batch_id: string | null
+  provenance?: AuditAtomProvenance[]
   alpha_result: AuditAlphaResult | null
   alpha_result_raw: string | null
   alpha_comment: string | null
@@ -423,7 +465,7 @@ export interface AuditAtomizationSkillVersion {
   schema_version: string
   content_sha256: string
   source_filename: string
-  package_format: 'declarative_json' | 'trusted_skill_archive'
+  package_format: 'declarative_json' | 'declarative_archive' | 'trusted_skill_archive'
   package_manifest: Record<string, unknown>
   runtime_status: 'ready' | 'pending_worker' | 'runtime_failed'
   runtime_ready: boolean
@@ -654,6 +696,15 @@ export interface AuditAIModelRegistry {
   provider_config_version: number
   provider_name: string
   model_name: string
+  document_id?: string | null
+  document_sha256?: string | null
+  document_created_at?: string | null
+  published_atom_count?: number
+  skill_version_id?: string | null
+  skill_sha256?: string | null
+  skill_name?: string | null
+  skill_slug?: string | null
+  skill_version?: string | null
   atom_count: number
   coverage_summary: Record<string, number>
   warnings: string[]
@@ -665,11 +716,22 @@ export interface AuditAIModelRegistryList {
   items: AuditAIModelRegistry[]
 }
 
+export interface AuditAIModelRegistryPublishResult {
+  registry_id: string
+  atoms_created: number
+  atom_ids: string[]
+  already_published: boolean
+}
+
 export interface AuditAIModelVariant {
   registry_id: string
   registry_item_id: string
   provider_name: string
   model_name: string
+  skill_version_id?: string | null
+  skill_name?: string | null
+  skill_version?: string | null
+  skill_sha256?: string | null
   title: string
   object_type: string | null
   work_type: string | null
@@ -694,19 +756,21 @@ export interface AuditAIModelComparisonDraft {
 }
 
 export interface AuditAIModelComparison {
+  review_only?: boolean
   id: string
   case_id: string
   canonical_run_id: string
   status: 'draft_ready' | 'committed'
   config_version: number
   registry_ids: string[]
-  registry_snapshot: Array<Record<string, unknown>>
+  registry_snapshot: Array<Partial<AuditAIModelRegistry> & { registry_id?: string }>
   drafts: AuditAIModelComparisonDraft[]
   created_at: string
   committed_at: string | null
 }
 
 export interface AuditAIModelComparisonCommitResult {
+  review_only?: boolean
   comparison_id: string
   case_id: string
   atoms_created: number

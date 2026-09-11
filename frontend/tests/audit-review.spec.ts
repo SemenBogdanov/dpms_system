@@ -485,12 +485,14 @@ test('AI runtime polling never overlaps slow status requests', async ({ page }) 
 
 test('one AI model registry can populate the working atom table', async ({ page }, testInfo) => {
   const state = newState()
-  state.atoms = []
+  state.atoms = state.atoms.map((item) => ({ ...item, state: 'ready', provenance: [{ kind: 'manual' }] }))
+  const originalAtoms = structuredClone(state.atoms)
   const registryId = '77777777-7777-4777-8777-777777777777'
   const comparisonId = '88888888-8888-4888-8888-888888888888'
   const modelAtomCount = 140
   let selectedRegistryIds: string[] = []
   let comparisonCreated = false
+  const writes: Array<{ path: string; body: unknown }> = []
 
   const modelItems = Array.from({ length: modelAtomCount }, (_, index) => {
     const number = index + 1
@@ -520,7 +522,16 @@ test('one AI model registry can populate the working atom table', async ({ page 
     provider_config_version: 1,
     provider_name: 'ROX-1',
     model_name: 'test-model',
+    document_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+    document_sha256: 'a'.repeat(64),
+    document_created_at: '2026-08-24T07:00:00Z',
+    skill_version_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+    skill_name: 'Основная методика',
+    skill_slug: 'audit-methodology',
+    skill_version: `sha256-${'b'.repeat(64)}`,
+    skill_sha256: 'b'.repeat(64),
     atom_count: modelAtomCount,
+    published_atom_count: 0,
     coverage_summary: {},
     warnings: [],
     items: modelItems,
@@ -531,9 +542,10 @@ test('one AI model registry can populate the working atom table', async ({ page 
     case_id: caseId,
     canonical_run_id: registry.canonical_run_id,
     status: 'draft_ready' as 'draft_ready' | 'committed',
+    review_only: true,
     config_version: 1,
     registry_ids: [registryId],
-    registry_snapshot: [],
+    registry_snapshot: [{ ...registry, registry_id: registryId }],
     drafts: modelItems.map((item, index) => ({
       id: `comparison-draft-${index + 1}`,
       title: item.title,
@@ -553,6 +565,10 @@ test('one AI model registry can populate the working atom table', async ({ page 
         registry_item_id: item.id,
         provider_name: registry.provider_name,
         model_name: registry.model_name,
+        skill_version_id: registry.skill_version_id,
+        skill_name: registry.skill_name,
+        skill_version: registry.skill_version,
+        skill_sha256: registry.skill_sha256,
         title: item.title,
         object_type: item.object_type,
         work_type: item.work_type,
@@ -563,11 +579,16 @@ test('one AI model registry can populate the working atom table', async ({ page 
     committed_at: null as string | null,
   }
 
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.routeWebSocket('**/*', (socket) => socket.close())
   await page.addInitScript(() => localStorage.setItem('dpms_token', 'audit-review-test-token'))
   await page.route('**/api/**', async (route: Route) => {
     const request = route.request()
     const method = request.method()
     const path = new URL(request.url()).pathname
+    if (path.startsWith('/api/audit/') && method !== 'GET') {
+      writes.push({ path, body: request.postDataJSON() })
+    }
     const respond = async (body: unknown, status = 200) => route.fulfill({
       status,
       contentType: 'application/json',
@@ -584,6 +605,29 @@ test('one AI model registry can populate the working atom table', async ({ page 
     if (path === `/api/audit/cases/${caseId}/events` && method === 'GET') return respond([])
     if (path === `/api/audit/cases/${caseId}/documents` && method === 'GET') return respond([])
     if (path === `/api/audit/cases/${caseId}/model-registries` && method === 'GET') return respond({ items: [registry] })
+    if (path === `/api/audit/cases/${caseId}/model-registries/${registryId}/publish` && method === 'POST') {
+      const alreadyPublished = registry.published_atom_count === modelAtomCount
+      const publishedAtoms = modelItems.map((item, index) => ({
+        ...atom(`working-atom-${index + 1}`, `ITEM-${String(index + 1).padStart(3, '0')}`, item.title, index + 1),
+        updated_at: registry.created_at,
+        source_evidence_text: item.source_refs[0].excerpt,
+        source_refs_json: item.source_refs,
+        provenance: [{
+          kind: 'ai', source_register_id: registryId, registry_item_id: item.id,
+          provider_name: registry.provider_name, model_name: registry.model_name,
+          skill_name: registry.skill_name, skill_version: registry.skill_version,
+          skill_sha256: registry.skill_sha256,
+        }],
+      }))
+      if (!alreadyPublished) state.atoms.push(...publishedAtoms)
+      registry.published_atom_count = modelAtomCount
+      return respond({
+        registry_id: registryId,
+        atoms_created: alreadyPublished ? 0 : modelAtomCount,
+        atom_ids: publishedAtoms.map((item) => item.id),
+        already_published: alreadyPublished,
+      })
+    }
     if (path === `/api/audit/cases/${caseId}/model-comparisons` && method === 'GET') {
       return respond(comparisonCreated ? [comparison] : [])
     }
@@ -591,23 +635,24 @@ test('one AI model registry can populate the working atom table', async ({ page 
       const body = JSON.parse(request.postData() || '{}') as { registry_ids?: string[] }
       selectedRegistryIds = body.registry_ids ?? []
       comparisonCreated = true
+      comparison.registry_snapshot = [{ ...registry, registry_id: registryId }]
       return respond(comparison, 201)
     }
     if (path === `/api/audit/cases/${caseId}/model-comparisons/${comparisonId}/commit` && method === 'POST') {
-      state.atoms = modelItems.map((item, index) => atom(
-        `working-atom-${index + 1}`,
-        `ITEM-${String(index + 1).padStart(3, '0')}`,
-        item.title,
-        index + 1
-      ))
+      const body = request.postDataJSON() as { drafts: Array<{ id: string; title: string; included: boolean }> }
+      comparison.drafts = comparison.drafts.map((draft) => {
+        const decision = body.drafts.find((item) => item.id === draft.id)
+        return decision ? { ...draft, title: decision.title, review_status: decision.included ? 'committed' : 'rejected' } : draft
+      })
       comparison.status = 'committed'
       comparison.committed_at = '2026-08-24T08:02:00Z'
       return respond({
         comparison_id: comparisonId,
         case_id: caseId,
-        atoms_created: modelAtomCount,
-        atom_ids: state.atoms.map((item) => item.id),
+        atoms_created: 0,
+        atom_ids: [],
         already_committed: false,
+        review_only: true,
       })
     }
     if (path === '/api/audit/team' && method === 'GET') {
@@ -619,21 +664,68 @@ test('one AI model registry can populate the working atom table', async ({ page 
   })
 
   await page.goto(`/audit?view=case&case=${caseId}`)
-  await expect(page.getByRole('heading', { name: 'Модельный реестр готов' })).toBeVisible()
-  await expect(page.getByText(`ИИ сформировал ${modelAtomCount} атомов.`, { exact: false })).toBeVisible()
-  await page.getByRole('button', { name: 'Подготовить рабочий реестр' }).last().click()
+  const modelRegion = page.getByRole('region', { name: 'Модельные реестры', exact: true })
+  const registryCard = modelRegion.locator('details').filter({ has: page.getByLabel('Выбрать реестр ROX-1', { exact: true }) })
+  const generalRegistry = page.getByRole('region', { name: 'Генеральный реестр атомов', exact: true })
+  await registryCard.locator('summary').click()
+  await expect(registryCard).toContainText(`В генеральном: 0/${modelAtomCount}`)
+  await registryCard.getByRole('button', { name: 'Добавить в генеральный реестр' }).click()
+  await expect(registryCard).toContainText(`В генеральном: ${modelAtomCount}/${modelAtomCount}`)
+  await expect(registryCard).toContainText('Результаты уже в генеральном реестре')
+  await expect(registryCard.getByRole('button', { name: 'Добавить в генеральный реестр' })).toHaveCount(0)
+  expect(writes).toEqual([{ path: `/api/audit/cases/${caseId}/model-registries/${registryId}/publish`, body: null }])
+  expect(state.atoms.slice(0, originalAtoms.length)).toEqual(originalAtoms)
+  expect(state.atoms.filter((item) => item.state === 'draft')).toHaveLength(modelAtomCount)
+  await expect(generalRegistry.locator('input[aria-label^="Выбрать атом "]:visible')).toHaveCount(modelAtomCount + originalAtoms.length)
+  await page.reload()
+  await expect(registryCard).toContainText(`В генеральном: ${modelAtomCount}/${modelAtomCount}`)
+  const beforeComparison = structuredClone(casePayload(state))
+  const beforeRegistry = structuredClone(registry)
+  await modelRegion.getByRole('button', { name: 'Рассмотреть результат', exact: true }).click()
 
-  const dialog = page.getByRole('dialog', { name: 'Подготовка рабочего реестра' })
+  const dialog = page.getByRole('dialog', { name: 'Проверка результата модели' })
   await expect(dialog).toBeVisible()
+  await expect(dialog.getByLabel('Название атома')).toHaveCount(modelAtomCount)
   await expect(dialog.getByLabel('Название атома').first()).toHaveValue('Экран списка заявок')
   expect(selectedRegistryIds).toEqual([registryId])
-  await dialog.getByRole('button', { name: 'Записать рабочий реестр' }).click()
+  await dialog.getByLabel('Название атома').first().fill('Решение только в сравнении')
+  await dialog.getByLabel('Название атома').first().scrollIntoViewIfNeeded()
+  await page.screenshot({ path: testInfo.outputPath('single-model-review-only.png'), animations: 'disabled', caret: 'hide' })
+  await dialog.getByRole('button', { name: 'Сохранить сравнение' }).click()
 
   await expect(dialog).toHaveCount(0)
+  expect(casePayload(state)).toEqual(beforeComparison)
+  expect(registry).toEqual(beforeRegistry)
+  expect(comparison.drafts[0].title).toBe('Решение только в сравнении')
+  expect(writes.map((write) => write.path)).toEqual([
+    `/api/audit/cases/${caseId}/model-registries/${registryId}/publish`,
+    `/api/audit/cases/${caseId}/model-comparisons`,
+    `/api/audit/cases/${caseId}/model-comparisons/${comparisonId}/commit`,
+  ])
+  expect(writes[2].body).toMatchObject({
+    expected_config_version: 1,
+    drafts: expect.arrayContaining([expect.objectContaining({
+      id: 'comparison-draft-1', title: 'Решение только в сравнении', included: true,
+    })]),
+  })
   await expect(page.getByRole('button', { name: 'Проверить черновики' })).toBeVisible()
-  await expect(page.locator('input[aria-label="Выбрать атом ITEM-001"]:visible')).toHaveCount(1)
-  await page.getByRole('button', { name: 'Проверить черновики' }).scrollIntoViewIfNeeded()
-  await page.screenshot({ path: testInfo.outputPath('single-model-working-registry.png') })
+  await expect(generalRegistry.locator('input[aria-label^="Выбрать атом "]:visible')).toHaveCount(modelAtomCount + originalAtoms.length)
+  const visibleCodes = await generalRegistry.locator('input[aria-label^="Выбрать атом "]:visible').evaluateAll((inputs) => inputs.map((input) => input.getAttribute('aria-label')).sort())
+  expect(visibleCodes).toEqual(beforeComparison.atoms.map((item) => `Выбрать атом ${item.item_code}`).sort())
+  await expect(registryCard).toContainText(`В генеральном: ${modelAtomCount}/${modelAtomCount}`)
+  await registryCard.locator('summary').click()
+  await expect(registryCard.getByText('Экран списка заявок', { exact: true })).toBeVisible()
+  await registryCard.getByText(`Элемент ${modelAtomCount}`, { exact: true }).scrollIntoViewIfNeeded()
+  await expect(registryCard.getByText(`Элемент ${modelAtomCount}`, { exact: true })).toBeInViewport()
+  await registryCard.locator('summary').click()
+  await page.reload()
+  await expect(registryCard).toContainText(`В генеральном: ${modelAtomCount}/${modelAtomCount}`)
+  await expect(registryCard.getByRole('button', { name: 'Добавить в генеральный реестр' })).toHaveCount(0)
+  await expect(generalRegistry.locator('input[aria-label^="Выбрать атом "]:visible')).toHaveCount(modelAtomCount + originalAtoms.length)
+  expect(writes).toHaveLength(3)
+  expect(casePayload(state)).toEqual(beforeComparison)
+  await modelRegion.scrollIntoViewIfNeeded()
+  await page.screenshot({ path: testInfo.outputPath('single-model-working-registry.png'), animations: 'disabled', caret: 'hide' })
 })
 
 test('late detail response cannot replace the currently selected contract', async ({ page }) => {

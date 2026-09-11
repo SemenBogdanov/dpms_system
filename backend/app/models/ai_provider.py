@@ -145,7 +145,7 @@ class AuditAtomizationSkillVersion(Base):
         ),
         CheckConstraint("schema_version = '1.0'", name="ck_audit_atomization_skill_versions_schema"),
         CheckConstraint(
-            "package_format IN ('declarative_json', 'trusted_skill_archive')",
+            "package_format IN ('declarative_json', 'declarative_archive', 'trusted_skill_archive')",
             name="ck_audit_atomization_skill_versions_package_format",
         ),
         CheckConstraint(
@@ -154,7 +154,7 @@ class AuditAtomizationSkillVersion(Base):
         ),
         CheckConstraint(
             "(package_format = 'declarative_json' AND package_blob IS NULL) OR "
-            "(package_format = 'trusted_skill_archive' AND package_blob IS NOT NULL)",
+            "(package_format IN ('declarative_archive', 'trusted_skill_archive') AND package_blob IS NOT NULL)",
             name="ck_audit_atomization_skill_versions_package_blob",
         ),
         Index(

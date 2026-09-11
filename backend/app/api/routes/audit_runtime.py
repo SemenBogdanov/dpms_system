@@ -31,6 +31,7 @@ from app.models.audit import (
     AuditAIModelComparison,
     AuditAIModelComparisonDraft,
     AuditAIModelRegistry,
+    AuditAIModelRegistryItem,
     AuditAtom,
     AuditDocument,
     AuditEvent,
@@ -46,6 +47,7 @@ from app.schemas.audit_ai import (
     AuditAIModelComparisonStart,
     AuditAIModelRegistryItemRead,
     AuditAIModelRegistryList,
+    AuditAIModelRegistryPublishRead,
     AuditAIModelRegistryRead,
     AuditAIModelVariantRead,
     AuditAIProviderOptionList,
@@ -62,6 +64,11 @@ from app.schemas.audit_runtime import (
 )
 from app.services.ai_provider import AIProviderError, ai_provider_ready, get_ready_ai_provider
 from app.services.audit_import import generate_next_item_code
+from app.services.audit_atom_provenance import (
+    freeze_attempt_atom_origins,
+    lookup_published_registry_items_batch,
+    publish_model_registry_atoms,
+)
 from app.services.audit_model_comparison import build_model_comparison, evidence_text
 from app.services.audit_runtime_crypto import (
     AuditRuntimeCryptoError,
@@ -134,7 +141,14 @@ def _source_refs(raw_refs: list | None) -> list[AuditAISourceRefRead]:
     ]
 
 
-def _registry_read(registry: AuditAIModelRegistry) -> AuditAIModelRegistryRead:
+def _registry_read(
+    registry: AuditAIModelRegistry,
+    *,
+    skill: AuditAtomizationSkill | None = None,
+    version: AuditAtomizationSkillVersion | None = None,
+    document: AuditDocument | None = None,
+    published_atom_count: int = 0,
+) -> AuditAIModelRegistryRead:
     return AuditAIModelRegistryRead(
         id=registry.id,
         case_id=registry.case_id,
@@ -143,6 +157,15 @@ def _registry_read(registry: AuditAIModelRegistry) -> AuditAIModelRegistryRead:
         provider_config_version=registry.provider_config_version,
         provider_name=registry.provider_name,
         model_name=registry.model_name,
+        document_id=registry.document_id,
+        document_sha256=registry.document_sha256,
+        document_created_at=document.created_at if document else None,
+        skill_version_id=registry.skill_version_id,
+        skill_sha256=registry.skill_sha256,
+        skill_name=skill.name if skill else None,
+        skill_slug=skill.slug if skill else None,
+        skill_version=version.version_label if version else None,
+        published_atom_count=published_atom_count,
         atom_count=registry.atom_count,
         coverage_summary={
             str(key): int(value)
@@ -199,6 +222,7 @@ def _comparison_read(comparison: AuditAIModelComparison) -> AuditAIModelComparis
         ],
         created_at=comparison.created_at,
         committed_at=comparison.committed_at,
+        review_only=any(item.get("review_only") is True for item in (comparison.registry_snapshot_json or [])),
     )
 
 
@@ -316,10 +340,11 @@ async def start_canonical_preflight(
     )
     if document is None:
         raise HTTPException(status_code=404, detail="Исходный документ этого аудита не найден")
-    if document.kind != "technical_spec" or Path(document.original_filename).suffix.lower() != ".docx":
+    document_suffix = Path(document.original_filename).suffix.lower()
+    if document.kind != "technical_spec" or document_suffix not in {".docx", ".pdf"}:
         raise HTTPException(
             status_code=422,
-            detail="Canonical preflight поддерживает неизменяемое техническое задание DOCX",
+            detail="Подготовка поддерживает неизменяемое ТЗ в DOCX или текстовом PDF",
         )
     skill_row = (
         await db.execute(
@@ -330,7 +355,9 @@ async def start_canonical_preflight(
             )
             .where(
                 AuditAtomizationSkillVersion.id == body.skill_version_id,
-                AuditAtomizationSkillVersion.package_format == "trusted_skill_archive",
+                AuditAtomizationSkillVersion.package_format.in_(
+                    ["trusted_skill_archive", "declarative_archive", "declarative_json"]
+                ),
                 AuditAtomizationSkillVersion.runtime_status == "ready",
                 AuditAtomizationSkillVersion.is_active.is_(True),
                 AuditAtomizationSkill.is_enabled.is_(True),
@@ -338,8 +365,10 @@ async def start_canonical_preflight(
         )
     ).one_or_none()
     if skill_row is None:
-        raise HTTPException(status_code=409, detail="Активный доверенный skill не готов к запуску")
+        raise HTTPException(status_code=409, detail="Выбранная активная методика не готова к запуску")
     _, skill_version = skill_row
+    if document_suffix == ".pdf" and skill_version.package_format == "trusted_skill_archive":
+        raise HTTPException(status_code=422, detail="Исполняемый audit-tz поддерживает только DOCX; для PDF выберите декларативную методику")
     try:
         digest = document_binding_digest(document.sha256)
         run_key = build_run_key(
@@ -535,7 +564,7 @@ async def start_canonical_atomization(
         raise HTTPException(status_code=503, detail="Изолированный audit-tz runtime отключен")
     if not settings.AUDIT_TZ_EXTERNAL_AI_ENABLED:
         raise HTTPException(status_code=503, detail="Внешняя ИИ-атомизация отключена конфигурацией DPMS")
-    audit_case = await _get_case_or_404(db, case_id)
+    audit_case = await _get_case_or_404(db, case_id, for_update=True)
     await _ensure_case_atom_editor(audit_case, user, db)
     if audit_case.status == "archived":
         raise HTTPException(status_code=409, detail="Архивный аудит нельзя атомизировать")
@@ -636,6 +665,7 @@ async def start_canonical_atomization(
                     status_code=409,
                     detail="Результат предыдущей модели еще не зафиксирован; обновите страницу",
                 )
+        await freeze_attempt_atom_origins(db, existing_attempt)
         await db.execute(
             delete(AuditAIAtomDraft).where(AuditAIAtomDraft.attempt_id == existing_attempt.id)
         )
@@ -1017,7 +1047,62 @@ async def list_audit_model_registries(
     if run_id is not None:
         query = query.where(AuditAIModelRegistry.canonical_run_id == run_id)
     registries = list((await db.scalars(query)).unique().all())
-    return AuditAIModelRegistryList(items=[_registry_read(registry) for registry in registries])
+    if not registries:
+        return AuditAIModelRegistryList(items=[])
+    version_rows = (
+        await db.execute(
+            select(AuditAtomizationSkillVersion, AuditAtomizationSkill)
+            .join(AuditAtomizationSkill, AuditAtomizationSkill.id == AuditAtomizationSkillVersion.skill_id)
+            .where(AuditAtomizationSkillVersion.id.in_({row.skill_version_id for row in registries}))
+        )
+    ).all()
+    versions = {version.id: (version, skill) for version, skill in version_rows}
+    documents = {
+        document.id: document
+        for document in await db.scalars(
+            select(AuditDocument).where(AuditDocument.id.in_({row.document_id for row in registries}))
+        )
+    }
+    published = await lookup_published_registry_items_batch(db, registries)
+    return AuditAIModelRegistryList(items=[
+        _registry_read(
+            registry,
+            version=versions.get(registry.skill_version_id, (None, None))[0],
+            skill=versions.get(registry.skill_version_id, (None, None))[1],
+            document=documents.get(registry.document_id),
+            published_atom_count=len(published.get(registry.id, {})),
+        )
+        for registry in registries
+    ])
+
+
+@router.post(
+    "/cases/{case_id}/model-registries/{registry_id}/publish",
+    response_model=AuditAIModelRegistryPublishRead,
+)
+async def publish_audit_model_registry(
+    case_id: UUID,
+    registry_id: UUID,
+    user: User = Depends(require_audit_workspace_member),
+    db: AsyncSession = Depends(get_db),
+):
+    audit_case = await _get_case_or_404(db, case_id, for_update=True)
+    await _ensure_case_atom_editor(audit_case, user, db)
+    registry = await db.scalar(
+        select(AuditAIModelRegistry)
+        .where(AuditAIModelRegistry.id == registry_id, AuditAIModelRegistry.case_id == case_id)
+        .options(selectinload(AuditAIModelRegistry.items))
+    )
+    if registry is None:
+        raise HTTPException(status_code=404, detail="Модельный реестр не найден в этом договоре")
+    result = await publish_model_registry_atoms(db, registry, user.id)
+    await db.flush()
+    return AuditAIModelRegistryPublishRead(
+        registry_id=registry.id,
+        atoms_created=result.atoms_created,
+        atom_ids=result.atom_ids,
+        already_published=result.atoms_created == 0,
+    )
 
 
 @router.get(
@@ -1054,7 +1139,7 @@ async def create_audit_model_comparison(
     user: User = Depends(require_audit_workspace_member),
     db: AsyncSession = Depends(get_db),
 ):
-    audit_case = await _get_case_or_404(db, case_id)
+    audit_case = await _get_case_or_404(db, case_id, for_update=True)
     await _ensure_case_atom_editor(audit_case, user, db)
     if audit_case.status == "archived":
         raise HTTPException(status_code=409, detail="Архивный аудит нельзя сравнивать")
@@ -1076,29 +1161,37 @@ async def create_audit_model_comparison(
     registries = [by_id[registry_id] for registry_id in body.registry_ids]
     contexts = {
         (
-            registry.canonical_run_id,
             registry.document_id,
-            registry.skill_version_id,
             registry.document_sha256,
-            registry.skill_sha256,
         )
         for registry in registries
     }
     if len(contexts) != 1:
         raise HTTPException(
             status_code=422,
-            detail="Сравнивать можно только результаты одного документа и одной версии методики",
+            detail="Сравнивать можно только результаты одной неизменяемой версии ТЗ; методики и модели могут отличаться",
         )
     lanes = {
         (
             registry.provider_config_id,
             registry.provider_config_version,
             registry.model_name,
+            registry.skill_version_id,
+            registry.skill_sha256,
         )
         for registry in registries
     }
     if len(lanes) != len(registries):
         raise HTTPException(status_code=422, detail="Для сравнения выбраны одинаковые модельные прогоны")
+    skill_rows = (await db.execute(
+        select(AuditAtomizationSkillVersion, AuditAtomizationSkill)
+        .join(AuditAtomizationSkill, AuditAtomizationSkill.id == AuditAtomizationSkillVersion.skill_id)
+        .where(AuditAtomizationSkillVersion.id.in_({row.skill_version_id for row in registries}))
+    )).all()
+    skill_metadata = {
+        version.id: {"skill_name": skill.name, "skill_version": version.version_label}
+        for version, skill in skill_rows
+    }
     snapshots = [
         {
             "registry_id": str(registry.id),
@@ -1106,14 +1199,23 @@ async def create_audit_model_comparison(
             "provider_name": registry.provider_name,
             "provider_config_version": registry.provider_config_version,
             "model_name": registry.model_name,
+            "document_id": str(registry.document_id),
+            "document_sha256": registry.document_sha256,
+            "skill_version_id": str(registry.skill_version_id),
+            "skill_sha256": registry.skill_sha256,
+            **skill_metadata.get(registry.skill_version_id, {}),
             "response_sha256": registry.response_sha256,
             "atom_count": registry.atom_count,
+            "review_only": True,
         }
         for registry in registries
     ]
     comparison_key = sha256(
         json.dumps(
-            sorted(snapshots, key=lambda item: item["registry_id"]),
+            {"algorithm": "exact-evidence-review-v2", "registries": sorted(
+                ({key: value for key, value in item.items() if key not in {"provider_name", "skill_name", "skill_version"}}
+                 for item in snapshots), key=lambda item: item["registry_id"],
+            )},
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -1132,6 +1234,8 @@ async def create_audit_model_comparison(
         raise HTTPException(status_code=422, detail=str(error))
     if not generated:
         raise HTTPException(status_code=422, detail="В выбранных модельных реестрах нет атомов")
+    if len(generated) > 4800:
+        raise HTTPException(status_code=422, detail="Сравнение превышает 4800 предложений; выберите меньше реестров")
     first = registries[0]
     comparison = AuditAIModelComparison(
         case_id=case_id,
@@ -1148,6 +1252,13 @@ async def create_audit_model_comparison(
     db.add(comparison)
     await db.flush()
     for draft in generated:
+        for variant in draft.model_variants:
+            registry = by_id[UUID(variant["registry_id"])]
+            variant.update({
+                "skill_version_id": str(registry.skill_version_id),
+                "skill_sha256": registry.skill_sha256,
+                **skill_metadata.get(registry.skill_version_id, {}),
+            })
         db.add(
             AuditAIModelComparisonDraft(
                 comparison_id=comparison.id,
@@ -1173,11 +1284,7 @@ async def create_audit_model_comparison(
             case_id=case_id,
             actor_id=user.id,
             event_type="ai_model_comparison_ready",
-            message=(
-                "Сформирован черновик рабочего реестра атомов"
-                if len(registries) == 1
-                else "Сформирован черновик генерального реестра атомов"
-            ),
+            message="Подготовлен сравнительный анализ модельных реестров без изменения рабочих атомов",
             payload_json={
                 "comparison_id": str(comparison.id),
                 "registry_ids": [str(registry.id) for registry in registries],
@@ -1221,165 +1328,96 @@ async def commit_audit_model_comparison(
     user: User = Depends(require_audit_workspace_member),
     db: AsyncSession = Depends(get_db),
 ):
-    audit_case = await _get_case_or_404(db, case_id)
+    audit_case = await _get_case_or_404(db, case_id, for_update=True)
     await _ensure_case_atom_editor(audit_case, user, db)
     comparison = await db.scalar(
         select(AuditAIModelComparison)
-        .where(
-            AuditAIModelComparison.id == comparison_id,
-            AuditAIModelComparison.case_id == case_id,
-        )
+        .where(AuditAIModelComparison.id == comparison_id, AuditAIModelComparison.case_id == case_id)
         .with_for_update()
     )
     if comparison is None:
         raise HTTPException(status_code=404, detail="Сравнительный анализ не найден")
-    single_registry = len(comparison.registry_ids_json or []) == 1
-    registry_label = "Рабочий" if single_registry else "Генеральный"
-    registry_source_label = "рабочего" if single_registry else "генерального"
     commit_key = sha256(f"audit-model-comparison:{user.id}:{body.request_id}".encode("utf-8")).hexdigest()
-    drafts = list(
-        (
-            await db.scalars(
-                select(AuditAIModelComparisonDraft)
-                .where(AuditAIModelComparisonDraft.comparison_id == comparison_id)
-                .order_by(
-                    AuditAIModelComparisonDraft.sort_order.asc(),
-                    AuditAIModelComparisonDraft.id.asc(),
-                )
-                .with_for_update()
-            )
-        ).all()
-    )
+    review_payload_hash = sha256(json.dumps({
+        "comparison_id": str(comparison.id), "expected_config_version": body.expected_config_version,
+        "drafts": sorted((item.model_dump(mode="json") for item in body.drafts), key=lambda item: item["id"]),
+    }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    drafts = list(await db.scalars(
+        select(AuditAIModelComparisonDraft)
+        .where(AuditAIModelComparisonDraft.comparison_id == comparison_id)
+        .order_by(AuditAIModelComparisonDraft.sort_order, AuditAIModelComparisonDraft.id)
+        .with_for_update()
+    ))
+    registry_ids = [UUID(str(value)) for value in comparison.registry_ids_json]
     if comparison.status == "committed":
         if comparison.commit_key_hash != commit_key:
-            raise HTTPException(status_code=409, detail=f"{registry_label} реестр уже опубликован")
-        atom_ids = list(
-            (
-                await db.scalars(
-                    select(AuditAtom.id).where(
-                        AuditAtom.ai_comparison_draft_id.in_([draft.id for draft in drafts])
-                    )
-                )
-            ).all()
-        )
+            raise HTTPException(status_code=409, detail="Решения сравнения уже сохранены")
+        saved_hashes = {item.get("review_payload_sha256") for item in comparison.registry_snapshot_json}
+        if saved_hashes != {None} and saved_hashes != {review_payload_hash}:
+            raise HTTPException(status_code=409, detail="Этот запрос уже сохранен с другими решениями сравнения")
+        review_only = any(item.get("review_only") is True for item in comparison.registry_snapshot_json)
+        query = select(AuditAtom.id).where(AuditAtom.case_id == case_id)
+        if review_only:
+            query = query.join(
+                AuditAIModelRegistryItem, AuditAIModelRegistryItem.id == AuditAtom.ai_registry_item_id
+            ).where(AuditAIModelRegistryItem.registry_id.in_(registry_ids))
+        else:
+            query = query.where(AuditAtom.ai_comparison_draft_id.in_([draft.id for draft in drafts]))
+        atom_ids = list(await db.scalars(query))
         return AuditAIModelComparisonCommitRead(
-            comparison_id=comparison.id,
-            case_id=case_id,
-            atoms_created=len(atom_ids),
-            atom_ids=atom_ids,
-            already_committed=True,
+            comparison_id=comparison.id, case_id=case_id, atoms_created=0 if review_only else len(atom_ids),
+            atom_ids=atom_ids, already_committed=True, review_only=review_only,
         )
     if comparison.config_version != body.expected_config_version:
-        raise HTTPException(status_code=409, detail="Сравнение изменилось; обновите его перед публикацией")
-    current_document = await db.get(AuditDocument, comparison.document_id)
-    registry_document_sha = await db.scalar(
-        select(AuditAIModelRegistry.document_sha256)
-        .where(AuditAIModelRegistry.id.in_([UUID(str(item)) for item in comparison.registry_ids_json]))
-        .limit(1)
-    )
+        raise HTTPException(status_code=409, detail="Сравнение изменилось; обновите его перед сохранением")
+    registries = list((await db.scalars(
+        select(AuditAIModelRegistry)
+        .where(AuditAIModelRegistry.case_id == case_id, AuditAIModelRegistry.id.in_(registry_ids))
+        .options(selectinload(AuditAIModelRegistry.items))
+    )).unique().all())
+    document = await db.get(AuditDocument, comparison.document_id)
     if (
-        current_document is None
-        or current_document.case_id != case_id
-        or current_document.sha256 != registry_document_sha
+        len(registries) != len(registry_ids)
+        or document is None
+        or document.case_id != case_id
+        or any(row.document_id != document.id or row.document_sha256 != document.sha256 for row in registries)
     ):
-        raise HTTPException(status_code=409, detail="Исходный документ изменился; сформируйте сравнение заново")
-    existing_atoms = int(
-        await db.scalar(select(func.count(AuditAtom.id)).where(AuditAtom.case_id == case_id)) or 0
-    )
-    if existing_atoms:
-        raise HTTPException(
-            status_code=409,
-            detail="В рабочем реестре уже есть атомы; автоматическое смешивание реестров запрещено",
-        )
-    submitted_by_id = {item.id: item for item in body.drafts}
-    if set(submitted_by_id) != {draft.id for draft in drafts}:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Передайте решение по каждому атому: {registry_label.lower()} реестр должен быть проверен полностью",
-        )
-    first_item_code = await generate_next_item_code(db, case_id)
-    try:
-        next_number = int(first_item_code.rsplit("-", 1)[1])
-    except (IndexError, ValueError):
-        next_number = 1
-    created_atoms: list[AuditAtom] = []
+        raise HTTPException(status_code=409, detail="Исходная версия документа или реестры изменились")
+    submitted = {item.id: item for item in body.drafts}
+    if set(submitted) != {draft.id for draft in drafts}:
+        raise HTTPException(status_code=422, detail="Передайте решение по каждому предложению сравнения")
+
+    # Keep source proposals and human audit results intact; a comparison is a separate review.
     for draft in drafts:
-        submitted = submitted_by_id[draft.id]
-        draft.title = submitted.title
-        draft.digital_product = submitted.digital_product
-        draft.work_type = submitted.work_type
-        draft.object_type = submitted.object_type
-        draft.notes = submitted.notes
-        if not submitted.included:
-            draft.review_status = "rejected"
-            continue
-        atom = AuditAtom(
-            case_id=case_id,
-            item_code=f"ITEM-{next_number:03d}",
-            title=draft.title,
-            digital_product=draft.digital_product,
-            work_type=draft.work_type,
-            object_type=draft.object_type,
-            source_clause=draft.source_clause,
-            source_evidence_text=evidence_text(draft.source_refs_json or []),
-            source_refs_json=list(draft.source_refs_json or []),
-            notes=draft.notes,
-            state="draft",
-            source_sheet=f"{registry_label} ИИ-реестр",
-            source_fingerprint=draft.source_fingerprint,
-            sort_order=next_number * 10,
-            ai_comparison_draft_id=draft.id,
-        )
-        next_number += 1
-        db.add(atom)
-        created_atoms.append(atom)
-        draft.review_status = "committed"
-    await db.flush()
-    for atom in created_atoms:
-        db.add(
-            AuditEvent(
-                case_id=case_id,
-                atom_id=atom.id,
-                actor_id=user.id,
-                event_type="atom_created",
-                message=f"Из {registry_source_label} ИИ-реестра создан атом {atom.item_code}",
-                payload_json={"item_code": atom.item_code, "title": atom.title},
-            )
-        )
+        item = submitted[draft.id]
+        draft.title = item.title
+        draft.digital_product = item.digital_product
+        draft.work_type = item.work_type
+        draft.object_type = item.object_type
+        draft.notes = item.notes
+        draft.review_status = "committed" if item.included else "rejected"
+    atom_ids = list(await db.scalars(
+        select(AuditAtom.id)
+        .join(AuditAIModelRegistryItem, AuditAIModelRegistryItem.id == AuditAtom.ai_registry_item_id)
+        .where(AuditAtom.case_id == case_id, AuditAIModelRegistryItem.registry_id.in_(registry_ids))
+    ))
+    comparison.registry_snapshot_json = [
+        {**item, "review_only": True, "review_payload_sha256": review_payload_hash} for item in comparison.registry_snapshot_json
+    ]
     comparison.status = "committed"
     comparison.commit_key_hash = commit_key
     comparison.committed_by_id = user.id
     comparison.committed_at = datetime.now(timezone.utc)
     comparison.config_version += 1
-    canonical_run = await db.get(AuditTZRun, comparison.canonical_run_id)
-    if canonical_run is not None:
-        canonical_run.status = "committed"
-        canonical_run.current_phase = "general_registry_committed"
-        canonical_run.atom_count = len(created_atoms)
-        canonical_run.finished_at = datetime.now(timezone.utc)
-    audit_case.status = "atomization"
-    if audit_case.workflow_stage != "unassigned":
-        audit_case.workflow_stage = "atomization"
-    db.add(
-        AuditEvent(
-            case_id=case_id,
-            actor_id=user.id,
-            event_type="ai_model_comparison_committed",
-            message=f"{registry_label} реестр атомов проверен и опубликован",
-            payload_json={
-                "comparison_id": str(comparison.id),
-                "atom_count": len(created_atoms),
-            },
-        )
-    )
-    atom_ids = [atom.id for atom in created_atoms]
+    db.add(AuditEvent(
+        case_id=case_id, actor_id=user.id, event_type="ai_model_comparison_reviewed",
+        message="Сохранены решения сравнения; исходные атомы и результаты проверок не изменены",
+        payload_json={"comparison_id": str(comparison.id), "atom_count": len(atom_ids)},
+    ))
     await db.flush()
     return AuditAIModelComparisonCommitRead(
-        comparison_id=comparison.id,
-        case_id=case_id,
-        atoms_created=len(created_atoms),
-        atom_ids=atom_ids,
-        already_committed=False,
+        comparison_id=comparison.id, case_id=case_id, atoms_created=0,
+        atom_ids=list(dict.fromkeys(atom_ids)), already_committed=False, review_only=True,
     )
 
 

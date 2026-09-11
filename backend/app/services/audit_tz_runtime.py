@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -28,14 +28,24 @@ from app.models.audit import (
     AuditAIAtomizationAttempt,
     AuditAIModelRegistry,
     AuditAIModelRegistryItem,
-    AuditAtom,
     AuditCase,
     AuditDocument,
     AuditEvent,
+    AuditTeamMember,
 )
+from app.models.user import User, UserRole
 from app.models.audit_runtime import AuditTZArtifact, AuditTZRun, AuditTZRuntimeJob
 from app.services.ai_provider import AIProviderError
 from app.services.audit_documents import audit_document_path
+from app.services.audit_atom_provenance import publish_model_registry_atoms
+from app.services.audit_declarative_runtime import (
+    NATIVE_PROTOCOL,
+    build_methodology_snapshot,
+    build_native_preflight,
+    is_declarative_skill,
+    validate_native_atomization,
+    validate_native_prompt,
+)
 from app.services.audit_runtime_crypto import AuditRuntimeCryptoError, decrypt_identifiers
 from app.services.audit_skill_package import extract_trusted_skill_archive
 from app.services.audit_tz_atomization import (
@@ -672,6 +682,7 @@ def _copy_source(
     document: AuditDocument,
     *,
     binding_id: str | None = None,
+    allow_pdf: bool = False,
 ) -> Path:
     upload_root = Path(settings.UPLOAD_DIR).expanduser().resolve()
     source = _resolve_without_symlinks(
@@ -680,14 +691,16 @@ def _copy_source(
         code="document_path_invalid",
         message="Путь документа вышел за пределы хранилища",
     )
-    if not source.is_file() or Path(document.original_filename).suffix.lower() != ".docx":
-        raise AuditTZRuntimeError("unsupported_document_type", "Canonical preflight поддерживает DOCX")
+    suffix = Path(document.original_filename).suffix.lower()
+    if not source.is_file() or suffix not in ({".docx", ".pdf"} if allow_pdf else {".docx"}):
+        message = "Декларативная подготовка поддерживает DOCX и текстовые PDF" if allow_pdf else "Canonical preflight поддерживает DOCX"
+        raise AuditTZRuntimeError("unsupported_document_type", message)
     if sha256(source.read_bytes()).hexdigest() != document.sha256:
         raise AuditTZRuntimeError("document_hash_changed", "Контрольная сумма документа изменилась")
     input_dir = _runtime_root() / "inputs" / str(run_id)
     input_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     safe_name = (
-        f"{binding_id}.docx"
+        f"{binding_id}{suffix}"
         if binding_id
         else (Path(document.original_filename).name[:255] or "source.docx")
     )
@@ -802,62 +815,74 @@ async def process_preflight(job_id: UUID, lease_token: str, db_factory) -> None:
         )
 
     run_id, document, version, identifiers, source_binding, actor_id, case_id = snapshots
+    native = is_declarative_skill(version)
     try:
-        skill_root = _skill_directory(version)
+        if native and source_binding != "document_hash":
+            raise AuditTZRuntimeError("runtime_binding_invalid", "Декларативная методика требует привязки к контрольной сумме документа")
+        skill_root = None if native else _skill_directory(version)
         source_path = _copy_source(
             run_id,
             document,
             binding_id=identifiers[0] if source_binding == "document_hash" else None,
+            allow_pdf=native,
         )
         run_dir = _runtime_root() / "runs" / str(run_id)
-        manifest_path = run_dir / "manifest.json"
-        if not manifest_path.exists():
-            await _run_cli(
-                skill_root,
-                "init-run",
-                ["--out", str(run_dir), "--batch-id", f"dpms-{run_id}"],
-                allowed_exit_codes={0},
-            )
-        manifest = _read_json_file(manifest_path)
-        contracts = manifest.get("contracts")
-        if not isinstance(contracts, list):
-            raise AuditTZRuntimeError("runtime_manifest_invalid", "Runtime manifest поврежден")
-        if not contracts:
-            add_args = [
-                "--run",
-                str(run_dir),
-                "--contract-id",
-                identifiers[0],
-                "--source",
-                str(source_path),
-                "--mode",
-                "audit-only",
-                "--contract-key",
-                CONTRACT_KEY,
-            ]
-            for alias in identifiers[1:]:
-                add_args.extend(["--accepted-id", alias])
-            await _run_cli(skill_root, "add-contract", add_args, allowed_exit_codes={0})
-        elif len(contracts) != 1 or contracts[0].get("contract_key") != CONTRACT_KEY:
-            raise AuditTZRuntimeError("runtime_manifest_conflict", "Runtime manifest не соответствует запуску")
-        result = await _run_cli(
-            skill_root,
-            "preflight",
-            ["--run", str(run_dir), "--contract", CONTRACT_KEY],
-            allowed_exit_codes={0, 2},
-        )
-        rows = result.payload.get("results")
-        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
-            raise AuditTZRuntimeError("runtime_protocol_error", "Runtime вернул некорректный preflight")
-        preflight = rows[0]
         identity_path = run_dir / "contracts" / CONTRACT_KEY / "gate" / "identity_report.json"
+        if native:
+            prepared = build_native_preflight(
+                source_path.read_bytes(), run_id=str(run_id), source_sha256=document.sha256,
+                binding_id=identifiers[0], methodology=build_methodology_snapshot(version),
+                source_kind=source_path.suffix.lower().lstrip("."),
+            )
+            contract_dir = run_dir / "contracts" / CONTRACT_KEY
+            _atomic_write_json(identity_path, prepared.identity_report)
+            _atomic_write_json(contract_dir / "gate" / "gated_evidence_bundle.json", prepared.gated_evidence_bundle)
+            _atomic_write_json(contract_dir / "source" / "source_units.json", prepared.source_units)
+            _atomic_write_json(contract_dir / "drafts" / "primary-prompt-packet.json", prepared.prompt_packet)
+            preflight = {"source_unit_count": len(prepared.prompt_packet["source_units"])}
+            passed = True
+        else:
+            manifest_path = run_dir / "manifest.json"
+            if not manifest_path.exists():
+                await _run_cli(
+                    skill_root,
+                    "init-run",
+                    ["--out", str(run_dir), "--batch-id", f"dpms-{run_id}"],
+                    allowed_exit_codes={0},
+                )
+            manifest = _read_json_file(manifest_path)
+            contracts = manifest.get("contracts")
+            if not isinstance(contracts, list):
+                raise AuditTZRuntimeError("runtime_manifest_invalid", "Runtime manifest поврежден")
+            if not contracts:
+                add_args = [
+                    "--run", str(run_dir), "--contract-id", identifiers[0],
+                    "--source", str(source_path), "--mode", "audit-only", "--contract-key", CONTRACT_KEY,
+                ]
+                for alias in identifiers[1:]:
+                    add_args.extend(["--accepted-id", alias])
+                await _run_cli(skill_root, "add-contract", add_args, allowed_exit_codes={0})
+            elif len(contracts) != 1 or contracts[0].get("contract_key") != CONTRACT_KEY:
+                raise AuditTZRuntimeError("runtime_manifest_conflict", "Runtime manifest не соответствует запуску")
+            result = await _run_cli(
+                skill_root, "preflight",
+                ["--run", str(run_dir), "--contract", CONTRACT_KEY], allowed_exit_codes={0, 2},
+            )
+            rows = result.payload.get("results")
+            if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+                raise AuditTZRuntimeError("runtime_protocol_error", "Runtime вернул некорректный preflight")
+            preflight = rows[0]
+            passed = result.exit_code == 0
         report = _read_json_file(identity_path)
         summary = _safe_identity_summary(report, preflight)
         summary["source_binding"] = (
             "document_hash" if source_binding == "document_hash" else "legacy_identifier"
         )
-        passed = result.exit_code == 0 and summary["decision"] == "PASS"
-    except AuditTZRuntimeError as error:
+        if native:
+            summary["runtime_engine"] = NATIVE_PROTOCOL
+            summary["methodology_sha256"] = prepared.prompt_packet["methodology"]["snapshot_sha256"]
+        passed = passed and summary["decision"] == "PASS"
+    except (AuditTZRuntimeError, CanonicalAtomizationError) as error:
         async with db_factory() as db:
             job = await _complete_job(db, job_id, lease_token, status="failed", error_code=error.code)
             run = await db.get(AuditTZRun, job.run_id) if job and job.run_id else None
@@ -912,6 +937,12 @@ async def process_preflight(job_id: UUID, lease_token: str, db_factory) -> None:
                 path=bundle_path,
                 safe_summary={"source_unit_count": run.source_unit_count},
             )
+            if native:
+                await _upsert_artifact(
+                    db, run, kind="primary_prompt",
+                    path=run_dir / "contracts" / CONTRACT_KEY / "drafts" / "primary-prompt-packet.json",
+                    safe_summary={"source_unit_count": run.source_unit_count}, phase="PROMPT_PRIMARY",
+                )
             await _upsert_artifact(
                 db,
                 run,
@@ -1112,6 +1143,29 @@ async def _fail_atomization(
         await db.commit()
 
 
+async def _registry_autoappend_blocker(db: AsyncSession, audit_case: AuditCase, actor_id: UUID | None) -> str | None:
+    """Recheck publication eligibility without discarding the immutable model result."""
+    if audit_case.status == "archived":
+        return "case_archived"
+    if audit_case.workflow_stage not in {"unassigned", "atomization"}:
+        return "case_stage_changed"
+    if actor_id is None:
+        return "initiator_unavailable"
+    actor = await db.scalar(select(User).where(User.id == actor_id).execution_options(populate_existing=True))
+    if actor is None or not actor.is_active:
+        return "initiator_inactive"
+    if actor.role != UserRole.admin and not actor.audit_enabled:
+        return "audit_access_revoked"
+    if actor.role in {UserRole.admin, UserRole.teamlead}:
+        return None
+    membership = await db.scalar(select(AuditTeamMember).where(AuditTeamMember.user_id == actor.id))
+    if membership is None:
+        return "audit_membership_revoked"
+    if membership.role != "leader" and audit_case.responsible_user_id != actor.id:
+        return "atom_editor_permission_revoked"
+    return None
+
+
 async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> None:
     if not settings.AUDIT_TZ_EXTERNAL_AI_ENABLED:
         raise AuditTZRuntimeError(
@@ -1172,31 +1226,50 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
             package_format=version.package_format,
             package_blob=bytes(version.package_blob or b""),
             content_sha256=version.content_sha256,
+            instructions_text=getattr(version, "instructions_text", ""),
+            rules_json=list(getattr(version, "rules_json", None) or []),
         )
+        native = is_declarative_skill(version_snapshot)
+        pinned_prompt_sha256 = None
+        if native:
+            if run.source_binding != "document_hash":
+                raise AuditTZRuntimeError("runtime_binding_invalid", "Декларативная атомизация требует привязки к контрольной сумме документа")
+            pinned_prompt_sha256 = await db.scalar(
+                select(AuditTZArtifact.sha256).where(
+                    AuditTZArtifact.run_id == run.id, AuditTZArtifact.kind == "primary_prompt",
+                )
+            )
         run_id = run.id
         case_id = run.case_id
         actor_id = attempt.requested_by_id
         digital_product = audit_case.digital_product
         stored_results = list(attempt.batch_results_json or [])
+        source_sha256 = run.source_sha256
+        source_kind = Path(document.original_filename).suffix.lower().lstrip(".") if native else "docx"
 
     try:
-        skill_root = _skill_directory(version_snapshot)
+        skill_root = None if native else _skill_directory(version_snapshot)
         run_dir = _runtime_root() / "runs" / str(run_id)
-        await _run_cli(
-            skill_root,
-            "export-prompt",
-            [
-                "--run",
-                str(run_dir),
-                "--contract",
-                CONTRACT_KEY,
-                "--phase",
-                "primary",
-            ],
-            allowed_exit_codes={0},
-        )
+        if not native:
+            await _run_cli(
+                skill_root, "export-prompt",
+                ["--run", str(run_dir), "--contract", CONTRACT_KEY, "--phase", "primary"],
+                allowed_exit_codes={0},
+            )
         prompt_path = run_dir / "contracts" / CONTRACT_KEY / "drafts" / "primary-prompt-packet.json"
         prompt_packet = _read_json_file(prompt_path, max_bytes=MAX_CANONICAL_PACKET_BYTES)
+        if native:
+            if not pinned_prompt_sha256 or _file_sha256(prompt_path) != pinned_prompt_sha256:
+                raise AuditTZRuntimeError("runtime_context_changed", "Зафиксированный артефакт запроса атомизации изменился")
+            validate_native_prompt(
+                prompt_packet, run_id=str(run_id), source_sha256=source_sha256,
+                methodology=build_methodology_snapshot(version_snapshot),
+                source_kind=source_kind,
+            )
+            prompt_packet["provider_context"] = {
+                "id": str(provider_snapshot.id), "config_version": provider_snapshot.config_version,
+                "model_name": provider_snapshot.model_name,
+            }
         batches = build_source_batches(prompt_packet)
         if not batches:
             raise AuditTZRuntimeError("canonical_prompt_invalid", "В ТЗ не найдены фрагменты для атомизации")
@@ -1205,6 +1278,11 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
             for item in stored_results
             if isinstance(item, dict) and isinstance(item.get("batch_index"), int)
         }
+        if native and (
+            len(cached_by_index) != len(stored_results)
+            or not set(cached_by_index).issubset({batch.index for batch in batches})
+        ):
+            raise CanonicalAtomizationError("atomization_checkpoint_invalid", "Индексы сохранённых пакетов атомизации повреждены", status_code=409)
         batch_results = []
         for batch in batches:
             cached = cached_by_index.get(batch.index)
@@ -1220,7 +1298,11 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
             )
             if current_run is None or current_attempt is None or current_attempt.status != "running":
                 raise AuditTZRuntimeError("runtime_context_changed", "Запуск атомизации изменился")
-            current_attempt.prompt_sha256 = str(prompt_packet.get("prompt_packet_hash") or "")[:64]
+            current_attempt.prompt_sha256 = (
+                sha256(json.dumps([batch.payload_hash for batch in batches], separators=(",", ":")).encode("ascii")).hexdigest()
+                if native
+                else str(prompt_packet.get("prompt_packet_hash") or "")[:64]
+            )
             current_run.total_batch_count = len(batches)
             current_run.completed_batch_count = len(batch_results)
             current_run.status = "atomizing"
@@ -1300,27 +1382,23 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
         if await _pause_atomization_if_requested(db_factory, job_id, lease_token):
             return
 
-        assembled = assemble_atomization_result(
+        assembler = validate_native_atomization if native else assemble_atomization_result
+        assembled = assembler(
             prompt_packet,
             [result_by_index[index] for index in sorted(result_by_index)],
             model_name=provider_snapshot.model_name,
         )
         generated_path = run_dir / "contracts" / CONTRACT_KEY / "drafts" / "primary.generated.json"
         _atomic_write_json(generated_path, assembled.package)
-        await _run_cli(
-            skill_root,
-            "validate-atoms",
-            [
-                "--run",
-                str(run_dir),
-                "--contract",
-                CONTRACT_KEY,
-                "--input",
-                str(generated_path),
-            ],
-            allowed_exit_codes={0},
-        )
         validated_path = run_dir / "contracts" / CONTRACT_KEY / "drafts" / "primary.validated.json"
+        if native:
+            _atomic_write_json(validated_path, assembled.package)
+        else:
+            await _run_cli(
+                skill_root, "validate-atoms",
+                ["--run", str(run_dir), "--contract", CONTRACT_KEY, "--input", str(generated_path)],
+                allowed_exit_codes={0},
+            )
         validated_package = _read_json_file(validated_path, max_bytes=MAX_CANONICAL_PACKET_BYTES)
         if len(validated_package.get("atoms") or []) != len(assembled.drafts):
             raise AuditTZRuntimeError("validated_atom_count_mismatch", "Проверенный пакет атомов поврежден")
@@ -1345,6 +1423,13 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
         return
 
     async with db_factory() as db:
+        # Match API/manual writer order: case before job and attempt.
+        audit_case = await db.scalar(
+            select(AuditCase).where(AuditCase.id == case_id)
+            .with_for_update().execution_options(populate_existing=True)
+        )
+        if audit_case is None:
+            return
         active_job = await db.scalar(
             select(AuditTZRuntimeJob)
             .where(
@@ -1376,21 +1461,8 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
             .where(AuditAIAtomizationAttempt.canonical_run_id == run_id)
             .with_for_update()
         )
-        audit_case = await db.get(AuditCase, case_id)
-        current_atoms = int(
-            await db.scalar(select(func.count(AuditAtom.id)).where(AuditAtom.case_id == case_id)) or 0
-        )
         if job is None or run is None or attempt is None or audit_case is None:
             await db.rollback()
-            return
-        if current_atoms:
-            await db.rollback()
-            await _fail_atomization(
-                job_id,
-                lease_token,
-                db_factory,
-                error_code="registry_changed",
-            )
             return
         await db.execute(delete(AuditAIAtomDraft).where(AuditAIAtomDraft.attempt_id == attempt.id))
         for draft in assembled.drafts:
@@ -1464,6 +1536,25 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
                         sort_order=draft.sort_order,
                     )
                 )
+        autoappend_blocker = await _registry_autoappend_blocker(db, audit_case, actor_id)
+        atoms_appended = 0
+        await db.flush()
+        if autoappend_blocker is None:
+            try:
+                # Keep the completed model result even if publication is rejected.
+                async with db.begin_nested():
+                    published = await publish_model_registry_atoms(db, registry, actor_id)
+                    atoms_appended = published.atoms_created
+            except HTTPException as error:
+                if error.status_code not in {403, 404, 409}:
+                    raise
+                autoappend_blocker = f"publication_rejected_{error.status_code}"
+        if autoappend_blocker is not None:
+            db.add(AuditEvent(
+                case_id=case_id, actor_id=actor_id, event_type="audit_tz_registry_publication_skipped",
+                message="Модельный реестр сохранён; автоматическое добавление черновиков пропущено",
+                payload_json={"model_registry_id": str(registry.id), "reason": autoappend_blocker},
+            ))
         run.status = "draft_ready"
         run.current_phase = "human_review"
         run.atom_count = len(assembled.drafts)
@@ -1479,6 +1570,8 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
             "atom_count": run.atom_count,
             "coverage_summary": assembled.coverage_summary,
             "automatic_redaction_count": assembled.redaction_count,
+            "autoappend_blocker": autoappend_blocker,
+            "atoms_appended": atoms_appended,
         })
         run.safe_summary_json = final_summary
         await _upsert_artifact(

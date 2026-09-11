@@ -41,6 +41,7 @@ from app.schemas.audit import (
     AuditAtomBulkStatusRead,
     AuditAtomBulkStatusUpdate,
     AuditAtomRead,
+    AuditAtomOriginKind,
     AuditAtomUpdate,
     AuditAssignmentCellUpdate,
     AuditAssignmentListRead,
@@ -101,13 +102,16 @@ from app.services.audit_documents import (
     stage_audit_document_file,
 )
 from app.services.audit_import import (
-    build_audit_atom_export,
     build_audit_atom_template,
     build_contract_fields,
     commit_audit_import,
     generate_next_item_code,
     preview_audit_import,
     record_audit_event,
+)
+from app.services.audit_atom_provenance import (
+    attempt_origin_snapshot, build_atom_provenance_export, next_atom_number,
+    origin_snapshot, read_audit_atoms, scoped_source_fingerprint,
 )
 from app.services.audit_model_comparison import evidence_text
 from app.services.audit_statistics import (
@@ -390,8 +394,10 @@ async def _serialize_case(
     counts: tuple[int, int, int, int, int, int, int] | None = None,
     responsible: tuple[str | None, str | None] | None = None,
     can_view_contract_reference: bool = False,
+    can_view_provenance_details: bool = False,
 ) -> AuditCaseRead:
     atoms = await _load_atoms(db, audit_case.id) if include_atoms else []
+    atom_reads = await read_audit_atoms(db, atoms, include_private=can_view_provenance_details)
     if counts is None:
         counts = (
             len(atoms),
@@ -437,7 +443,7 @@ async def _serialize_case(
         alpha_passed_count=alpha_passed_count,
         commission_passed_count=commission_passed_count,
         documents_count=documents_count,
-        atoms=[AuditAtomRead.model_validate(atom) for atom in atoms] if include_atoms else [],
+        atoms=atom_reads,
         created_at=audit_case.created_at,
         updated_at=audit_case.updated_at,
     )
@@ -735,6 +741,7 @@ async def get_audit_case(
         await _get_case_or_404(db, case_id),
         include_atoms=True,
         can_view_contract_reference=await _is_audit_team_member(user, db),
+        can_view_provenance_details=user.role == UserRole.admin,
     )
 
 
@@ -958,6 +965,9 @@ async def delete_audit_case(
             "reason": body.reason,
         },
     )
+    # Published atoms RESTRICT deletion of their immutable registry items.
+    # Remove dependants first within the explicitly authorized case deletion.
+    await db.execute(delete(AuditAtom).where(AuditAtom.case_id == case_id))
     await db.execute(delete(AuditCase).where(AuditCase.id == case_id))
     await db.commit()
 
@@ -992,7 +1002,10 @@ async def create_audit_atom(
         raise HTTPException(status_code=409, detail="Код атома уже используется в этом аудите")
     atom_data = body.model_dump(exclude={"item_code"})
     atom_data["system_url"] = _validated_url(atom_data.get("system_url"))
-    atom = AuditAtom(case_id=case_id, item_code=item_code, **atom_data)
+    atom = AuditAtom(
+        case_id=case_id, item_code=item_code,
+        provenance_json=[origin_snapshot("manual")], **atom_data,
+    )
     db.add(atom)
     if audit_case.status in {"draft", "ready"}:
         audit_case.status = "atomization"
@@ -1008,7 +1021,19 @@ async def create_audit_atom(
         message=f"Добавлен атом {atom.item_code}",
         payload_json={"item_code": atom.item_code, "title": atom.title},
     )
-    return AuditAtomRead.model_validate(atom)
+    return (await read_audit_atoms(db, [atom], include_private=user.role == UserRole.admin))[0]
+
+
+@router.get("/cases/{case_id}/atoms", response_model=list[AuditAtomRead])
+async def list_audit_atoms(
+    case_id: UUID,
+    source_kind: AuditAtomOriginKind | None = None,
+    user: User = Depends(require_audit_workspace_member),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_case_or_404(db, case_id)
+    atoms = await read_audit_atoms(db, await _load_atoms(db, case_id), include_private=user.role == UserRole.admin)
+    return [atom for atom in atoms if source_kind is None or any(origin.kind == source_kind for origin in atom.provenance)]
 
 
 @router.patch(
@@ -1087,6 +1112,7 @@ async def export_audit_atoms(
     case_id: UUID,
     user: User = Depends(require_audit_workspace_member),
     db: AsyncSession = Depends(get_db),
+    source_kind: AuditAtomOriginKind | None = None,
 ):
     if user.role != UserRole.admin:
         raise HTTPException(status_code=403, detail="Экспорт генерального реестра доступен только администратору")
@@ -1102,14 +1128,17 @@ async def export_audit_atoms(
     )
     if not atoms:
         raise HTTPException(status_code=409, detail="В этом аудите еще нет атомов для экспорта")
-    content = build_audit_atom_export(audit_case, atoms)
+    atom_reads = await read_audit_atoms(db, atoms, include_private=True)
+    if source_kind:
+        atom_reads = [atom for atom in atom_reads if any(origin.kind == source_kind for origin in atom.provenance)]
+    content = build_atom_provenance_export(audit_case, atom_reads)
     record_audit_event(
         db,
         case_id=case_id,
         actor_id=user.id,
         event_type="atoms_exported",
         message="Администратор выгрузил генеральный реестр атомов",
-        payload_json={"atom_count": len(atoms)},
+        payload_json={"atom_count": len(atom_reads)},
     )
     return Response(
         content=content,
@@ -1313,7 +1342,21 @@ async def update_audit_atom(
                 "alpha_date": atom.alpha_date.isoformat() if atom.alpha_date else None,
             },
         )
-    return AuditAtomRead.model_validate(atom)
+    return (await read_audit_atoms(db, [atom], include_private=user.role == UserRole.admin))[0]
+
+
+@router.get("/cases/{case_id}/atoms/{atom_id}", response_model=AuditAtomRead)
+async def get_audit_atom(
+    case_id: UUID,
+    atom_id: UUID,
+    user: User = Depends(require_audit_workspace_member),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_case_or_404(db, case_id)
+    atom = await db.scalar(select(AuditAtom).where(AuditAtom.id == atom_id, AuditAtom.case_id == case_id))
+    if atom is None:
+        raise HTTPException(status_code=404, detail="Атом аудита не найден")
+    return (await read_audit_atoms(db, [atom], include_private=user.role == UserRole.admin))[0]
 
 
 @router.get("/cases/{case_id}/events", response_model=list[AuditEventRead])
@@ -2356,14 +2399,6 @@ async def preview_ai_atomization_privacy(
 ):
     audit_case = await _get_case_or_404(db, case_id)
     await _ensure_case_atom_editor(audit_case, user, db)
-    atoms_count = int(
-        await db.scalar(select(func.count(AuditAtom.id)).where(AuditAtom.case_id == case_id)) or 0
-    )
-    if atoms_count:
-        raise HTTPException(
-            status_code=409,
-            detail="ИИ-черновик первого slice создается только до появления атомов в реестре",
-        )
     document = await db.scalar(
         select(AuditDocument).where(
             AuditDocument.id == body.document_id,
@@ -2451,6 +2486,23 @@ async def preview_ai_atomization_privacy(
     )
 
 
+@router.get(
+    "/cases/{case_id}/ai-atomization/attempts",
+    response_model=list[AuditAIAtomizationAttemptRead],
+)
+async def list_ai_atomization_attempts(
+    case_id: UUID,
+    _: User = Depends(require_audit_workspace_member),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_case_or_404(db, case_id)
+    attempt_ids = list(await db.scalars(select(AuditAIAtomizationAttempt.id).where(
+        AuditAIAtomizationAttempt.case_id == case_id,
+        AuditAIAtomizationAttempt.canonical_run_id.is_(None),
+    ).order_by(AuditAIAtomizationAttempt.created_at.desc(), AuditAIAtomizationAttempt.id.desc())))
+    return [await _serialize_ai_attempt(db, attempt_id) for attempt_id in attempt_ids]
+
+
 @router.post(
     "/cases/{case_id}/ai-atomization/attempts",
     response_model=AuditAIAtomizationAttemptRead,
@@ -2476,14 +2528,6 @@ async def create_ai_atomization_attempt(
 
     audit_case = await _get_case_or_404(db, case_id)
     await _ensure_case_atom_editor(audit_case, user, db)
-    atoms_count = int(
-        await db.scalar(select(func.count(AuditAtom.id)).where(AuditAtom.case_id == case_id)) or 0
-    )
-    if atoms_count:
-        raise HTTPException(
-            status_code=409,
-            detail="ИИ-черновик первого slice создается только до появления атомов в реестре",
-        )
     document = await db.scalar(
         select(AuditDocument).where(
             AuditDocument.id == body.document_id,
@@ -2704,10 +2748,7 @@ async def create_ai_atomization_attempt(
         and current_provider.config_version == provider_snapshot.config_version
         and current_provider.last_verified_config_version == current_provider.config_version
     )
-    current_atoms_count = int(
-        await db.scalar(select(func.count(AuditAtom.id)).where(AuditAtom.case_id == case_id)) or 0
-    )
-    if not context_valid or current_atoms_count:
+    if not context_valid:
         if locked_attempt is not None and locked_attempt.status == "running":
             locked_attempt.status = "failed"
             locked_attempt.error_code = "context_changed"
@@ -2769,7 +2810,7 @@ async def commit_ai_atomization_attempt(
 ):
     user_id = user.id
     commit_key_hash = _ai_request_hash("audit-ai-commit", user_id, body.request_id)
-    audit_case = await _get_case_or_404(db, case_id)
+    audit_case = await _get_case_or_404(db, case_id, for_update=True)
     await _ensure_case_atom_editor(audit_case, user, db)
     attempt = await db.scalar(
         select(AuditAIAtomizationAttempt)
@@ -2821,23 +2862,17 @@ async def commit_ai_atomization_attempt(
         or current_document.sha256 != attempt.document_sha256
     ):
         raise HTTPException(status_code=409, detail="Исходный документ изменился; запустите атомизацию заново")
-    existing_atoms = int(
-        await db.scalar(select(func.count(AuditAtom.id)).where(AuditAtom.case_id == case_id)) or 0
-    )
-    if existing_atoms:
+    if audit_case.workflow_stage not in {"unassigned", "atomization"}:
         raise HTTPException(
             status_code=409,
-            detail="В реестре уже появились атомы; объединение с ИИ-черновиком требует отдельного review",
+            detail="Верните договор на этап Атомизация перед добавлением ИИ-атомов",
         )
     submitted_by_id = {item.id: item for item in body.drafts}
     if set(submitted_by_id) != {draft.id for draft in drafts}:
         raise HTTPException(status_code=422, detail="Передайте решение по каждому атому ИИ-черновика")
 
-    first_item_code = await generate_next_item_code(db, case_id)
-    try:
-        next_number = int(first_item_code.rsplit("-", 1)[1])
-    except (IndexError, ValueError):
-        next_number = 1
+    next_number = await next_atom_number(db, case_id)
+    provenance = await attempt_origin_snapshot(db, attempt)
     created_atoms: list[AuditAtom] = []
     for draft in drafts:
         submitted = submitted_by_id[draft.id]
@@ -2862,7 +2897,8 @@ async def commit_ai_atomization_attempt(
             notes=draft.notes,
             state="draft",
             source_sheet="ИИ-черновик",
-            source_fingerprint=draft.source_fingerprint,
+            source_fingerprint=scoped_source_fingerprint("ai_attempt", attempt.id, draft.id),
+            provenance_json=[dict(provenance)],
             sort_order=next_number * 10,
             ai_atomization_draft_id=draft.id,
         )

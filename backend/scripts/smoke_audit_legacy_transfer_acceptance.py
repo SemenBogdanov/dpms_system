@@ -142,8 +142,10 @@ async def migrate(engine, results):
 
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
-    heads = ScriptDirectory.from_config(config).get_heads()
-    if len(heads) != 1 or not heads[0].startswith("083"):
+    directory = ScriptDirectory.from_config(config)
+    heads = directory.get_heads()
+    ancestors = {revision.revision for revision in directory.walk_revisions()}
+    if len(heads) != 1 or "083_audit_legacy_transfer" not in ancestors:
         raise Blocked("migration_083_single_head_not_ready")
     # Avoid Alembic fileConfig, which may re-enable SQL/bind-value logging.
     config.config_file_name = None

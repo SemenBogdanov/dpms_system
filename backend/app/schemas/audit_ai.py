@@ -53,7 +53,7 @@ class AuditAtomizationSkillVersionRead(BaseModel):
     schema_version: str
     content_sha256: str
     source_filename: str
-    package_format: Literal["declarative_json", "trusted_skill_archive"] = "declarative_json"
+    package_format: Literal["declarative_json", "declarative_archive", "trusted_skill_archive"] = "declarative_json"
     package_manifest: dict = Field(default_factory=dict)
     runtime_status: Literal["ready", "pending_worker", "runtime_failed"] = "ready"
     runtime_ready: bool = True
@@ -248,6 +248,15 @@ class AuditAIModelRegistryRead(BaseModel):
     provider_config_version: int
     provider_name: str
     model_name: str
+    document_id: UUID | None = None
+    document_sha256: str | None = None
+    document_created_at: datetime | None = None
+    skill_version_id: UUID | None = None
+    skill_sha256: str | None = None
+    skill_name: str | None = None
+    skill_slug: str | None = None
+    skill_version: str | None = None
+    published_atom_count: int = 0
     atom_count: int
     coverage_summary: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
@@ -257,6 +266,13 @@ class AuditAIModelRegistryRead(BaseModel):
 
 class AuditAIModelRegistryList(BaseModel):
     items: list[AuditAIModelRegistryRead] = Field(default_factory=list)
+
+
+class AuditAIModelRegistryPublishRead(BaseModel):
+    registry_id: UUID
+    atoms_created: int
+    atom_ids: list[UUID] = Field(default_factory=list)
+    already_published: bool = False
 
 
 class AuditAIModelComparisonStart(BaseModel):
@@ -275,6 +291,10 @@ class AuditAIModelVariantRead(BaseModel):
     registry_item_id: UUID
     provider_name: str
     model_name: str
+    skill_version_id: UUID | None = None
+    skill_name: str | None = None
+    skill_version: str | None = None
+    skill_sha256: str | None = None
     title: str
     object_type: str | None = None
     work_type: str | None = None
@@ -309,6 +329,7 @@ class AuditAIModelComparisonRead(BaseModel):
     drafts: list[AuditAIModelComparisonDraftRead] = Field(default_factory=list)
     created_at: datetime
     committed_at: datetime | None = None
+    review_only: bool = False
 
 
 class AuditAIModelComparisonCommitItem(BaseModel):
@@ -332,15 +353,14 @@ class AuditAIModelComparisonCommitItem(BaseModel):
 class AuditAIModelComparisonCommit(BaseModel):
     request_id: UUID
     expected_config_version: int = Field(..., ge=1)
-    drafts: list[AuditAIModelComparisonCommitItem] = Field(..., min_length=1, max_length=600)
+    # Up to twelve independently generated registries of at most 400 atoms each.
+    drafts: list[AuditAIModelComparisonCommitItem] = Field(..., min_length=1, max_length=4800)
 
     @model_validator(mode="after")
     def require_comparison_selection(self):
-        if not any(item.included for item in self.drafts):
-            raise ValueError("Выберите хотя бы один атом генерального реестра")
         ids = [item.id for item in self.drafts]
         if len(set(ids)) != len(ids):
-            raise ValueError("Черновик генерального атома передан несколько раз")
+            raise ValueError("Предложение сравнения передано несколько раз")
         return self
 
 
@@ -350,3 +370,4 @@ class AuditAIModelComparisonCommitRead(BaseModel):
     atoms_created: int
     atom_ids: list[UUID] = Field(default_factory=list)
     already_committed: bool = False
+    review_only: bool = False

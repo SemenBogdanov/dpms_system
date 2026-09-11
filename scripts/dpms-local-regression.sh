@@ -75,6 +75,11 @@ step "Audit historical transfer on a disposable PostgreSQL database"
 "${compose[@]}" exec -T \
   -e DPMS_MIGRATION_SMOKE_ALLOW_CREATE_DATABASE=1 \
   backend python scripts/smoke_audit_legacy_transfer_acceptance.py --allow-create-database
+step "Audit multisource with a synthetic skill on a disposable PostgreSQL database"
+"${compose[@]}" exec -T \
+  -e DPMS_MIGRATION_SMOKE_ALLOW_CREATE_DATABASE=1 \
+  -e PYTHONDONTWRITEBYTECODE=1 \
+  backend python -B scripts/smoke_audit_multisource.py --allow-create-database --synthetic-skill
 run_backend_smoke smoke_email_outbox.py
 run_backend_smoke smoke_auth_session.py
 run_backend_smoke smoke_admin_user_audit.py
@@ -108,6 +113,9 @@ npm --prefix frontend run lint
 npm --prefix frontend run build
 
 if [[ "$PROFILE" == "full" ]]; then
+  step "Audit skill selection and registry provenance"
+  (cd frontend && npx playwright test --config tests/audit-skills-provenance.config.ts)
+
   step "Audit historical workbook staging"
   npm --prefix frontend run test:audit-legacy
 

@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.audit import AuditAtom, AuditCase, AuditEvent, AuditImportBatch
 from app.models.user import User
+from app.services.audit_atom_provenance import next_atom_number, origin_snapshot, scoped_source_fingerprint
 from app.services.audit_contract_reference import (
     AuditContractReferenceError,
     encrypt_contract_reference,
@@ -978,14 +979,8 @@ def parse_audit_xlsx_bytes(data: bytes, filename: str | None = None) -> ParsedWo
                 commission_result=commission_result,
                 commission_result_raw=commission_result_raw,
                 commission_date=commission_date,
-                source_fingerprint=build_source_fingerprint(
-                    contract_reference_fingerprint=contract_fingerprint,
-                    digital_product=digital_product,
-                    work_type=work_type,
-                    object_type=object_type,
-                    title=title,
-                    source_clause=source_clause,
-                    source_sheet=source_sheet,
+                source_fingerprint=scoped_source_fingerprint(
+                    "manual_register", sha256, f"{source_sheet}:{source_row}",
                 ),
                 issues=issues,
             )
@@ -994,8 +989,15 @@ def parse_audit_xlsx_bytes(data: bytes, filename: str | None = None) -> ParsedWo
     rows_by_source: dict[str, list[ParsedAuditRow]] = defaultdict(list)
     rows_by_contract: dict[str, list[ParsedAuditRow]] = defaultdict(list)
     for parsed_row in parsed_rows:
-        if parsed_row.source_fingerprint:
-            rows_by_source[parsed_row.source_fingerprint].append(parsed_row)
+        # Retain explicit within-file duplicate validation, not cross-upload merging.
+        semantic_fingerprint = build_source_fingerprint(
+            contract_reference_fingerprint=parsed_row.contract_reference_fingerprint,
+            digital_product=parsed_row.digital_product, work_type=parsed_row.work_type,
+            object_type=parsed_row.object_type, title=parsed_row.title,
+            source_clause=parsed_row.source_clause, source_sheet=parsed_row.source_sheet,
+        )
+        if semantic_fingerprint:
+            rows_by_source[semantic_fingerprint].append(parsed_row)
         if parsed_row.contract_reference_fingerprint:
             rows_by_contract[parsed_row.contract_reference_fingerprint].append(parsed_row)
 
@@ -1044,20 +1046,9 @@ async def parse_audit_upload(upload: UploadFile) -> ParsedWorkbook:
 
 
 async def generate_next_item_code(db: AsyncSession, case_id: uuid.UUID) -> str:
-    result = await db.execute(
-        select(AuditAtom.item_code)
-        .where(AuditAtom.case_id == case_id, AuditAtom.item_code.like("ITEM-%"))
-        .order_by(AuditAtom.item_code.desc())
-        .limit(1)
-    )
-    current = result.scalar_one_or_none()
-    if not current:
-        return "ITEM-001"
-    try:
-        next_number = int(current.split("-")[-1]) + 1
-    except ValueError:
-        next_number = 1
-    return f"ITEM-{next_number:03d}"
+    # All writers serialize numbering on the same parent row.
+    await db.execute(select(AuditCase.id).where(AuditCase.id == case_id).with_for_update())
+    return f"ITEM-{await next_atom_number(db, case_id):03d}"
 
 
 def record_audit_event(
@@ -1112,7 +1103,7 @@ async def _validate_target_case_import(
 ) -> AuditCase:
     query = select(AuditCase).where(AuditCase.id == target_case_id)
     if lock:
-        query = query.with_for_update()
+        query = query.with_for_update().execution_options(populate_existing=True)
     target_case = await db.scalar(query)
     if target_case is None:
         raise HTTPException(status_code=404, detail="Аудит не найден")
@@ -1203,6 +1194,13 @@ async def commit_audit_import(
             lock=True,
         )
 
+    # Lock every existing target in stable order, including multi-case uploads.
+    fingerprints = {row.contract_reference_fingerprint for row in parsed.rows if row.contract_reference_fingerprint}
+    if target_case_id is None and fingerprints:
+        await db.execute(select(AuditCase.id).where(
+            AuditCase.contract_reference_fingerprint.in_(fingerprints),
+        ).order_by(AuditCase.id).with_for_update())
+
     existing_batch_result = await db.execute(
         select(AuditImportBatch).where(AuditImportBatch.sha256 == parsed.sha256)
     )
@@ -1281,6 +1279,8 @@ async def commit_audit_import(
                 select(AuditCase).where(AuditCase.contract_reference_fingerprint == contract_fingerprint)
             )
             case = case_result.scalar_one_or_none()
+        if case is not None and case.status == "archived":
+            raise HTTPException(status_code=409, detail="Нельзя импортировать атомы в архивный аудит")
         case_created = False
         if case is None:
             digital_products = {row.digital_product for row in group_rows if row.digital_product}
@@ -1369,6 +1369,11 @@ async def commit_audit_import(
                 source_row=row.source_row,
                 source_fingerprint=row.source_fingerprint,
                 import_batch_id=batch.id,
+                provenance_json=[origin_snapshot(
+                    "manual_register", source_register_id=batch.id,
+                    source_register_created_at=batch.created_at, source_sha256=parsed.sha256,
+                    source_sheet=row.source_sheet, source_row=row.source_row,
+                )],
                 alpha_result=row.alpha_result,
                 alpha_result_raw=row.alpha_result_raw,
                 alpha_date=row.alpha_date,

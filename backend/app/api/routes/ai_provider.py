@@ -1,11 +1,12 @@
 """Admin API for one OpenAI-compatible AI provider profile."""
 
 from datetime import datetime, timezone
+from hashlib import sha256
 from types import SimpleNamespace
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_role
@@ -156,6 +157,53 @@ async def list_audit_atomization_skills(
     return AuditAtomizationSkillList(items=[_skill_read(skill, version) for skill, version in rows])
 
 
+async def _lock_skill_import(db: AsyncSession, slug: str) -> None:
+    bind = db.get_bind() if hasattr(db, "get_bind") else None
+    if bind is None or bind.dialect.name != "postgresql":
+        return
+    # Row locks cannot serialize the first import of a slug that does not exist yet.
+    lock_id = int.from_bytes(sha256(b"dpms:audit-skill-import\0" + slug.encode("utf-8")).digest()[:8], "big", signed=True)
+    await db.execute(text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": lock_id})
+
+
+async def _ensure_skill_engine_compatible(
+    db: AsyncSession,
+    skill_id: UUID,
+    package_format: str,
+) -> None:
+    compatible_formats = (
+        ("trusted_skill_archive",)
+        if package_format == "trusted_skill_archive"
+        else ("declarative_json", "declarative_archive")
+    )
+    incompatible = await db.scalar(
+        select(AuditAtomizationSkillVersion.id)
+        .where(
+            AuditAtomizationSkillVersion.skill_id == skill_id,
+            AuditAtomizationSkillVersion.package_format.not_in(compatible_formats),
+        )
+        .limit(1)
+    )
+    if incompatible is not None:
+        # Legacy mixed history may continue its active engine, never switch engines.
+        compatible_active = await db.scalar(
+            select(AuditAtomizationSkillVersion.id)
+            .where(
+                AuditAtomizationSkillVersion.skill_id == skill_id,
+                AuditAtomizationSkillVersion.is_active.is_(True),
+                AuditAtomizationSkillVersion.package_format.in_(compatible_formats),
+            )
+            .limit(1)
+        )
+        if compatible_active is not None:
+            return
+        raise HTTPException(
+            status_code=409,
+            detail="Этот slug уже связан с другим движком skill (trusted runtime или declarative). "
+            "Используйте отдельный slug; существующие версии не изменены.",
+        )
+
+
 @router.post(
     "/skills/import",
     response_model=AuditAtomizationSkillVersionRead,
@@ -170,6 +218,7 @@ async def import_audit_atomization_skill(
     package = parse_audit_skill_upload(file.filename or "audit-skill.json", data)
     content_sha256 = package.content_sha256
     admin_id = admin.id
+    await _lock_skill_import(db, package.slug)
     existing_version = await db.scalar(
         select(AuditAtomizationSkillVersion).where(
             AuditAtomizationSkillVersion.content_sha256 == content_sha256
@@ -198,6 +247,7 @@ async def import_audit_atomization_skill(
         db.add(skill)
         await db.flush()
     else:
+        await _ensure_skill_engine_compatible(db, skill.id, package.package_format)
         same_label = await db.scalar(
             select(AuditAtomizationSkillVersion.id).where(
                 AuditAtomizationSkillVersion.skill_id == skill.id,
@@ -301,6 +351,7 @@ async def activate_audit_atomization_skill(
             status_code=409,
             detail=detail,
         )
+    await _ensure_skill_engine_compatible(db, skill.id, version.package_format)
     await db.execute(
         update(AuditAtomizationSkillVersion)
         .where(AuditAtomizationSkillVersion.skill_id == skill.id)

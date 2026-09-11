@@ -24,6 +24,7 @@ AuditAlphaResult = Literal["present", "not_present", "partial", "not_applicable"
 AuditCommissionResult = Literal["confirmed", "not_confirmed", "deferred", "not_applicable"]
 AuditTeamRole = Literal["leader", "member"]
 AuditDocumentKind = Literal["technical_spec", "atom_register", "audit_result", "protocol", "other"]
+AuditAtomOriginKind = Literal["historical_import", "manual_register", "manual", "ai", "unknown"]
 
 
 def _strip_or_none(value):
@@ -149,6 +150,38 @@ class AuditAtomBulkStatusRead(BaseModel):
     atom_ids: list[UUID] = Field(default_factory=list)
 
 
+class AuditAtomOriginRead(BaseModel):
+    kind: AuditAtomOriginKind
+    label: str
+    document_id: UUID | None = None
+    document_sha256: str | None = None
+    document_created_at: datetime | None = None
+    document_version: str | None = None
+    source_register_id: UUID | None = None
+    source_register_created_at: datetime | None = None
+    source_sha256: str | None = None
+    source_sheet: str | None = None
+    source_row: int | None = None
+    legacy_transfer_id: UUID | None = None
+    historical_effective_at: datetime | None = None
+    canonical_run_id: UUID | None = None
+    attempt_id: UUID | None = None
+    registry_item_id: UUID | None = None
+    comparison_id: UUID | None = None
+    provider_config_id: UUID | None = None
+    provider_config_version: int | None = None
+    provider_name: str | None = None
+    model_name: str | None = None
+    model_version: str | None = None
+    skill_version_id: UUID | None = None
+    skill_name: str | None = None
+    skill_slug: str | None = None
+    skill_version: str | None = None
+    skill_sha256: str | None = None
+    prompt_sha256: str | None = None
+    response_sha256: str | None = None
+
+
 class AuditAtomRead(BaseModel):
     id: UUID
     case_id: UUID
@@ -167,6 +200,8 @@ class AuditAtomRead(BaseModel):
     source_row: int | None = None
     source_fingerprint: str | None = None
     import_batch_id: UUID | None = None
+    ai_registry_item_id: UUID | None = None
+    provenance: list[AuditAtomOriginRead] = Field(default_factory=list)
     alpha_result: str | None = None
     alpha_result_raw: str | None = None
     alpha_comment: str | None = None

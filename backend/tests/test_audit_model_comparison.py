@@ -11,7 +11,7 @@ import zipfile
 
 from pydantic import ValidationError
 
-from app.schemas.audit_ai import AuditAIModelComparisonStart
+from app.schemas.audit_ai import AuditAIModelComparisonStart, AuditAIModelComparisonCommit
 from app.services.audit_import import build_audit_atom_export
 from app.services.audit_model_comparison import build_model_comparison
 
@@ -57,7 +57,38 @@ def _registry(*, provider_name: str, model_name: str, items: list[object], minut
 
 
 class AuditModelComparisonTests(unittest.TestCase):
-    def test_comparison_preserves_consensus_and_unique_model_variants(self):
+    def test_review_can_reject_all_proposals_and_exceed_old_600_limit(self):
+        payload = dict(request_id=uuid4(), expected_config_version=1, drafts=[{
+            "id": uuid4(), "title": f"Proposal {index}", "digital_product": "QA", "included": False,
+        } for index in range(800)])
+        review = AuditAIModelComparisonCommit(**payload)
+        self.assertEqual(len(review.drafts), 800)
+        self.assertFalse(any(item.included for item in review.drafts))
+        payload["drafts"].append(payload["drafts"][0])
+        with self.assertRaises(ValidationError):
+            AuditAIModelComparisonCommit(**payload)
+
+    def test_product_scope_and_case_sensitive_identifiers_are_not_merged(self):
+        proposals = [_item(
+            title=title, source_unit_id="U000001", locator="p1", excerpt="Names are case-sensitive.",
+            sort_order=10, confidence=90,
+        ) for title in ("Parameter A", "Parameter a", "Parameter A")]
+        proposals[2].digital_product = "Another product"
+        drafts = build_model_comparison([
+            _registry(provider_name=str(index), model_name="model", items=[item], minute=index)
+            for index, item in enumerate(proposals)
+        ])
+        self.assertEqual(len(drafts), 3)
+
+    def test_large_comparison_keeps_all_independent_proposals(self):
+        registries = [_registry(provider_name=str(number), model_name="model", minute=number, items=[
+            _item(title=f"Proposal {number}:{index}", source_unit_id=f"U{index}", locator=f"p{index}",
+                  excerpt=f"Requirement {number}:{index}", sort_order=index, confidence=90)
+            for index in range(400)
+        ]) for number in range(12)]
+        self.assertEqual(len(build_model_comparison(registries)), 4800)
+
+    def test_comparison_preserves_different_wording_as_separate_proposals(self):
         shared_first = _item(
             title="Экран списка договоров",
             source_unit_id="p-12",
@@ -94,14 +125,62 @@ class AuditModelComparisonTests(unittest.TestCase):
 
         drafts = build_model_comparison(registries)
 
+        self.assertEqual(len(drafts), 3)
+        self.assertTrue(all(draft.agreement_count == 1 for draft in drafts))
+        self.assertEqual({draft.title for draft in drafts}, {
+            shared_first.title, shared_second.title, unique_second.title,
+        })
+        self.assertTrue(all(len(draft.model_variants) == 1 for draft in drafts))
+
+    def test_opposite_requirements_are_not_consensus_even_with_same_fingerprint(self):
+        proposals = [_item(
+            title=title, source_unit_id="U000001", locator="п. 1",
+            excerpt="Правила экспорта определяются правами пользователя.", sort_order=10, confidence=90,
+        ) for title in ("Экспорт разрешен", "Экспорт запрещен")]
+        drafts = build_model_comparison([
+            _registry(provider_name=str(index), model_name="model", items=[item], minute=index)
+            for index, item in enumerate(proposals)
+        ])
         self.assertEqual(len(drafts), 2)
-        shared = next(draft for draft in drafts if draft.agreement_count == 2)
-        unique = next(draft for draft in drafts if draft.agreement_count == 1)
-        self.assertEqual(shared.registry_count, 2)
-        self.assertEqual(len(shared.model_variants), 2)
-        self.assertIn("Система отображает реестр договоров", " ".join(ref["excerpt"] for ref in shared.source_refs))
-        self.assertEqual(unique.title, "Экспорт результата проверки")
-        self.assertEqual(len(unique.model_variants), 1)
+        self.assertTrue(all(draft.agreement_count == 1 for draft in drafts))
+
+    def test_exact_proposals_keep_both_sources_without_averaging_confidence(self):
+        proposals = [_item(
+            title="Экспорт разрешен", source_unit_id=unit, locator="п. 1",
+            excerpt="Система позволяет выгрузить реестр.", sort_order=10, confidence=confidence,
+        ) for unit, confidence in (("U000001", 80), ("p-3", 95))]
+        drafts = build_model_comparison([
+            _registry(provider_name=str(index), model_name="model", items=[item], minute=index)
+            for index, item in enumerate(proposals)
+        ])
+        self.assertEqual(len(drafts), 1)
+        self.assertEqual(drafts[0].agreement_count, 2)
+        self.assertEqual(len(drafts[0].model_variants), 2)
+        self.assertIsNone(drafts[0].confidence_percent)
+
+    def test_local_unit_ids_do_not_match_different_evidence(self):
+        proposals = [_item(
+            title="Экспорт", source_unit_id="U000001", locator=locator,
+            excerpt=text, sort_order=10, confidence=90,
+        ) for locator, text in (("п. 1", "Экспорт списка сотрудников"), ("п. 2", "Экспорт списка договоров"))]
+        drafts = build_model_comparison([
+            _registry(provider_name=str(index), model_name="model", items=[item], minute=index)
+            for index, item in enumerate(proposals)
+        ])
+        self.assertEqual(len(drafts), 2)
+
+    def test_different_conditions_in_notes_are_not_merged(self):
+        proposals = [_item(
+            title="Экспорт", source_unit_id="U000001", locator="п. 1",
+            excerpt="Доступ к экспорту ограничен ролями.", sort_order=10, confidence=90,
+        ) for _ in range(2)]
+        proposals[0].notes = "Только администратор"
+        proposals[1].notes = "Все сотрудники"
+        drafts = build_model_comparison([
+            _registry(provider_name=str(index), model_name="model", items=[item], minute=index)
+            for index, item in enumerate(proposals)
+        ])
+        self.assertEqual(len(drafts), 2)
 
     def test_single_registry_builds_reviewable_working_draft(self):
         item = _item(
