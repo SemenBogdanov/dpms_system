@@ -253,6 +253,8 @@ def install_guards():
 
 
 def upgrade():
+    # Fail safely instead of queuing live requests behind a long users transaction.
+    op.execute("SET LOCAL lock_timeout = '5s'")
     op.add_column("users", sa.Column("audit_calendar_enabled", sa.Boolean(), nullable=False, server_default=sa.false()))
     op.execute("""CREATE TABLE audit_calendar_scopes (
         id uuid PRIMARY KEY, singleton integer NOT NULL UNIQUE CHECK(singleton=1), name varchar(160) NOT NULL,

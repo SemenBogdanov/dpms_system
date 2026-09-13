@@ -101,6 +101,42 @@ class CalendarRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 await conn.execute(sa.text(f'DROP SCHEMA "{self.schema_name}" CASCADE'))
             await self.engine.dispose()
 
+    async def test_migration_lock_timeout_rolls_back_and_allows_retry(self):
+        name = "ac_lock_rehearsal_" + uuid4().hex
+        engine = create_async_engine(self.url, connect_args={"server_settings": {"search_path": name}})
+
+        def upgrade(connection):
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.upgrade()
+
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(sa.text(f'CREATE SCHEMA "{name}"'))
+                await conn.execute(sa.text("CREATE TABLE users(id uuid PRIMARY KEY)"))
+            async with engine.begin() as holder:
+                await holder.execute(sa.text("LOCK TABLE users IN ACCESS SHARE MODE"))
+                started = asyncio.get_running_loop().time()
+                with self.assertRaises(sa.exc.DBAPIError) as error:
+                    async with engine.begin() as conn:
+                        await asyncio.wait_for(conn.run_sync(upgrade), timeout=12)
+                self.assertEqual(error.exception.orig.sqlstate, "55P03")
+                self.assertLess(asyncio.get_running_loop().time() - started, 10)
+            async with engine.begin() as conn:
+                columns = (await conn.execute(sa.text(
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema=:schema AND table_name='users'"
+                ), {"schema": name})).scalars().all()
+                self.assertEqual(columns, ["id"])
+                self.assertIsNone(await conn.scalar(sa.text("SELECT to_regclass('audit_calendar_scopes')")))
+                await conn.run_sync(upgrade)
+                self.assertEqual(await conn.scalar(sa.text("SHOW lock_timeout")), "5s")
+                self.assertEqual(await conn.scalar(sa.text("SELECT count(*) FROM audit_calendar_scopes")), 0)
+            async with engine.begin() as conn:
+                self.assertEqual(await conn.scalar(sa.text("SHOW lock_timeout")), "0")
+        finally:
+            async with engine.begin() as conn:
+                await conn.execute(sa.text(f'DROP SCHEMA IF EXISTS "{name}" CASCADE'))
+            await engine.dispose()
+
     async def call(self, actor, method, *args, import_service=False, **kwargs):
         async with self.sessions.begin() as db:
             cls = imports.CalendarImportService if import_service else service.CalendarService
