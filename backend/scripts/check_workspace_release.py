@@ -18,7 +18,8 @@ async def main():
                 'lichnye-gruppy-zametok-i-kontekst',
                 'lichnaya-zadacha-bystroe-sozdanie',
                 'audit-proverka-istoricheskogo-xlsx',
-                'audit-metodiki-i-istochniki-atomov'
+                'audit-metodiki-i-istochniki-atomov',
+                'kalendar-audita-plan-fakt'
             )
         """))
         transfer_guide_ready = await db.scalar(text("""
@@ -46,8 +47,8 @@ async def main():
             AND (personal_task_id IS NOT NULL OR linked_task_id IS NOT NULL)
         """))
         checks = {
-            "migration_head": revision == "086_audit_skills_registry_guide",
-            "knowledge_articles": article_count == 6,
+            "migration_head": revision == "088_audit_calendar_guide",
+            "knowledge_articles": article_count == 7,
             "legacy_transfer_guide": bool(transfer_guide_ready),
             "note_group_owner_isolation": invalid_note_groups == 0,
             "tracker_organization_owner_isolation": invalid_tracker_groups == 0,
