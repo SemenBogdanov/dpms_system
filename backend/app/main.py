@@ -13,6 +13,7 @@ from app.api.routes import absences, activity, admin, ai_provider, audit, audit_
 from app.api.routes import note_groups
 from app.api.routes import audit_legacy
 from app.api.routes import audit_legacy_transfer
+from app.api.routes import audit_calendar
 from app.database import AsyncSessionLocal
 from app.services.audit_documents import reconcile_staged_audit_documents
 from app.services.audit_synology import synology_session_store
@@ -80,6 +81,7 @@ app.include_router(work_entities.router, prefix="/api/work-entities", tags=["wor
 app.include_router(work_entity_workspace.router, prefix="/api/work-entities", tags=["work-entities"])
 app.include_router(project_cockpit.router, prefix="/api/project-cockpit", tags=["project-cockpit"])
 app.include_router(audit.router, prefix="/api/audit", tags=["audit"])
+app.include_router(audit_calendar.router, prefix="/api/audit-calendar", tags=["audit-calendar"])
 app.include_router(audit_runtime.router, prefix="/api/audit", tags=["audit-runtime"])
 app.include_router(audit_synology.router, prefix="/api/audit/synology", tags=["audit-synology"])
 app.include_router(audit_legacy.router, prefix="/api/audit/legacy-imports", tags=["audit-legacy"])

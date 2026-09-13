@@ -24,6 +24,7 @@ from app.schemas.leagues import LeagueProgress
 from app.services.analytics import get_user_progress, get_run_rate
 from app.services.planning import add_months
 from app.services.leagues import get_league_progress as get_league_progress_svc
+from app.services.sidebar_menu import add_calendar_to_granted_menu
 from app.services.user_admin_audit import (
     TEMPORARY_PASSWORD_EVENT,
     USER_CREATED_EVENT,
@@ -141,6 +142,7 @@ async def create_user(
         can_link_queue_tasks_to_projects=body.can_link_queue_tasks_to_projects,
         feedback_enabled=body.feedback_enabled,
         audit_enabled=body.audit_enabled,
+        audit_calendar_enabled=body.audit_calendar_enabled,
         competency_development_enabled=body.competency_development_enabled,
         competency_constructor_enabled=body.competency_constructor_enabled,
         plan_started_at=now,
@@ -248,6 +250,11 @@ async def update_user(
     if body.audit_enabled is not None:
         revoke_sessions = revoke_sessions or body.audit_enabled != user.audit_enabled
         user.audit_enabled = body.audit_enabled
+    if body.audit_calendar_enabled is not None:
+        if body.audit_calendar_enabled and not user.audit_calendar_enabled:
+            user.sidebar_menu_order = add_calendar_to_granted_menu(user.sidebar_menu_order)
+        revoke_sessions = revoke_sessions or body.audit_calendar_enabled != user.audit_calendar_enabled
+        user.audit_calendar_enabled = body.audit_calendar_enabled
     if body.competency_development_enabled is not None:
         revoke_sessions = (
             revoke_sessions

@@ -13,6 +13,26 @@ class Base(DeclarativeBase):
 
 
 from app.models.user import User
+from app.models.audit_calendar import (
+    AuditCalendarScope,
+    AuditCalendarMember,
+    AuditCalendarGroup,
+    AuditCalendarGroupVersion,
+    AuditCalendarPlan,
+    AuditCalendarPlanParticipant,
+    AuditCalendarFact,
+    AuditCalendarFactParticipant,
+    AuditCalendarAvailability,
+    AuditCalendarAbsence,
+    AuditCalendarNormRevision,
+    AuditCalendarNotice,
+    AuditCalendarEvent,
+    AuditCalendarImportBatch,
+    AuditCalendarImportRow,
+    AuditCalendarImportMapping,
+    AuditCalendarImportApplication,
+    AuditCalendarIdempotency,
+)
 from app.models.catalog import CatalogItem
 from app.models.task import (
     Task,
@@ -117,6 +137,24 @@ from app.models.competency import (
 __all__ = [
     "Base",
     "User",
+    "AuditCalendarScope",
+    "AuditCalendarMember",
+    "AuditCalendarGroup",
+    "AuditCalendarGroupVersion",
+    "AuditCalendarPlan",
+    "AuditCalendarPlanParticipant",
+    "AuditCalendarFact",
+    "AuditCalendarFactParticipant",
+    "AuditCalendarAvailability",
+    "AuditCalendarAbsence",
+    "AuditCalendarNormRevision",
+    "AuditCalendarNotice",
+    "AuditCalendarEvent",
+    "AuditCalendarImportBatch",
+    "AuditCalendarImportRow",
+    "AuditCalendarImportMapping",
+    "AuditCalendarImportApplication",
+    "AuditCalendarIdempotency",
     "CatalogItem",
     "Task",
     "TaskAcceptanceCriterion",

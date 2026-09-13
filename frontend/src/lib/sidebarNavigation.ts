@@ -23,10 +23,10 @@ import {
   Users,
 } from 'lucide-react'
 import type { User } from '@/api/types'
-import { hasAuditAccess, hasDevelopmentAccess, hasFeedbackAccess, hasTaskWorkspaceAccess } from '@/lib/access'
+import { hasAuditAccess, hasAuditCalendarAccess, hasDevelopmentAccess, hasFeedbackAccess, hasTaskWorkspaceAccess } from '@/lib/access'
 
 export type SidebarGroupKey = 'tasks' | 'management' | 'audit' | 'development' | 'feedback' | 'settings' | 'admin'
-export type SidebarSection = 'task' | 'feedback' | 'audit' | 'development' | 'personal' | 'settings' | 'admin'
+export type SidebarSection = 'task' | 'feedback' | 'audit' | 'audit-calendar' | 'development' | 'personal' | 'settings' | 'admin'
 export type SidebarRole = 'executor' | 'teamlead' | 'admin'
 
 export type SidebarNavItem = {
@@ -88,7 +88,7 @@ export const sidebarGroups: SidebarGroupDefinition[] = [
   { key: 'admin', label: 'Админ', icon: Users, placement: 'bottom' },
 ]
 
-export const SIDEBAR_MENU_SCHEMA_VERSION = 8
+export const SIDEBAR_MENU_SCHEMA_VERSION = 9
 
 export const sidebarNav: SidebarNavItem[] = [
   { id: 'personal-tasks', to: '/personal-tasks', label: 'Личные задачи', icon: ListChecks, section: 'personal', group: 'tasks' },
@@ -108,6 +108,7 @@ export const sidebarNav: SidebarNavItem[] = [
   { id: 'absences', to: '/absences', label: 'Отсутствия', icon: CalendarDays, section: 'task', group: 'management', roles: ['teamlead', 'admin'] },
   { id: 'work-entities', to: '/work-entities', label: 'Проекты и цели', icon: Network, section: 'task', group: 'management' },
   { id: 'audit', to: '/audit', label: 'Аудит', icon: ClipboardCheck, section: 'audit', group: 'audit' },
+  { id: 'audit-calendar', to: '/audit-calendar', label: 'Календарь аудита', icon: CalendarDays, section: 'audit-calendar', group: 'audit' },
   { id: 'competencies', to: '/competencies', label: 'Развитие', icon: BookOpenCheck, section: 'development', group: 'development' },
   { id: 'feedback', to: '/feedback', label: 'Обратная связь', icon: MessageSquare, section: 'feedback', group: 'feedback' },
   { id: 'settings', to: '/settings', label: 'Настройки', icon: Settings, section: 'settings', group: 'settings' },
@@ -241,6 +242,7 @@ export function normalizeSidebarOrder(order?: SidebarOrderInput): SidebarOrder {
       : version < 5
         ? ['messages']
         : []
+  if (version < 9) requiredBackfillItemIds.push('audit-calendar')
   for (const itemId of requiredBackfillItemIds) {
     if (assignedItemIds.has(itemId)) continue
     const navItem = navById.get(itemId)
@@ -325,6 +327,7 @@ export function visibleSidebarNav(user: User | null) {
     if (item.section === 'task' && !hasTaskWorkspaceAccess(user)) return false
     if (item.section === 'feedback' && !hasFeedbackAccess(user)) return false
     if (item.section === 'audit' && !hasAuditAccess(user)) return false
+    if (item.section === 'audit-calendar' && !hasAuditCalendarAccess(user)) return false
     if (item.section === 'development' && !hasDevelopmentAccess(user)) return false
     if (item.section === 'personal') return true
     if (item.section === 'settings') return true

@@ -6,12 +6,14 @@ import { ThemedToaster } from '@/components/ThemedToaster'
 import { AuthProvider } from '@/contexts/AuthContext'
 import { ThemeProvider } from '@/contexts/ThemeProvider'
 import { installClientDiagnostics } from '@/lib/clientDiagnostics'
+import { installAuditCalendarNavigationGuard } from '@/lib/auditCalendarNavigation'
 import '@/components/PersonalTaskFormNavigation'
 import App from './App'
 import '@fontsource-variable/victor-mono'
 import './index.css'
 
 installClientDiagnostics()
+installAuditCalendarNavigationGuard()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

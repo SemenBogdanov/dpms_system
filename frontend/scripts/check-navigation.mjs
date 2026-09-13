@@ -24,6 +24,7 @@ const expectedItems = [
   ['absences', '/absences', 'Отсутствия', 'management'],
   ['work-entities', '/work-entities', 'Проекты и цели', 'management'],
   ['audit', '/audit', 'Аудит', 'audit'],
+  ['audit-calendar', '/audit-calendar', 'Календарь аудита', 'audit'],
   ['competencies', '/competencies', 'Развитие', 'development'],
   ['feedback', '/feedback', 'Обратная связь', 'feedback'],
   ['settings', '/settings', 'Настройки', 'settings'],
@@ -46,6 +47,7 @@ const accessGuardChecks = [
   ["task sections use task workspace access", "item.section === 'task' && !hasTaskWorkspaceAccess(user)"],
   ["feedback section uses feedback access", "item.section === 'feedback' && !hasFeedbackAccess(user)"],
   ["audit section uses audit access", "item.section === 'audit' && !hasAuditAccess(user)"],
+  ["audit calendar uses its independent grant", "item.section === 'audit-calendar' && !hasAuditCalendarAccess(user)"],
   ["development section uses development access", "item.section === 'development' && !hasDevelopmentAccess(user)"],
   ["personal tools remain available", "item.section === 'personal'"],
   ["settings remain available", "item.section === 'settings'"],
@@ -80,8 +82,8 @@ for (const [path, label] of expectedInternalRoutes) {
 
 const payloadVersionMatch = sidebarSource.match(/SIDEBAR_MENU_SCHEMA_VERSION\s*=\s*(\d+)/)
 const payloadVersion = payloadVersionMatch ? Number(payloadVersionMatch[1]) : 0
-if (payloadVersion < 8) {
-  errors.push(`sidebar menu payload version must be >= 8, got ${payloadVersion || 'unknown'}`)
+if (payloadVersion < 9) {
+  errors.push(`sidebar menu payload version must be >= 9, got ${payloadVersion || 'unknown'}`)
 }
 
 if (!sidebarSource.includes('version: SIDEBAR_MENU_SCHEMA_VERSION')) {
@@ -94,6 +96,10 @@ if (!sidebarSource.includes("version < 7 && !uniqueGroups.some((group) => group.
 
 if (!sidebarSource.includes("requiredSidebarItemIds = new Set(['messages'])")) {
   errors.push('Messages must remain a required, reorderable sidebar item')
+}
+
+if (!sidebarSource.includes("if (version < 9) requiredBackfillItemIds.push('audit-calendar')")) {
+  errors.push('calendar must be discoverable for saved menus created before version 9')
 }
 
 if (!appSource.includes('<Route index element={<Navigate to="/messages" replace />} />')) {

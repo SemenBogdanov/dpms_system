@@ -121,6 +121,7 @@ export interface User {
   can_link_queue_tasks_to_projects: boolean
   feedback_enabled: boolean
   audit_enabled: boolean
+  audit_calendar_enabled: boolean
   competency_development_enabled: boolean
   competency_constructor_enabled: boolean
   plan_started_at: string | null

@@ -43,6 +43,7 @@ def _user_to_read(user: User) -> AuthenticatedUserRead:
         can_link_queue_tasks_to_projects=user.can_link_queue_tasks_to_projects,
         feedback_enabled=user.feedback_enabled,
         audit_enabled=user.audit_enabled,
+        audit_calendar_enabled=user.audit_calendar_enabled,
         competency_development_enabled=user.competency_development_enabled,
         competency_constructor_enabled=user.competency_constructor_enabled,
         is_active=user.is_active,

@@ -22,6 +22,7 @@ class UserBase(BaseModel):
     can_link_queue_tasks_to_projects: bool = False
     feedback_enabled: bool = False
     audit_enabled: bool = False
+    audit_calendar_enabled: bool = False
     competency_development_enabled: bool = True
     competency_constructor_enabled: bool = False
     is_active: bool = True
@@ -40,6 +41,7 @@ class UserCreate(BaseModel):
     can_link_queue_tasks_to_projects: bool = False
     feedback_enabled: bool = False
     audit_enabled: bool = False
+    audit_calendar_enabled: bool = False
     competency_development_enabled: bool = True
     competency_constructor_enabled: bool = False
 
@@ -65,6 +67,7 @@ class UserUpdate(BaseModel):
     can_link_queue_tasks_to_projects: bool | None = None
     feedback_enabled: bool | None = None
     audit_enabled: bool | None = None
+    audit_calendar_enabled: bool | None = None
     competency_development_enabled: bool | None = None
     competency_constructor_enabled: bool | None = None
 

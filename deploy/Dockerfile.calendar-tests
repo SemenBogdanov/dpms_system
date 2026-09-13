@@ -1,0 +1,4 @@
+FROM dpms-calendar-backend-candidate
+COPY backend/requirements-test.txt /tmp/requirements-calendar-tests.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-calendar-tests.txt
+ENV PYTHONDONTWRITEBYTECODE=1

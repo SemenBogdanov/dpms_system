@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "eslint . && npm run smoke:navigation && npm run smoke:mobile-readiness",
+    "lint": "eslint . && npm run smoke:navigation && npm run smoke:mobile-readiness && npm run smoke:audit-calendar-access",
+    "smoke:audit-calendar-access": "node scripts/check-audit-calendar-access.mjs",
+    "test:audit-calendar": "npm run build && playwright test --config playwright.audit-calendar.config.ts",
     "smoke:navigation": "node scripts/check-navigation.mjs",
     "smoke:mobile-readiness": "node scripts/check-mobile-readiness.mjs",
     "test:mobile": "npm run build && playwright test --config playwright.mobile.config.ts",

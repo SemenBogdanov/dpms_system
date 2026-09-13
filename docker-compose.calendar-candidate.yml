@@ -1,0 +1,31 @@
+services:
+  backend:
+    image: dpms-calendar-backend-candidate
+    build: ./backend
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8004:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dpms_user:dpms_pass@dpms-local-db-1:5432/dpms_calendar_v5_candidate
+      PYTHONDONTWRITEBYTECODE: "1"
+      UPLOAD_DIR: /tmp/calendar-uploads
+      AUDIT_TZ_WORKER_ENABLED: "false"
+      AUDIT_TZ_EXTERNAL_AI_ENABLED: "false"
+      EMAIL_DELIVERY_MODE: console
+      PUBLIC_APP_URL: http://localhost:5177
+    restart: unless-stopped
+    networks: [local]
+  frontend:
+    image: dpms-calendar-frontend-candidate
+    build: ./frontend
+    ports:
+      - "127.0.0.1:5177:5173"
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:8000
+    depends_on: [backend]
+    restart: unless-stopped
+    networks: [local]
+networks:
+  local:
+    external: true
+    name: dpms-local_default

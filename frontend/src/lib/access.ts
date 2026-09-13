@@ -16,6 +16,10 @@ export function hasAuditAccess(user: User | null | undefined) {
   return user?.role === 'admin' || Boolean(user?.audit_enabled)
 }
 
+export function hasAuditCalendarAccess(user: User | null | undefined) {
+  return Boolean(user?.audit_calendar_enabled)
+}
+
 export function firstAvailablePath(user: User | null | undefined) {
   if (!user) return '/login'
   return '/messages'

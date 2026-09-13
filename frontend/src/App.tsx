@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import {
   firstAvailablePath,
   hasAuditAccess,
+  hasAuditCalendarAccess,
   hasDevelopmentAccess,
   hasFeedbackAccess,
   hasTaskWorkspaceAccess,
@@ -82,6 +83,7 @@ const CompetenciesPage = lazyPage(() => import('@/pages/CompetenciesPage'), 'Com
 const SettingsPage = lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage')
 const WorkEntitiesPage = lazyPage(() => import('@/pages/WorkEntitiesPage'), 'WorkEntitiesPage')
 const AuditPage = lazyPage(() => import('@/pages/AuditPage'), 'AuditPage')
+const AuditCalendarPage = lazyPage(() => import('@/pages/AuditCalendarPage'), 'AuditCalendarPage')
 const ContactsPage = lazyPage(() => import('@/pages/ContactsPage'), 'ContactsPage')
 const MessagesPage = lazyPage(() => import('@/pages/MessagesPage'), 'MessagesPage')
 const QuickNotesPage = lazyPage(() => import('@/pages/QuickNotesPage'), 'QuickNotesPage')
@@ -150,6 +152,14 @@ function CompetenciesAccessRoute({ children }: { children: ReactElement }) {
   return children
 }
 
+function AuditCalendarAccessRoute({ children }: { children: ReactElement }) {
+  const { user } = useAuth()
+  if (!hasAuditCalendarAccess(user)) {
+    return <Navigate to={firstAvailablePath(user)} replace />
+  }
+  return children
+}
+
 function NoAccessPage() {
   return (
     <div className="mx-auto flex min-h-[60vh] max-w-xl flex-col justify-center">
@@ -207,6 +217,7 @@ function App() {
         <Route path="deadline-trackers" element={<DeadlineTrackersPage />} />
         <Route path="work-entities" element={<TaskWorkspaceRoute><WorkEntitiesPage /></TaskWorkspaceRoute>} />
         <Route path="audit" element={<AuditAccessRoute><AuditPage /></AuditAccessRoute>} />
+        <Route path="audit-calendar" element={<AuditCalendarAccessRoute><AuditCalendarPage /></AuditCalendarAccessRoute>} />
         <Route path="shop" element={<TaskWorkspaceRoute><ShopPage /></TaskWorkspaceRoute>} />
         <Route
           path="feedback"

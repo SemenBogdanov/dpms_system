@@ -4,3 +4,6 @@ dist
 *.log
 .env.local
 .env.*.local
+test-results
+playwright-report
+tests

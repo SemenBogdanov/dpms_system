@@ -25,6 +25,8 @@ export function useProtectedModal<T extends HTMLElement>(active = true): RefObje
 
     const focusFrame = window.requestAnimationFrame(() => {
       const panel = panelRef.current
+      // Do not steal focus if the user already entered the dialog before this frame.
+      if (panel?.contains(document.activeElement)) return
       const coarsePointer = window.matchMedia('(pointer: coarse)').matches
       const preferred = coarsePointer ? null : panel?.querySelector<HTMLElement>('[autofocus]')
       const first = panel?.querySelector<HTMLElement>(focusableSelector)

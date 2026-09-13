@@ -1,6 +1,7 @@
 """Permission-aware projection for imported sidebar layouts."""
 
 from collections.abc import Iterable
+from copy import deepcopy
 
 from app.models.user import User, UserRole
 from app.schemas.user import (
@@ -31,7 +32,7 @@ TASK_WORKSPACE_ITEM_IDS = frozenset(
 )
 TASK_MANAGER_ITEM_IDS = frozenset({"calculator", "dashboard", "reports", "absences"})
 TASK_ADMIN_ITEM_IDS = frozenset({"calibration"})
-FEATURE_ITEM_IDS = frozenset({"audit", "competencies", "feedback"})
+FEATURE_ITEM_IDS = frozenset({"audit", "audit-calendar", "competencies", "feedback"})
 
 CUSTOMIZABLE_SIDEBAR_ITEM_IDS = frozenset(
     PERSONAL_ITEM_IDS
@@ -42,6 +43,36 @@ CUSTOMIZABLE_SIDEBAR_ITEM_IDS = frozenset(
 )
 KNOWN_NON_CUSTOMIZABLE_ITEM_IDS = frozenset({"settings", "admin-users"})
 REQUIRED_ITEM_ID = "messages"
+
+
+def add_calendar_to_granted_menu(order: dict | None) -> dict | None:
+    """Restore the new section on explicit grant, including already-v9 layouts."""
+    if not order or not isinstance(order.get("groups"), list) or not order["groups"]:
+        return order
+    result = deepcopy(order)
+    groups = result["groups"]
+    if any(not isinstance(group, (str, dict)) for group in groups):
+        return order
+    legacy = result.get("items") if isinstance(result.get("items"), dict) else {}
+    for group in groups:
+        group_id = group if isinstance(group, str) else group.get("id", group.get("key"))
+        items = legacy.get(group_id, []) if isinstance(group, str) else group.get("item_ids", group.get("itemIds", legacy.get(group_id, [])))
+        if isinstance(items, list) and "audit-calendar" in items:
+            return order
+    target_index = next((i for i, group in enumerate(groups)
+                         if group == "audit" or isinstance(group, dict) and group.get("id", group.get("key")) == "audit"), 0)
+    target = groups[target_index]
+    if isinstance(target, str):
+        items = legacy.get(target, [])
+        legacy[target] = [*(items if isinstance(items, list) else []), "audit-calendar"]
+        result["items"] = legacy
+    elif isinstance(target, dict):
+        group_id = target.get("id", target.get("key"))
+        items = target.get("item_ids", target.get("itemIds", legacy.get(group_id, [])))
+        target["item_ids"] = [*(items if isinstance(items, list) else []), "audit-calendar"]
+        if group_id in legacy:
+            legacy[group_id] = target["item_ids"]
+    return result
 
 
 def _role_value(user: User) -> str:
@@ -64,6 +95,8 @@ def accessible_sidebar_item_ids(user: User) -> frozenset[str]:
 
     if role == UserRole.admin.value or bool(user.audit_enabled):
         allowed.add("audit")
+    if bool(user.audit_calendar_enabled):
+        allowed.add("audit-calendar")
     if (
         role == UserRole.admin.value
         or bool(user.competency_development_enabled)

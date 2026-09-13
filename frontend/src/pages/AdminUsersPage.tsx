@@ -7,6 +7,7 @@ import { LeagueBadge } from '@/components/LeagueBadge'
 import { UserModal, type UserFormPayload } from '@/components/UserModal'
 import { UserAdminHistoryModal } from '@/components/UserAdminHistoryModal'
 import { AdminStorageQuotaRequestsPanel } from '@/components/AdminStorageQuotaRequestsPanel'
+import { AuditCalendarAdminPanel } from '@/components/audit-calendar/AuditCalendarAdminPanel'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
 import { Copy, History, KeyRound, Pencil, PlugZap, Plus, RotateCcw, Trash2, UserPlus, Users } from 'lucide-react'
@@ -243,6 +244,7 @@ export function AdminUsersPage() {
         can_link_queue_tasks_to_projects: payload.can_link_queue_tasks_to_projects,
         feedback_enabled: payload.feedback_enabled,
         audit_enabled: payload.audit_enabled,
+        audit_calendar_enabled: payload.audit_calendar_enabled,
         competency_development_enabled: payload.competency_development_enabled,
         competency_constructor_enabled: payload.competency_constructor_enabled,
       })
@@ -259,6 +261,7 @@ export function AdminUsersPage() {
         can_link_queue_tasks_to_projects: payload.can_link_queue_tasks_to_projects,
         feedback_enabled: payload.feedback_enabled,
         audit_enabled: payload.audit_enabled,
+        audit_calendar_enabled: payload.audit_calendar_enabled,
         competency_development_enabled: payload.competency_development_enabled,
         competency_constructor_enabled: payload.competency_constructor_enabled,
         password: payload.password,
@@ -314,6 +317,7 @@ export function AdminUsersPage() {
           can_link_queue_tasks_to_projects: false,
           feedback_enabled: false,
           audit_enabled: false,
+          audit_calendar_enabled: false,
           competency_development_enabled: true,
           competency_constructor_enabled: false,
           password,
@@ -406,6 +410,9 @@ export function AdminUsersPage() {
       </span>
       <span className={accessBadgeClass(u.audit_enabled, 'bg-amber-50 text-amber-700')}>
         Аудит: {u.audit_enabled ? 'вкл' : 'выкл'}
+      </span>
+      <span className={accessBadgeClass(u.audit_calendar_enabled, 'bg-sky-50 text-sky-700')}>
+        Календарь: {u.audit_calendar_enabled ? 'вкл' : 'выкл'}
       </span>
       <span className={accessBadgeClass(u.competency_development_enabled, 'bg-blue-50 text-blue-700')}>
         Развитие: {u.competency_development_enabled ? 'вкл' : 'выкл'}
@@ -582,6 +589,7 @@ export function AdminUsersPage() {
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Задачи</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">ОС</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Аудит</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Календарь</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Развитие</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Действия</th>
               </tr>
@@ -664,6 +672,11 @@ export function AdminUsersPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
+                    <span className={accessBadgeClass(u.audit_calendar_enabled, 'bg-sky-50 text-sky-700')}>
+                      {u.audit_calendar_enabled ? 'Вкл' : 'Выкл'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1">
                       {u.competency_development_enabled ? (
                         <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">Доступ</span>
@@ -685,6 +698,7 @@ export function AdminUsersPage() {
         </div>
       </section>
 
+      <AuditCalendarAdminPanel />
       <AdminStorageQuotaRequestsPanel />
 
       <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">

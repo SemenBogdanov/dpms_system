@@ -24,6 +24,8 @@ const FIELD_LABELS: Record<string, string> = {
   task_workspace_enabled: 'Работа с задачами',
   can_link_queue_tasks_to_projects: 'Q-задачи в проектах',
   feedback_enabled: 'Обратная связь',
+  audit_enabled: 'Аудит',
+  audit_calendar_enabled: 'Календарь аудита',
   competency_development_enabled: 'Развитие',
   competency_constructor_enabled: 'Конструктор компетенций',
   plan_started_at: 'Начало плана',

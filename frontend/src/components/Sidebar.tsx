@@ -181,6 +181,9 @@ export function Sidebar() {
     if (items.length === 0) return null
     if (items.length === 1) {
       const item = items[0]
+      if (item.id === 'audit-calendar' && button.id === 'audit' && button.label === 'Аудит') {
+        return renderNavLink(item)
+      }
       const Icon = iconForMenuButton(button, items)
       return renderNavLink({ ...item, label: button.label, icon: Icon })
     }

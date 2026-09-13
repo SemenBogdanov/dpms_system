@@ -16,6 +16,7 @@ export type UserFormPayload = {
   can_link_queue_tasks_to_projects: boolean
   feedback_enabled: boolean
   audit_enabled: boolean
+  audit_calendar_enabled: boolean
   competency_development_enabled: boolean
   competency_constructor_enabled: boolean
   password?: string
@@ -50,6 +51,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
   const [canLinkQueueTasksToProjects, setCanLinkQueueTasksToProjects] = useState(false)
   const [feedbackEnabled, setFeedbackEnabled] = useState(false)
   const [auditEnabled, setAuditEnabled] = useState(false)
+  const [auditCalendarEnabled, setAuditCalendarEnabled] = useState(false)
   const [competencyDevelopmentEnabled, setCompetencyDevelopmentEnabled] = useState(true)
   const [competencyConstructorEnabled, setCompetencyConstructorEnabled] = useState(false)
   const [password, setPassword] = useState('')
@@ -72,6 +74,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setCanLinkQueueTasksToProjects(Boolean(initial.can_link_queue_tasks_to_projects))
       setFeedbackEnabled(Boolean(initial.feedback_enabled))
       setAuditEnabled(Boolean(initial.audit_enabled))
+      setAuditCalendarEnabled(Boolean(initial.audit_calendar_enabled))
       setCompetencyDevelopmentEnabled(Boolean(initial.competency_development_enabled))
       setCompetencyConstructorEnabled(Boolean(initial.competency_constructor_enabled))
       setPassword('')
@@ -87,6 +90,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setCanLinkQueueTasksToProjects(false)
       setFeedbackEnabled(false)
       setAuditEnabled(false)
+      setAuditCalendarEnabled(false)
       setCompetencyDevelopmentEnabled(true)
       setCompetencyConstructorEnabled(false)
       setPassword('')
@@ -149,6 +153,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
         can_link_queue_tasks_to_projects: canLinkQueueTasksToProjects,
         feedback_enabled: feedbackEnabled,
         audit_enabled: auditEnabled,
+        audit_calendar_enabled: auditCalendarEnabled,
         competency_development_enabled: competencyDevelopmentEnabled,
         competency_constructor_enabled: competencyConstructorEnabled,
         ...(mode === 'create' ? { password } : undefined),
@@ -318,6 +323,15 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
                   <span className="block font-medium text-slate-800">Аудит</span>
                   <span className="block text-xs text-slate-500">Реестр договоров, атомизация, назначения и материалы аудита.</span>
                 </span>
+              </label>
+              <label className="flex items-start gap-3 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={auditCalendarEnabled}
+                  onChange={(e) => setAuditCalendarEnabled(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-slate-300"
+                />
+                <span className="font-medium text-slate-800">Календарь аудита</span>
               </label>
             </div>
           </div>
