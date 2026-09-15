@@ -84,6 +84,8 @@ test('new meeting defaults to 30 and only active speakers are selectable', async
   const { commands } = await mountCalendar(page, { state })
   await page.locator(`button[aria-label="Создать план ${day} 12:00"]:visible`).click()
   const dialog = page.getByRole('dialog')
+  await expect(dialog.getByLabel('Основание', { exact: true })).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'Изменить дату и время встречи', exact: true }).click()
   await expect(dialog.getByLabel('Длительность, мин', { exact: true })).toHaveValue('30')
   const speakers = dialog.getByRole('combobox', { name: 'Докладчик', exact: true })
   await expect(speakers.locator('option')).toHaveCount(2)
@@ -104,6 +106,7 @@ test('saved non-speaker remains visible and is not rewritten on revision', async
   await expect(speakers).toHaveValue(ids.t)
   await expect(speakers.locator(`option[value="${ids.t}"]`)).toHaveAttribute('disabled', '')
   await expect(speakers.locator(`option[value="${ids.t}"]`)).toContainText('сохранён в плане')
+  await dialog.getByRole('button', { name: 'Изменить дату и время встречи', exact: true }).click()
   await expect(dialog.getByLabel('Длительность, мин')).toHaveValue('90')
   await saveReason(page, 'Сохранить исторического докладчика')
   await expect.poll(() => commands.length).toBe(1)
@@ -200,7 +203,7 @@ test('lock form refuses submission if helper permission is revoked while open', 
 test('helper can record a request for a user but cannot bypass a closed day', async ({ page }) => {
   const state = fixtureState(); state.availability_locks.push(lockFor(ids.t))
   const { commands } = await mountCalendar(page, { state, view: 'availability' })
-  await page.getByRole('region', { name: 'Доступное время', exact: true }).getByLabel('Участник').selectOption(ids.t)
+  await page.getByRole('combobox', { name: 'Участник', exact: true }).selectOption(ids.t)
   await expect(slot(page)).toBeDisabled()
   await expect(wholeDay(page)).toBeDisabled()
   await expect(dayAction(page, 'Зафиксировать день')).toHaveCount(0)
@@ -327,7 +330,8 @@ test('summary caps 31 days and keeps employee readiness from the server', async 
     result.employees[0].filled_days = 2
     return result
   } })
-  await page.goto(`/audit-calendar?view=readiness&from=${day}&to=2026-12-01`)
+  await page.goto(`/audit-calendar?view=readiness&summary_tab=employees&from=${day}&to=2026-12-01`)
+  if (await page.locator('.ac-period-panel').getAttribute('open') === null) await page.locator('.ac-period-panel summary').click()
   await expect(page.getByLabel('По', { exact: true })).toHaveValue('2026-10-14')
   await expect(page.locator('.ac-readiness')).toContainText('Пн–Пт · 10:00–18:00 · Europe/Moscow')
   const employee = page.getByRole('region', { name: 'Тестовый аудитор', exact: true })
@@ -417,7 +421,7 @@ test('readiness and request forms fit all themes and viewport sizes', async ({ p
     await page.setViewportSize({ width, height })
     for (const theme of ['light', 'dark', 'rose']) {
       await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
-      for (const tab of ['Сотрудники', 'Группы', 'Заявки']) {
+      for (const tab of ['Заполненность', 'Группы', 'Заявки']) {
         await page.getByRole('navigation', { name: 'Вкладки сводки' }).getByRole('link', { name: new RegExp(`^${tab}`) }).click()
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
         if ((width === 1440 && theme === 'light') || (width === 390 && theme !== 'light') || width === 320) await page.screenshot({ path: testInfo.outputPath(`${width}-${theme}-${tab}.png`), fullPage: true })

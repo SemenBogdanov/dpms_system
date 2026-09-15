@@ -3,7 +3,7 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -48,6 +48,17 @@ async def command(body: Command, db: DB, actor: Actor):
 async def readiness(db: DB, actor: Actor, date_from: date = Query(alias="from"), date_to: date = Query(alias="to"),
                     duration: int = Query(30, ge=30, le=480, multiple_of=30)):
     return await CalendarService(db, actor).readiness(date_from, date_to, duration)
+
+
+@router.get("/availability-timeline")
+async def availability_timeline(db: DB, actor: Actor,
+                                timeline_date: str = Query(alias="date", min_length=10, max_length=10,
+                                                           pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")):
+    try:
+        day = date.fromisoformat(timeline_date)
+    except ValueError:
+        raise HTTPException(422, "Укажите корректную дату в формате ГГГГ-ММ-ДД") from None
+    return await CalendarService(db, actor).availability_timeline(day)
 
 
 @router.get("/meeting-options")

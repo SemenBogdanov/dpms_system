@@ -7,24 +7,22 @@ import { CalendarModal } from './CalendarModal'
 import { checkWindowVersion, useCalendarWindowRequest, type CalendarMeetingWindowsContext as Context } from './CalendarMeetingWindowsQuery'
 type Target = { date: string; start: number }
 
-export function CalendarMeetingWindowsControls({ context, loading, error }: { context: Context; loading: boolean; error: string }) {
-  const { state, duration, speakerId, onControlsChange, onRefresh } = context
+export function CalendarMeetingWindowsControls({ state, duration, speakerId, onControlsChange }: Pick<Context, 'state' | 'duration' | 'speakerId' | 'onControlsChange'>) {
   const speakers = state.members.filter(m => m.active && m.role === 'speaker')
   return <section className="ac-window-controls" aria-label="Поиск доступных окон">
-    <div className="ac-window-toolbar">
-      <h2>Доступные окна</h2>
-      <label>Длительность окна, мин<input name="window_duration" type="number" min={30} max={480} step={30} required value={Number.isFinite(duration) ? duration : ''} onChange={event => onControlsChange({ window_duration: event.target.value || '0' })} /></label>
-      <label>Докладчик окна<select name="window_speaker" value={speakerId} onChange={event => onControlsChange({ window_speaker: event.target.value })}>
+      <label>Докладчик<select aria-label="Докладчик окна" name="window_speaker" value={speakerId} onChange={event => onControlsChange({ window_speaker: event.target.value })}>
         <option value="">Все докладчики</option>
         {speakerId && !speakers.some(m => m.user_id === speakerId) && <option value={speakerId} disabled>Недоступный докладчик</option>}
         {speakers.map(m => <option key={m.user_id} value={m.user_id}>{m.code} · {m.full_name}</option>)}
       </select></label>
-      <button type="button" className="ac-icon" aria-label="Обновить доступные окна" title="Обновить доступные окна" onClick={() => void onRefresh().catch(() => undefined)}><RefreshCw size={18} aria-hidden="true" /></button>
-    </div>
-    <div className="ac-window-status" aria-live="polite">
-      {context.sourceError ? <p>Подбор недоступен до обновления календаря.</p> : error ? <p className="ac-error" role="alert">{error}</p> : loading ? <p role="status"><Clock3 size={14} aria-hidden="true" />Проверка доступных окон…</p> : <p>Варианты группы и докладчика, не число параллельных встреч.</p>}
-    </div>
+      <label>Окно (мин)<input name="window_duration" type="number" min={30} max={480} step={30} required value={Number.isFinite(duration) ? duration : ''} onChange={event => onControlsChange({ window_duration: event.target.value || '0' })} /></label>
   </section>
+}
+
+export function CalendarMeetingWindowsStatus({ sourceError, loading, error }: { sourceError: string; loading: boolean; error: string }) {
+  return <div className="ac-window-status" aria-live="polite">
+    {sourceError ? <p>Подбор недоступен до обновления календаря.</p> : error ? <p className="ac-error" role="alert">{error}</p> : loading ? <p role="status"><Clock3 size={14} aria-hidden="true" />Проверка доступных окон…</p> : null}
+  </div>
 }
 
 export function CalendarMeetingWindowsCell({ date, start, duration, cell, loading, error, onOpen }: {

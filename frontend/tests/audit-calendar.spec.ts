@@ -11,6 +11,7 @@ async function fillPlan(page: Page) {
   await dialog.getByLabel('Активность', { exact: true }).fill('Тестовая комиссия')
   await dialog.getByRole('combobox', { name: 'Докладчик', exact: true }).selectOption(ids.s)
   await expect(dialog.getByLabel('Активность', { exact: true })).toHaveValue('Тестовая комиссия')
+  await expect(dialog.getByLabel('Основание', { exact: true })).toHaveCount(0)
   return dialog
 }
 
@@ -32,10 +33,13 @@ test('all views, server KPI and direct calendar help', async ({ page }, testInfo
   const { commands } = await mountCalendar(page)
   await expect(page.locator('.ac-kpi-target strong')).toHaveText('30')
   await expect(page.locator('.ac-kpis > div')).toHaveCount(4)
+  await expect(page.locator('.ac-period-panel')).not.toHaveAttribute('open')
   for (const name of ['Доступное время', 'Датасет', 'Справочники', 'Управление', 'Журнал', 'Импорт', 'Справка']) {
     await page.getByRole('navigation', { name: 'Представления календаря' }).getByRole('link', { name, exact: true }).click()
     await expect(page.locator('.ac-bound-content')).not.toHaveAttribute('inert')
-    await expect(page.locator('.ac-content h2').first()).toBeVisible()
+    if (name === 'Доступное время') await expect(page.getByRole('region', { name, exact: true })).toBeVisible()
+    else await expect(page.locator('.ac-content h2').first()).toBeVisible()
+    await expect(page.locator('.ac-period-panel')).not.toHaveAttribute('open')
     await page.screenshot({ path: testInfo.outputPath(`view-${name}.png`), fullPage: true, animations: 'disabled' })
   }
   expect(commands).toHaveLength(0)
@@ -106,16 +110,17 @@ test('CAS preserves draft until explicit rebase', async ({ page }) => {
 test('whole-day and ownership are server-scoped, no optimistic partial writes', async ({ page }) => {
   const { commands } = await mountCalendar(page, { view: 'availability', helper: false })
   await page.getByRole('button', { name: '2026-09-14: Свободен, весь день 00:00–24:00', exact: true }).filter({ visible: true }).click()
+  await page.getByRole('button', { name: /^Сохранить$/ }).click()
   await expect.poll(() => commands.length).toBe(1)
   expect(commands[0].payload).toEqual({ user_id: ids.a, patches: [{ date: '2026-09-14', start: 0, end: 1440, value: true }],
     expected: Array.from({ length: 48 }, (_, i) => ({ date: '2026-09-14', start: i * 30, end: i * 30 + 30, value: null })) })
   await expect(page.locator('.ac-bound-content')).not.toHaveAttribute('inert')
-  await page.getByRole('region', { name: 'Доступное время', exact: true }).getByRole('combobox', { name: 'Участник', exact: true }).selectOption(ids.t)
+  await page.getByRole('combobox', { name: 'Участник', exact: true }).selectOption(ids.t)
   await expect(page.getByRole('button', { name: '2026-09-14: Свободен, весь день 00:00–24:00', exact: true }).filter({ visible: true })).toBeDisabled()
   await expect(page.getByRole('link', { name: 'Управление', exact: true })).toHaveCount(0)
 })
 
-test('pointercancel and blur discard unsent drag, pointerup sends one batch', async ({ page, browserName }) => {
+test('pointercancel and blur discard unsent drag, saving after pointerup sends one batch', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'Mouse drag uses desktop Chromium; WebKit has touch alternative coverage.')
   const { commands } = await mountCalendar(page, { view: 'availability' })
   const first = page.locator('[data-ac-slot][data-date="2026-09-14"][data-start="600"]:visible')
@@ -130,8 +135,19 @@ test('pointercancel and blur discard unsent drag, pointerup sends one batch', as
   }
   await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2); await page.mouse.down()
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 3 }); await page.mouse.up()
+  const staged = await page.locator('[data-ac-slot].ac-free:visible').evaluateAll(cells => cells.map(cell => {
+    const start = Number(cell.getAttribute('data-start'))
+    return { date: cell.getAttribute('data-date')!, start, end: start + 30, value: true }
+  }))
+  expect(staged.length).toBeGreaterThan(1)
+  expect(commands).toHaveLength(0)
+  await page.getByRole('button', { name: /^Сохранить$/ }).click()
   await expect.poll(() => commands.length).toBe(1)
-  expect((commands[0].payload as { patches: unknown[] }).patches.length).toBeGreaterThan(1)
+  expect(commands[0].payload).toEqual({
+    user_id: ids.a,
+    patches: [{ date: staged[0].date, start: staged[0].start, end: staged[staged.length - 1].end, value: true }],
+    expected: staged.map(cell => ({ ...cell, value: null })),
+  })
 })
 
 test('norm editor reads effective history and accepts zero', async ({ page }) => {
@@ -191,6 +207,7 @@ test('period date edge and malformed URL never produce 2101 or crash', async ({ 
   await mountCalendar(page)
   await page.goto('/audit-calendar?from=2026-13-01&to=2026-13-02')
   await expect(page.getByRole('alert')).toContainText('2000–2100')
+  if (await page.locator('.ac-period-panel').getAttribute('open') === null) await page.locator('.ac-period-panel summary').click()
   await page.getByLabel('С', { exact: true }).fill('2100-12-31')
   await page.getByLabel('По', { exact: true }).fill('2100-12-31')
   await page.getByRole('button', { name: 'Применить', exact: true }).click()
@@ -205,7 +222,7 @@ test('responsive themes show nonblank fit without page overflow', async ({ page 
     await page.setViewportSize({ width, height })
     for (const theme of ['light', 'dark', 'rose']) {
       await page.evaluate(value => document.documentElement.dataset.theme = value, theme)
-      await expect(page.getByRole('heading', { name: 'Сетевой план-график', exact: true })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'Календарь аудита', exact: true })).toBeVisible()
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
       if (width >= 1440) { await expect(page.locator('.ac-desktop-graph')).toBeVisible(); await expect(page.locator('.ac-graph-heading > div > span')).toHaveCount(16) }
       await page.screenshot({ path: testInfo.outputPath(`${width}-${theme}-graph.png`), animations: 'disabled' })
@@ -244,6 +261,7 @@ test('old-period availability is inert until matching state arrives', async ({ p
     await new Promise<void>(resolve => { release = resolve })
     await route.fulfill({ json: state })
   })
+  if (await page.locator('.ac-period-panel').getAttribute('open') === null) await page.locator('.ac-period-panel summary').click()
   await page.getByRole('button', { name: 'Следующий период', exact: true }).click()
   await expect(page.locator('.ac-bound-content')).toHaveAttribute('inert')
   expect(commands).toHaveLength(0)

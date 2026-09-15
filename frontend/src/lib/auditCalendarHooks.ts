@@ -19,7 +19,7 @@ export function useCalendarDraftGuard(active: boolean, { protectPeriod = false }
     const release = holdAuditCalendarNavigation()
     // Period controls update local inputs before navigating, so blocking only
     // the navigator would leave dates that no longer describe the visible draft.
-    const periodControls = protectPeriod ? Array.from(document.querySelectorAll<HTMLInputElement | HTMLButtonElement>('.ac-period input, .ac-period button, .ac-filters .ac-actions button:not([aria-label="Обновить календарь"])'), element => ({ element, disabled: element.disabled })) : []
+    const periodControls = protectPeriod ? Array.from(document.querySelectorAll<HTMLInputElement | HTMLButtonElement>('.ac-period-panel input, .ac-period-panel button'), element => ({ element, disabled: element.disabled })) : []
     periodControls.forEach(({ element }) => { element.disabled = true })
     const unload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
     const click = (event: MouseEvent) => {

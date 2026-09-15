@@ -19,6 +19,26 @@ export function availabilityIntent(state: CalendarState, user: string, patches: 
   }
 }
 
+export function stageAvailability(state: CalendarState, user: string, previous: AvailabilityIntent | null, changes: AvailabilityPatch[]): AvailabilityIntent | null {
+  const cells = new Map<string, AvailabilityPatch>()
+  for (const patch of [...(previous?.command.payload.patches || []), ...changes]) {
+    for (let start = patch.start; start < patch.end; start += 30) {
+      const key = `${patch.date}/${start}`
+      if (patch.value === slotValue(state.availability, user, patch.date, start)) cells.delete(key)
+      else cells.set(key, { ...patch, start, end: start + 30 })
+    }
+  }
+  // Keep the first-edit snapshot for conflict detection, but send only the final
+  // intent. Adjacent cells are coalesced so whole-day edits stay compact.
+  const patches: AvailabilityPatch[] = []
+  for (const cell of [...cells.values()].sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start)) {
+    const last = patches[patches.length - 1]
+    if (last && last.date === cell.date && last.end === cell.start && last.value === cell.value) last.end = cell.end
+    else patches.push({ ...cell })
+  }
+  return patches.length ? availabilityIntent(state, user, patches) : null
+}
+
 export function availabilityIntentProblem(state: CalendarState, intent: AvailabilityIntent) {
   const { user_id: user, patches } = intent.command.payload
   if (intent.scopeId !== state.scope.id || intent.actorId !== state.actor.user_id) return 'Контур или текущий пользователь изменился. Черновик сохранён.'

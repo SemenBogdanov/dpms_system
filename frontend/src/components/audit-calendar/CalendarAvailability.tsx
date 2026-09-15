@@ -1,20 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
-import { Check, Eraser, Lock, MessageSquare, Plus, RefreshCw, X } from 'lucide-react'
+import { Check, Eraser, Loader2, Lock, Plus, RefreshCw, Save, X } from 'lucide-react'
 import { auditCalendar, type AvailabilityPatch, type CalendarState } from '@/api/auditCalendar'
 import { absentOn, activeChangeRequest, addDays, availabilityLocked, clampDay, dateLabel, dateRange, errorText, serverTimeLabel, slotValue, timeLabel, workSlots } from '@/lib/auditCalendar'
 import { useCalendarDraftGuard, useCalendarMutation } from '@/lib/auditCalendarHooks'
-import { availabilityIntent, availabilityIntentProblem, availabilityReview, type AvailabilityIntent } from '@/lib/auditCalendarAvailability'
+import { availabilityIntent, availabilityIntentProblem, availabilityReview, stageAvailability, type AvailabilityIntent } from '@/lib/auditCalendarAvailability'
 import type { AvailabilityAction } from './CalendarAvailabilityAction'
 
 type Gesture = { pointer: number; first: AvailabilityPatch; value: boolean; visited: Map<string, AvailabilityPatch>; dragged: boolean; x: number; y: number; baseline: CalendarState; user: string }
 const valueLabel = (value: boolean | null) => value === true ? 'Свободен' : value === false ? 'Занят' : 'Не указано'
-export function CalendarAvailability({ state, from, person, setPerson, day, setDay, onRefresh, onAbsence, onAction }: { state: CalendarState; from: string; person: string; setPerson: (id: string) => void; day: string; setDay: (date: string) => void; onRefresh: () => Promise<CalendarState>; onAbsence: (id: string) => void; onAction: (action: AvailabilityAction) => void }) {
+export function CalendarAvailability({ state, from, person, setPerson, day, setDay, onRefresh, onAbsence, onAction, controlsTarget, enabled = true }: { state: CalendarState; from: string; person: string; setPerson: (id: string) => void; day: string; setDay: (date: string) => void; onRefresh: () => Promise<CalendarState>; onAbsence: (id: string) => void; onAction: (action: AvailabilityAction) => void; controlsTarget?: HTMLElement | null; enabled?: boolean }) {
   const user = person || state.actor.user_id
   const days = dateRange(from, clampDay(addDays(from, 13)))
-  const selected = days.includes(day) ? day : from
+  const [draftDay, setDraftDay] = useState<string | null>(null)
+  const selected = days.includes(draftDay || day) ? draftDay || day : from
   const editable = !state.scope.archived && (state.actor.can_manage || user === state.actor.user_id) && !!state.members.find(m => m.user_id === user && m.active)
   const [preview, setPreview] = useState<AvailabilityPatch[]>([])
+  const [staged, setStaged] = useState<AvailabilityIntent | null>(null)
+  const stagedRef = useRef<AvailabilityIntent | null>(null)
+  const baselineRef = useRef<CalendarState | null>(null)
   const [pending, setPending] = useState<AvailabilityIntent | null>(null)
   const pendingRef = useRef<AvailabilityIntent | null>(null)
   const [review, setReview] = useState<CalendarState | null>(null)
@@ -27,10 +32,15 @@ export function CalendarAvailability({ state, from, person, setPerson, day, setD
   const suppressClick = useRef(false)
   const mutation = useCalendarMutation()
   const sendLock = useRef(false)
-  useCalendarDraftGuard(!!pending || preview.length > 0, { protectPeriod: true })
-  const locked = mutation.busy || refreshing || !!pending
+  const dirty = !!staged || !!pending || preview.length > 0
+  useCalendarDraftGuard(dirty, { protectPeriod: true })
+  useEffect(() => {
+    if (!dirty && draftDay) { setDay(draftDay); setDraftDay(null) }
+  }, [dirty, draftDay, setDay])
+  const locked = !enabled || mutation.busy || refreshing || !!pending
   const commitRef = useRef<(patches: AvailabilityPatch[], baseline: CalendarState, user: string) => void>(() => undefined)
   function clearDraft() {
+    stagedRef.current = null; baselineRef.current = null; setStaged(null)
     pendingRef.current = null; setPending(null); setReview(null); setApproved(false); setConfirmed(false); setPreview([])
     mutation.rebase('')
   }
@@ -51,16 +61,24 @@ export function CalendarAvailability({ state, from, person, setPerson, day, setD
         conflictMessage: 'Выбранные интервалы изменены другим пользователем. Черновик сохранён.',
       })
       if (result) {
-        setConfirmed(true); setSaved(`Сохранено интервалов: ${intent.command.payload.patches.length}`)
+        setConfirmed(true); setSaved('Изменения сохранены')
         setRefreshing(true)
         try { await refreshSaved() } catch (e) { mutation.setError(`Изменения сохранены. ${errorText(e)}`) }
       }
     } finally { sendLock.current = false; setRefreshing(false) }
   }
   function commit(patches: AvailabilityPatch[], baseline = state, target = user) {
-    if (!patches.length || sendLock.current || pendingRef.current) return
-    const intent = availabilityIntent(baseline, target, patches)
-    pendingRef.current = intent; setPending(intent); setPreview([]); setSaved(''); setReview(null); setApproved(false)
+    if (!patches.length || sendLock.current || pendingRef.current || !enabled) return
+    baselineRef.current ??= baseline
+    const intent = stageAvailability(baselineRef.current, target, stagedRef.current, patches)
+    stagedRef.current = intent; setStaged(intent); setPreview([]); setSaved('')
+    if (!intent) baselineRef.current = null
+  }
+  function saveDraft() {
+    const intent = stagedRef.current
+    if (!intent || sendLock.current || pendingRef.current || !enabled) return
+    pendingRef.current = intent; setPending(intent)
+    stagedRef.current = null; setStaged(null); baselineRef.current = null
     void send(intent)
   }
   async function refreshDraft() {
@@ -131,7 +149,8 @@ export function CalendarAvailability({ state, from, person, setPerson, day, setD
     }
   }, [])
   function cell(date: string, start: number) {
-    const draft = preview.find(p => p.date === date && p.start === start) || (pending?.command.payload.user_id === user ? [...pending.command.payload.patches].reverse().find(p => p.date === date && p.start <= start && p.end > start) : undefined)
+    const intent = pending || staged
+    const draft = preview.find(p => p.date === date && p.start === start) || (intent?.command.payload.user_id === user ? [...intent.command.payload.patches].reverse().find(p => p.date === date && p.start <= start && p.end > start) : undefined)
     const value = draft ? draft.value : slotValue(state.availability, user, date, start)
     const absence = absentOn(state, user, date)
     const dayLocked = availabilityLocked(state, user, date)
@@ -149,19 +168,26 @@ export function CalendarAvailability({ state, from, person, setPerson, day, setD
     const dayLocked = availabilityLocked(state, user, date)
     const request = activeChangeRequest(state, user, date)
     const lock = state.availability_locks.find(l => l.user_id === user && l.date === date && l.locked)
-    return <div className="ac-whole-day"><small>00:00–24:00</small><div className="ac-actions" role="group" aria-label={`${date}: Действия на весь день`}>{([{ value: true, label: 'Свободен', Icon: Check }, { value: false, label: 'Занят', Icon: X }, { value: null, label: 'Очистить', Icon: Eraser }] as const).map(({ value, label, Icon }) => <button type="button" key={label} className="ac-icon" title={`${label} · весь день 00:00–24:00`} aria-label={`${date}: ${label}, весь день 00:00–24:00`} disabled={!editable || locked || dayLocked || !!absentOn(state, user, date) || date < state.scope.today} onClick={() => void commit([{ date, start: 0, end: 1440, value }])}><Icon size={16} /></button>)}
-        {editable && date >= state.scope.today && !request && (dayLocked || state.actor.can_manage) && <button type="button" className="ac-icon" disabled={locked} title={dayLocked ? 'Запросить изменение дня' : 'Зафиксировать день'} aria-label={`${date}: ${dayLocked ? 'Запросить изменение дня' : 'Зафиксировать день'}`} onClick={() => onAction({ kind: dayLocked ? 'request' : 'lock', user, date })}>{dayLocked ? <MessageSquare size={16} /> : <Lock size={16} />}</button>}
+    return <div className="ac-whole-day"><div className="ac-actions" role="group" aria-label={`${date}: Действия на весь день`}>{([{ value: true, label: 'Свободен', Icon: Check }, { value: false, label: 'Занят', Icon: X }, { value: null, label: 'Очистить', Icon: Eraser }] as const).map(({ value, label, Icon }) => <button type="button" key={label} className="ac-icon" title={`${label} · весь день 00:00–24:00`} aria-label={`${date}: ${label}, весь день 00:00–24:00`} disabled={!editable || locked || dayLocked || !!absentOn(state, user, date) || date < state.scope.today} onClick={() => void commit([{ date, start: 0, end: 1440, value }])}><Icon size={16} /></button>)}
+        {editable && date >= state.scope.today && !request && (dayLocked || state.actor.can_manage) && <button type="button" className={`ac-icon${dayLocked ? ' ac-day-is-locked' : ''}`} disabled={locked || dirty} title={dayLocked ? `День закрыт. Зафиксировано, Москва: ${serverTimeLabel(lock?.locked_at || null)}. Запросить изменение дня` : 'Зафиксировать день'} aria-label={`${date}: ${dayLocked ? 'Запросить изменение дня' : 'Зафиксировать день'}`} onClick={() => onAction({ kind: dayLocked ? 'request' : 'lock', user, date })}><Lock size={16} /></button>}
+        {dayLocked && (!editable || date < state.scope.today || !!request) && <span className="ac-lock-indicator" role="img" aria-label={`${date}: День закрыт`} title={`День закрыт. Зафиксировано, Москва: ${serverTimeLabel(lock?.locked_at || null)}`}><Lock size={16} aria-hidden="true" /></span>}
       </div>
-      {(dayLocked || request) && <div className="ac-day-lock-actions">{dayLocked && <span className="ac-lock-label" title={`Зафиксировано, Москва: ${serverTimeLabel(lock?.locked_at || null)}`}><Lock size={14} aria-hidden="true" />Закрыт</span>}
+      {request && <div className="ac-day-lock-actions">
         {request && (state.actor.can_manage || user === state.actor.user_id) && <Link className="ac-request-status-link" to={`?view=readiness&summary_tab=requests&from=${date}&to=${date}`}>{request.status === 'pending' ? 'Заявка ожидает решения' : 'Открыто по заявке'}</Link>}
       </div>}
     </div>
   }
-  return <section ref={root} aria-label="Доступное время"><header className="ac-section-head"><h2>Доступное время</h2><span className="ac-muted">{dateLabel(from)}–{dateLabel(days[days.length - 1])}</span></header>
-    <div className="ac-toolbar"><label>Участник<select value={user} disabled={locked} onChange={e => setPerson(e.target.value)}>{state.members.map(m => <option key={m.user_id} value={m.user_id}>{m.code} · {m.full_name}</option>)}</select></label>{editable && <button type="button" disabled={locked} onClick={() => onAbsence(user)}><Plus size={16} />Отсутствие</button>}<div className="ac-legend"><span><Check size={14} />Свободен</span><span><X size={14} />Занят</span><span>· Не указано</span></div></div>
+  const tools = <div className="ac-availability-toolbar">
+    {(editable || dirty || saved) && <div className="ac-availability-save" role="group" aria-label="Сохранение доступности">
+      <span role="status" className="ac-save-status">{mutation.busy || refreshing ? <><Loader2 size={17} className="ac-save-spinner" />{mutation.busy ? 'Сохранение…' : 'Обновление…'}</> : preview.length ? `Выбрано интервалов: ${preview.length}` : saved ? <><Check size={17} />{saved}</> : staged ? 'Есть несохранённые изменения' : ''}</span>
+      {staged && <div className="ac-actions"><button type="button" className="ac-primary" disabled={locked || preview.length > 0} onClick={saveDraft}><Save size={16} />Сохранить</button><button type="button" className="ac-icon" disabled={locked} title="Отменить несохранённые изменения" aria-label="Отменить несохранённые изменения" onClick={clearDraft}><X size={16} /></button></div>}
+    </div>}
+    <div className="ac-view-tools ac-availability-tools"><label>Участник<select value={user} disabled={locked || dirty} onChange={e => setPerson(e.target.value)}>{state.members.map(m => <option key={m.user_id} value={m.user_id}>{m.code} · {m.full_name}</option>)}</select></label>{editable && <button type="button" disabled={locked || dirty} onClick={() => onAbsence(user)}><Plus size={16} />Отсутствие</button>}</div>
+  </div>
+  return <section ref={root} aria-label="Доступное время">{controlsTarget ? createPortal(tools, controlsTarget) : tools}
     {!editable && <p className="ac-muted">Только просмотр. Сотрудник изменяет свою доступность.</p>}
     {mutation.error && <div className="ac-error" role="alert">{mutation.error}</div>}
-    {pending && !confirmed && <section aria-label="Несохранённые интервалы">
+    {pending && !confirmed && !mutation.busy && !refreshing && <section aria-label="Несохранённые интервалы">
       <h3>Несохранённые интервалы</h3>
       {review ? <div className="ac-table-wrap"><table aria-label="Проверка изменений" style={{ tableLayout: 'fixed' }}><colgroup><col style={{ width: '31%' }} /><col /><col /><col /></colgroup><thead><tr><th>Дата и время</th><th>Было</th><th>Сейчас</th><th>Мой выбор</th></tr></thead><tbody>{availabilityReview(pending, review).map(row => <tr key={`${row.date}/${row.start}`}><td><time dateTime={row.date}>{dateLabel(row.date)}</time><br />{timeLabel(row.start)}–{timeLabel(row.end)}</td><td>{valueLabel(row.expected)}</td><td>{valueLabel(row.current)}</td><td>{valueLabel(row.value)}</td></tr>)}</tbody></table></div>
         : <ul>{pending.command.payload.patches.map(patch => <li key={`${patch.date}/${patch.start}`}>{dateLabel(patch.date)} · {timeLabel(patch.start)}–{timeLabel(patch.end)} · {valueLabel(patch.value)}</li>)}</ul>}
@@ -174,8 +200,8 @@ export function CalendarAvailability({ state, from, person, setPerson, day, setD
       {!confirmed && !mutation.uncertain && <button type="button" disabled={refreshing} onClick={() => void refreshDraft()}><RefreshCw size={16} />Обновить и проверить изменения</button>}
       {!confirmed && <button type="button" disabled={refreshing || mutation.uncertain} onClick={() => { if (!sendLock.current) clearDraft() }}><X size={16} />Отменить несохранённые изменения</button>}
     </div>}
-    <p role="status" className="ac-muted">{mutation.busy ? 'Сохранение изменений…' : refreshing ? 'Обновление данных…' : mutation.uncertain ? 'Сохранение не подтверждено. Повторите сохранение для проверки результата.' : preview.length ? `Выбрано интервалов: ${preview.length}` : saved}</p>
+    {mutation.uncertain && <p role="status" className="ac-muted">Сохранение не подтверждено. Повторите сохранение для проверки результата.</p>}
     <div className="ac-av-desktop"><div className="ac-av-row ac-av-head"><span>Дата</span>{workSlots.map(t => <span key={t}>{timeLabel(t)}</span>)}<span>Весь день</span></div>{days.map(date => <div className="ac-av-row" key={date}><strong title={absentOn(state, user, date)?.reason}>{dateLabel(date)}{absentOn(state, user, date) && <small>Отсутствие</small>}</strong>{workSlots.map(t => cell(date, t))}{wholeDay(date)}</div>)}</div>
-    <div className="ac-av-mobile"><label>День<select value={selected} disabled={locked} onChange={e => setDay(e.target.value)}>{days.map(d => <option key={d} value={d}>{dateLabel(d)}</option>)}</select></label>{wholeDay(selected)}{workSlots.map(t => <div className="ac-av-time" key={t}><time>{timeLabel(t)}</time>{cell(selected, t)}</div>)}</div>
+    <div className="ac-av-mobile"><label>День<select value={selected} disabled={locked} onChange={e => { if (dirty) setDraftDay(e.target.value); else setDay(e.target.value) }}>{days.map(d => <option key={d} value={d}>{dateLabel(d)}</option>)}</select></label>{wholeDay(selected)}{workSlots.map(t => <div className="ac-av-time" key={t}><time>{timeLabel(t)}</time>{cell(selected, t)}</div>)}</div>
   </section>
 }

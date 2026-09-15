@@ -135,6 +135,7 @@ function calendarPageHarness() {
   const setParams = () => assert.fail('The explicit test date range must remain unchanged')
   const componentModules = {
     CalendarGraph: ['CalendarGraph'],
+    CalendarMeetingWindows: ['CalendarMeetingWindowsControls'],
     CalendarMeetingEditor: ['CalendarMeetingEditor'],
     CalendarAvailability: ['CalendarAvailability'],
     CalendarReadiness: ['CalendarReadiness'],

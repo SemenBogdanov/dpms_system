@@ -5,9 +5,9 @@ import { fixtureState, ids, mountCalendar } from './audit-calendar.fixtures'
 
 const extra = { a: '00000000-0000-4000-8000-000000000071', t: '00000000-0000-4000-8000-000000000072', s: '00000000-0000-4000-8000-000000000073', g: '00000000-0000-4000-8000-000000000074', v: '00000000-0000-4000-8000-000000000075' }
 const cell = (page: Page, start = 720, date = '2026-09-14') => page.locator(`.ac-window-cell[data-date="${date}"][data-start="${start}"]:visible`)
-const duration = (page: Page) => page.getByRole('spinbutton', { name: 'Длительность окна, мин', exact: true })
+const duration = (page: Page) => page.getByRole('spinbutton', { name: 'Окно (мин)', exact: true })
 const speaker = (page: Page) => page.getByRole('combobox', { name: 'Докладчик окна', exact: true })
-const refreshWindows = (page: Page) => page.getByRole('button', { name: 'Обновить доступные окна', exact: true })
+const refreshWindows = (page: Page) => page.getByRole('button', { name: 'Обновить календарь', exact: true })
 const choose = (page: Page) => page.getByRole('dialog').getByRole('button', { name: /^Выбрать G2,/ })
 const editorGroup = (page: Page) => page.getByRole('dialog').getByRole('combobox', { name: 'Группа', exact: true })
 
@@ -109,6 +109,8 @@ test('fresh detail waits, lists exact participants and warnings, and prefills a 
   await expect(dialog.getByRole('heading', { name: 'План встречи', exact: true })).toBeVisible()
   await expect(editorGroup(page)).toHaveValue(extra.g)
   await expect(dialog.getByRole('combobox', { name: 'Докладчик', exact: true })).toHaveValue(extra.s)
+  await expect(dialog.getByLabel('Основание', { exact: true })).toHaveCount(0)
+  await dialog.getByRole('button', { name: 'Изменить дату и время встречи', exact: true }).click()
   await expect(dialog.getByRole('combobox', { name: 'Начало', exact: true })).toHaveValue('720')
   await expect(dialog.getByLabel('Дата', { exact: true })).toHaveValue('2026-09-14')
   await expect(dialog.getByLabel('Длительность, мин', { exact: true })).toHaveValue('60')
@@ -132,6 +134,7 @@ test('prefilled group never falls back and a fresh options check does not rebase
     const p = new URL(route.request().url()).searchParams
     return route.fulfill({ json: { version: state.scope.version, date: p.get('date'), start: Number(p.get('start')), duration: Number(p.get('duration')), groups: state.groups.map(g => ({ id: g.id, code: g.code, label: g.label, eligible: g.id !== extra.g || state.scope.version > 1, issues: [], warnings: [] })) } })
   })
+  await page.getByRole('dialog').getByRole('button', { name: 'Изменить дату и время встречи', exact: true }).click()
   await page.getByRole('dialog').getByLabel('Длительность, мин', { exact: true }).fill('60')
   await expect(editorGroup(page).locator(`option[value="${extra.g}"]`)).toHaveJSProperty('disabled', true)
   await expect(editorGroup(page)).toHaveValue(extra.g)
@@ -207,6 +210,7 @@ test('a new state source with the same version clears all colors while its batch
 test('31 days are allowed; a longer range keeps the graph but sends no windows request', async ({ page }) => {
   const { batches } = await mountWindows(page)
   await expect(cell(page)).toBeEnabled()
+  if (await page.locator('.ac-period-panel').getAttribute('open') === null) await page.locator('.ac-period-panel summary').click()
   await page.locator('.ac-period').getByLabel('По', { exact: true }).fill('2026-10-14')
   await page.locator('.ac-period').getByRole('button', { name: 'Применить', exact: true }).click()
   await expect.poll(() => batches.at(-1)?.get('to')).toBe('2026-10-14')
@@ -336,7 +340,7 @@ test('focus remains in the modal when refreshed permissions remove the focused s
   await expect(choose(page)).toBeVisible()
   await choose(page).focus()
   state.actor.can_manage = false
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  await page.getByRole('button', { name: 'Обновить варианты окна', exact: true }).evaluate(button => button.click())
   await expect(page.getByRole('dialog')).toContainText('Только просмотр.')
   await expect(choose(page)).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Обновить варианты окна', exact: true })).toBeFocused()
@@ -411,29 +415,36 @@ test('an explicit revoke invalidates a late successful detail', async ({ page })
   expect(commands).toHaveLength(0)
 })
 
-test('focus refreshes visible state and fresh detail, but hidden focus does not search', async ({ page }) => {
+test('focus and visibility preserve the snapshot; explicit refresh reloads state and fresh detail', async ({ page }) => {
+  let stateCalls = 0
+  page.on('request', request => { if (new URL(request.url()).pathname.endsWith('/audit-calendar/state')) stateCalls++ })
   const { batches, details } = await mountWindows(page)
   await cell(page).click()
   await expect(choose(page)).toBeVisible()
   const initial = batches.length
+  const initialStateCalls = stateCalls
+  const initialDetails = details.length
   await page.evaluate(() => {
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
     document.dispatchEvent(new Event('visibilitychange'))
     window.dispatchEvent(new Event('focus'))
   })
-  await expect(choose(page)).toHaveCount(0)
-  await expect(page.locator('.ac-window-cell.ac-window-available')).toHaveCount(0)
-  expect(batches).toHaveLength(initial)
+  await expect(choose(page)).toBeVisible()
   await page.evaluate(() => {
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
     document.dispatchEvent(new Event('visibilitychange'))
   })
   await expect(choose(page)).toBeVisible()
-  await expect.poll(() => batches.length).toBeGreaterThan(initial)
-  await expect.poll(() => details.length).toBeGreaterThan(1)
-  const refreshed = details.length
   await page.evaluate(() => window.dispatchEvent(new Event('focus')))
-  await expect.poll(() => details.length).toBeGreaterThan(refreshed)
+  // Allow scheduled effects/requests time to run before asserting no background work.
+  await page.waitForTimeout(300)
+  expect(stateCalls).toBe(initialStateCalls)
+  expect(batches).toHaveLength(initial)
+  expect(details).toHaveLength(initialDetails)
+  await page.getByRole('button', { name: 'Обновить варианты окна', exact: true }).click()
+  await expect.poll(() => batches.length).toBe(initial + 1)
+  await expect.poll(() => details.length).toBe(initialDetails + 1)
+  expect(stateCalls).toBe(initialStateCalls + 1)
   await expect(choose(page)).toBeVisible()
 })
 

@@ -34,6 +34,8 @@ export type CalendarReadiness = {
   groups: { group_id: string; code: string; label: string; days: { date: string; member_ids: string[]; missing_user_ids: string[]; status: 'no_composition' | 'missing' | 'absent' | 'no_overlap' | 'booked' | 'available'; common_windows: { start: number; end: number }[]; free_windows: { start: number; end: number }[]; slots: { start: number; end: number }[]; plans: { id: string; start: number; duration: number; activity: string; status: string }[]; last_notified_at: string | null }[] }[]
 }
 export type CalendarAbsence = { id: string; user_id: string; start_date: string; end_date: string; reason: string; version: number; status: 'active' | 'cancelled' }
+export type CalendarTimelineMeeting = { id: string; kind: 'plan' | 'fact'; start: number; duration: number; activity: string; status: string; group_code: string; participants: { user_id: string; role: CalendarRole }[] }
+export type CalendarTimeline = { version: number; date: string; members: CalendarMember[]; availability: CalendarAvailability[]; absences: CalendarAbsence[]; locks: CalendarAvailabilityLock[]; meetings: CalendarTimelineMeeting[] }
 export type CalendarNorm = { id: string; group_id: string | null; effective_from: string; value: number; reason: string; recorded_at: string; recorded_by_id: string }
 export type CalendarNotice = { id: string; plan_id: string; user_id: string; reported_at: string; reason: string }
 export type CalendarTotals = { target: number; completed: number; balance: number; backlog: number }
@@ -66,6 +68,7 @@ const root = '/api/audit-calendar'
 export const auditCalendar = {
   state: (params: Record<string, string>, signal?: AbortSignal) => api.get<CalendarState>(`${root}/state`, params, { signal }),
   readiness: (params: { from: string; to: string; duration: number }, signal?: AbortSignal) => api.get<CalendarReadiness>(`${root}/readiness`, { ...params, duration: String(params.duration) }, { signal }),
+  timeline: (date: string, signal?: AbortSignal) => api.get<CalendarTimeline>(`${root}/availability-timeline`, { date }, { signal }),
   meetingOptions: (params: { date: string; start: number; duration: number; speaker_id?: string; plan_id?: string }, signal?: AbortSignal) => api.get<CalendarMeetingOptions>(`${root}/meeting-options`, { ...params, start: String(params.start), duration: String(params.duration) }, { signal }),
   meetingWindows: (params: { from: string; to: string; duration: number; group?: string; speaker_id?: string; full_day: boolean }, signal?: AbortSignal) => api.get<CalendarMeetingWindows>(`${root}/meeting-windows`, { ...params, duration: String(params.duration), full_day: String(params.full_day) }, { signal }),
   meetingWindowOptions: (params: { date: string; start: number; duration: number; group?: string; speaker_id?: string }, signal?: AbortSignal) => api.get<CalendarMeetingWindowOptions>(`${root}/meeting-window-options`, { ...params, start: String(params.start), duration: String(params.duration) }, { signal }),

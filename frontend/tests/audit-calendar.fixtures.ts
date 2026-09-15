@@ -1,5 +1,5 @@
 import type { Page, Route } from '@playwright/test'
-import type { CalendarReadiness, CalendarState } from '../src/api/auditCalendar'
+import type { CalendarReadiness, CalendarState, CalendarTimeline } from '../src/api/auditCalendar'
 import { allSlots, dateRange, isWorkingDay, workSlots } from '../src/lib/auditCalendar'
 
 export const ids = { a: '00000000-0000-4000-8000-000000000001', t: '00000000-0000-4000-8000-000000000002', s: '00000000-0000-4000-8000-000000000003', g: '00000000-0000-4000-8000-000000000004', p: '00000000-0000-4000-8000-000000000005' }
@@ -29,6 +29,10 @@ export function fixtureReadiness(state: CalendarState, from = '2026-09-14', to =
   }
 }
 
+export function fixtureTimeline(state: CalendarState, date = state.scope.today): CalendarTimeline {
+  return { version: state.scope.version, date, members: state.members, availability: state.availability.filter(a => a.date === date), absences: state.absences.filter(a => a.start_date <= date && a.end_date >= date), locks: state.availability_locks.filter(a => a.date === date), meetings: [] }
+}
+
 export async function mountCalendar(page: Page, options: { helper?: boolean; state?: CalendarState; view?: string; admin?: boolean; readiness?: (from: string, to: string, duration: number) => CalendarReadiness; command?: (route: Route, body: Record<string, unknown>) => Promise<void> } = {}) {
   await page.routeWebSocket('ws://127.0.0.1:4198/**', () => undefined)
   page.on('pageerror', error => console.error('Calendar fixture browser error:', error.message))
@@ -41,6 +45,7 @@ export async function mountCalendar(page: Page, options: { helper?: boolean; sta
     const path = new URL(request.url()).pathname
     if (!path.startsWith('/api/')) return route.fallback()
     if (path.endsWith('/state')) return route.fulfill({ json: state })
+    if (path.endsWith('/availability-timeline')) return route.fulfill({ json: fixtureTimeline(state, new URL(request.url()).searchParams.get('date')!) })
     if (path.endsWith('/meeting-windows')) {
       const query = new URL(request.url()).searchParams
       return route.fulfill({ json: { version: state.scope.version, now: state.scope.now,
@@ -79,7 +84,7 @@ export async function mountCalendar(page: Page, options: { helper?: boolean; sta
   })
   await page.route('**/*', route => route.request().isNavigationRequest() ? route.fulfill({ contentType: 'text/html', body: harness }) : route.fallback())
   await page.goto(options.admin ? '/calendar-admin' : `/audit-calendar?from=2026-09-14&to=2026-09-20&view=${options.view || 'graph'}`)
-  await page.getByRole('heading', { name: options.admin ? 'Календарь аудита' : 'Сетевой план-график', exact: true }).waitFor()
+  await page.getByRole('heading', { name: 'Календарь аудита', exact: true, ...(!options.admin && { level: 1 }) }).waitFor()
   await page.getByRole('button', { name: options.admin ? 'Участник контура' : 'Обновить календарь', exact: true }).waitFor()
   return { state, commands }
 }

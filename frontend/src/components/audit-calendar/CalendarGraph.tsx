@@ -2,7 +2,7 @@ import type { CalendarFact, CalendarPlan, CalendarState } from '@/api/auditCalen
 import { allSlots, calendarDailyTarget, dateLabel, dateRange, numberLabel, timeLabel, workSlots } from '@/lib/auditCalendar'
 import { AlertTriangle, Plus } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { CalendarMeetingWindowsCell, CalendarMeetingWindowsControls, CalendarMeetingWindowsDetails } from './CalendarMeetingWindows'
+import { CalendarMeetingWindowsCell, CalendarMeetingWindowsStatus, CalendarMeetingWindowsDetails } from './CalendarMeetingWindows'
 import { useCalendarMeetingWindows, type CalendarMeetingWindowsProps } from './CalendarMeetingWindowsQuery'
 
 type Meeting = CalendarPlan | CalendarFact
@@ -44,7 +44,7 @@ export function CalendarGraph({ state, from, to, day, groupId = null, setDay, on
   }
   const slots = outside ? allSlots : workSlots
   return <section aria-label="График встреч" className={outside ? 'ac-graph ac-force-day' : 'ac-graph'} onClickCapture={event => (event.target as Element).closest<HTMLButtonElement>('button')?.focus()}>
-    <CalendarMeetingWindowsControls context={windowContext} loading={availableWindows.loading || !windows.enabled} error={availableWindows.error} />
+    <CalendarMeetingWindowsStatus sourceError={windows.sourceError || ''} loading={availableWindows.loading || !windows.enabled} error={availableWindows.error} />
     <div className="ac-desktop-graph"><div className="ac-graph-heading"><span>Дата / нагрузка</span><div>{workSlots.map(t => <span key={t}>{timeLabel(t)}</span>)}</div></div>
       {days.map(date => <div className={`ac-day ${[0, 6].includes(new Date(`${date}T00:00:00Z`).getUTCDay()) ? 'ac-weekend' : ''}`} key={date}><div className="ac-day-label"><strong>{dateLabel(date)}</strong><span title="Запланировано / цель дня">{state.plans.filter(p => p.date === date && p.status === 'planned').length} / {numberLabel(calendarDailyTarget(state, date, groupId))}</span><small>план / цель</small></div><div className="ac-day-layers">{desktopRow(date, 'plan')}{desktopRow(date, 'fact')}</div><div className="ac-window-row"><span>Доступные окна</span><div className="ac-window-track">{workSlots.map(start => windowCell(date, start))}</div></div></div>)}
     </div>

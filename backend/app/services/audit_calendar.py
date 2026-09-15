@@ -26,6 +26,7 @@ from app.services import audit_calendar_math as math
 from app.services.audit_calendar_controls import AvailabilityControl, DayLock, ChangeRequest
 from app.services.audit_calendar_reporting import CalendarReporting
 from app.services.audit_calendar_windows import MeetingWindowSearch
+from app.services.audit_calendar_timeline import AvailabilityTimeline
 from app.services.audit_calendar_domain import (
     MOSCOW, attendance_state, availability_issues, availability_projections,
     composition_issues, conflict_issues, issue, meeting_instant, historical_source_issues,
@@ -57,7 +58,7 @@ def fact_value(row):
     return columns(row, "id plan_id date start duration group_id activity speaker_id outcome reason evidence recorded_by_id recorded_at participant_snapshot planned_snapshot composition_unknown origin")
 
 
-class CalendarService(AvailabilityControl, CalendarReporting, MeetingWindowSearch):
+class CalendarService(AvailabilityControl, CalendarReporting, MeetingWindowSearch, AvailabilityTimeline):
     def __init__(self, db, actor, *, now=None):
         self.db, self.actor_id = db, actor.id
         self.session_version = getattr(actor, "auth_version", None)

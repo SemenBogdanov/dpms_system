@@ -4,7 +4,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { chromium, webkit, expect } from '@playwright/test'
 
 // Read-only calendar verification. No storage/session export or calendar writes.
-assert.deepEqual(process.argv.slice(2), ['--candidate-ready'], 'Requires explicit local candidate readiness')
+const compactPages = process.argv.includes('--compact-pages')
+assert.deepEqual(process.argv.slice(2), compactPages ? ['--candidate-ready', '--compact-pages'] : ['--candidate-ready'], 'Requires explicit local candidate readiness')
 const base = 'http://localhost:5177'
 const output = new URL(`../../artifacts/audit-calendar/native-windows/${new Date().toISOString().replace(/[:.]/g, '-')}/`, import.meta.url)
 await mkdir(output, { recursive: true })
@@ -33,6 +34,10 @@ async function capture(page, browser, stage) {
       await page.evaluate(value => { document.documentElement.dataset.theme = value }, theme)
       if (stage === 'graph') await page.locator('.ac-window-controls').scrollIntoViewIfNeeded()
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
+      if (stage === 'graph' && width >= 1440) {
+        const widths = await page.locator('.ac-toolbar > label select').evaluateAll(elements => elements.map(element => element.getBoundingClientRect().width))
+        assert(widths.every(value => value >= 135), 'Sidebar must not squeeze the top-level filters')
+      }
       const filename = `${browser}-${stage}-${width}-${theme}.png`
       await page.screenshot({ path: new URL(filename, output).pathname, fullPage: true, animations: 'disabled' })
       screenshots.push({ filename, browser, stage, width, height, theme })
@@ -47,6 +52,7 @@ for (const [name, engine] of [['chromium', chromium], ['webkit', webkit]]) {
     viewport: name === 'webkit' ? { width: 390, height: 844 } : { width: 1440, height: 900 },
     isMobile: name === 'webkit', hasTouch: name === 'webkit', serviceWorkers: 'block' })
   let writes = 0
+  const reads = { state: 0, windows: 0 }
   const errors = []
   await context.route('**/*', route => {
     const req = route.request()
@@ -59,6 +65,11 @@ for (const [name, engine] of [['chromium', chromium], ['webkit', webkit]]) {
   })
   await context.routeWebSocket('**', socket => local(socket.url()) ? socket.connectToServer() : socket.close())
   const page = await context.newPage()
+  page.on('request', request => {
+    const path = new URL(request.url()).pathname
+    if (path === '/api/audit-calendar/state') reads.state++
+    if (path === '/api/audit-calendar/meeting-windows') reads.windows++
+  })
   page.setDefaultTimeout(15000)
   page.on('pageerror', error => errors.push(error.name))
   page.on('response', response => {
@@ -72,6 +83,23 @@ for (const [name, engine] of [['chromium', chromium], ['webkit', webkit]]) {
     lastLogin = Date.now()
     await page.getByRole('button', { name: 'Войти', exact: true }).click()
     await expect(page).toHaveURL(/\/messages(?:\?|$)/)
+    if (compactPages) {
+      for (const view of ['availability', 'readiness', 'readiness&summary_tab=employees', 'readiness&summary_tab=groups', 'readiness&summary_tab=requests', 'workload', 'dataset', 'directories', 'management', 'history', 'imports', 'help']) {
+        check = view
+        const pending = responseFor(page, '/api/audit-calendar/state')
+        await page.goto(`${base}/audit-calendar?view=${view}&from=${date}&to=${through}`)
+        assert.equal((await pending).status(), 200)
+        await expect(page.locator('.ac-content')).toHaveAttribute('aria-busy', 'false')
+        await expect(page.locator('.ac-content [role="status"]', { hasText: /Загрузка/ })).toHaveCount(0)
+        if (view === 'workload') await expect(page.locator('.ac-workload')).toHaveAttribute('aria-busy', 'false')
+        if (view === 'readiness') await expect(page.locator('.ac-timeline-table')).toBeVisible()
+        await capture(page, name, view.replace('&summary_tab=', '-'))
+      }
+      assert.equal(writes, 0, 'Must not write to calendar')
+      assert.deepEqual(errors, [])
+      results.push({ browser: name, status: 'PASS', calendar_writes: writes, views: 12 })
+      continue
+    }
     const statePending = responseFor(page, '/api/audit-calendar/state')
     const windowsPending = responseFor(page, '/api/audit-calendar/meeting-windows')
     await page.goto(`${base}/audit-calendar?view=graph&from=${date}&to=${through}`)
@@ -82,9 +110,23 @@ for (const [name, engine] of [['chromium', chromium], ['webkit', webkit]]) {
     const windowsResponse = await windowsPending
     assert.equal(windowsResponse.status(), 200)
     const windows = await windowsResponse.json()
-    await expect(page.getByLabel('Длительность окна, мин', { exact: true })).toHaveValue('30')
+    await expect(page.getByLabel('Окно (мин)', { exact: true })).toHaveValue('30')
     await expect(page.locator('.ac-window-cell:visible').first()).not.toHaveAttribute('aria-busy', 'true')
-    await expect(page.locator('.ac-window-controls [role="alert"]')).toHaveCount(0)
+    await expect(page.locator('.ac-window-status [role="alert"]')).toHaveCount(0)
+    const beforeFocus = { ...reads }
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('focus'))
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await delay(400)
+    assert.deepEqual(reads, beforeFocus, 'Browser focus must not refresh the calendar or windows')
+    const refreshState = responseFor(page, '/api/audit-calendar/state')
+    const refreshWindows = responseFor(page, '/api/audit-calendar/meeting-windows')
+    await page.getByRole('button', { name: 'Обновить календарь', exact: true }).click()
+    assert.equal((await refreshState).status(), 200)
+    assert.equal((await refreshWindows).status(), 200)
+    await expect(page.locator('.ac-window-cell:visible').first()).not.toHaveAttribute('aria-busy', 'true')
+    assert.deepEqual(reads, { state: beforeFocus.state + 1, windows: beforeFocus.windows + 1 })
     await capture(page, name, 'graph')
     const eligible = windows.cells.find(cell => cell.status !== 'unavailable')
     assert(eligible, 'Fixture must contain an eligible future trio; do not mutate local data to create one')
@@ -99,6 +141,8 @@ for (const [name, engine] of [['chromium', chromium], ['webkit', webkit]]) {
     await capture(page, name, 'participants')
     await dialog.getByRole('button', { name: /^Выбрать / }).first().click()
     const editor = page.getByRole('dialog', { name: 'План встречи', exact: true })
+    check = 'prefill-time-open'
+    await editor.getByRole('button', { name: 'Изменить дату и время встречи', exact: true }).click()
     check = 'prefill-date'
     await expect(editor.getByLabel('Дата', { exact: true })).toHaveValue(eligible.date)
     check = 'prefill-start'
@@ -112,13 +156,15 @@ for (const [name, engine] of [['chromium', chromium], ['webkit', webkit]]) {
     await page.keyboard.press('Escape')
     await page.locator('.ac-overlay').click({ position: { x: 2, y: 2 } })
     await expect(editor).toBeVisible()
+    check = 'prefill-time-close'
+    await editor.getByRole('button', { name: 'Изменить дату и время встречи', exact: true }).click()
     await capture(page, name, 'prefill')
     await editor.getByRole('button', { name: 'Закрыть', exact: true }).click()
     await editor.getByRole('button', { name: 'Удалить черновик', exact: true }).click()
     await expect(page.getByRole('dialog')).toHaveCount(0)
     assert.equal(writes, 0, 'Must not write to calendar')
     assert.deepEqual(errors, [])
-    results.push({ browser: name, status: 'PASS', calendar_writes: writes,
+    results.push({ browser: name, status: 'PASS', calendar_writes: writes, focus_refresh: false, explicit_refresh: 'one state + one windows',
       group_count: state.groups.length, batch_cells: windows.cells.length,
       selected_status: eligible.status, option_count: details.options.length })
   } catch (error) {

@@ -5,6 +5,7 @@ import { auditCalendar, type CalendarFact, type CalendarMeetingWindowPrefill, ty
 import { ApiError } from '@/api/client'
 import { addDays, calendarTargetScopes, clampDay, errorText, MAX_DATE, MIN_DATE, moscowToday, numberLabel, periodError, readinessEnd } from '@/lib/auditCalendar'
 import { CalendarGraph } from '@/components/audit-calendar/CalendarGraph'
+import { CalendarMeetingWindowsControls } from '@/components/audit-calendar/CalendarMeetingWindows'
 import { CalendarMeetingEditor } from '@/components/audit-calendar/CalendarMeetingEditor'
 import { CalendarAvailability } from '@/components/audit-calendar/CalendarAvailability'
 import { CalendarReadiness } from '@/components/audit-calendar/CalendarReadiness'
@@ -40,7 +41,8 @@ export function AuditCalendarPage() {
   const q = params.get('q') || ''
   const windowDuration = Number(params.get('window_duration') ?? 30)
   const windowSpeaker = params.get('window_speaker') || ''
-  const [visible, setVisible] = useState(() => document.visibilityState === 'visible')
+  const [periodOpen, setPeriodOpen] = useState(false)
+  const [availabilityControls, setAvailabilityControls] = useState<HTMLDivElement | null>(null)
   const [draftFrom, setDraftFrom] = useState(from)
   const [draftTo, setDraftTo] = useState(to)
   const [search, setSearch] = useState(q)
@@ -83,15 +85,6 @@ export function AuditCalendarPage() {
     return () => { requestSequence.current += 1; stateController.current?.abort() }
   }, [refresh])
   useEffect(() => {
-    const focus = () => {
-      if (document.visibilityState === 'visible' && view === 'graph' && !denied) void refresh().catch(() => undefined)
-    }
-    const visibility = () => { setVisible(document.visibilityState === 'visible'); focus() }
-    window.addEventListener('focus', focus)
-    document.addEventListener('visibilitychange', visibility)
-    return () => { window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', visibility) }
-  }, [refresh, view, denied])
-  useEffect(() => {
     if (data && !params.has('from') && !params.has('to')) {
       const next = new URLSearchParams(params)
       next.set('from', data.scope.today); next.set('to', clampDay(addDays(data.scope.today, 6)))
@@ -126,22 +119,40 @@ export function AuditCalendarPage() {
   }
   const open = (date: string, start: number, plan?: CalendarPlan, fact?: CalendarFact) => setMeeting({ date, start, plan, fact })
   const selectedDay = params.get('day') || from
-  const windowsEnabled = !loading && dataQuery === query && !error && !urlError && visible
+  const windowsEnabled = !loading && dataQuery === query && !error && !urlError
   const canView = (item: typeof views[number]) => !item.helper || data?.actor.can_manage || (item.id === 'management' && data?.actor.can_archive)
-  return <div className="ac ac-page"><header className="ac-page-head"><div><h1>Сетевой план-график</h1><p className="ac-muted">{data?.scope.name || 'Календарь аудита'} · Europe/Moscow</p></div>{data && !denied && <div className="ac-kpis" aria-label="Показатели периода">{([{ key: 'plan', label: 'План' }, { key: 'fact', label: 'Факт' }, { key: 'attention', label: 'Внимание' }, { key: 'target', label: 'Цель' }] as const).map(k => <div key={k.key} className={`ac-kpi ac-kpi-${k.key}`}><strong>{numberLabel(data.stats[k.key])}</strong><span>{k.label}</span></div>)}</div>}</header>
-    <div className="ac-workspace"><aside className="ac-local-column"><div className="ac-local-context"><CalendarDays size={22} /><strong>Аудит</strong><span>{data?.scope.archived ? 'Архив' : data?.actor.can_manage ? 'Помощник' : 'Просмотр'}</span></div><nav aria-label="Представления календаря">{views.filter(canView).map(({ id, label, Icon }) => { const next = new URLSearchParams(params); next.set('view', id); if (id === 'readiness') next.set('to', readinessEnd(from, to)); return <Link key={id} to={`?${next}`} aria-current={view === id ? 'page' : undefined}><Icon size={18} /><span>{label}</span></Link> })}</nav></aside>
-      <main className="ac-content" aria-busy={loading}>
-        <div className="ac-filters"><form className="ac-period" onSubmit={e => { e.preventDefault(); applyPeriod(draftFrom, draftTo) }}><label>С<input type="date" min={MIN_DATE} max={MAX_DATE} required value={draftFrom} onChange={e => setDraftFrom(e.target.value)} /></label><label>По<input type="date" min={MIN_DATE} max={MAX_DATE} required value={draftTo} onChange={e => setDraftTo(e.target.value)} /></label><button type="submit">Применить</button></form><div className="ac-actions"><button className="ac-icon" type="button" aria-label="Предыдущий период" title="Предыдущий период" onClick={() => { const n = Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1; applyPeriod(clampDay(addDays(from, -n)), clampDay(addDays(to, -n))) }}><ChevronLeft size={18} /></button><button type="button" onClick={() => { const today = data?.scope.today || initialToday; applyPeriod(today, clampDay(addDays(today, 6))) }}>Сегодня</button>{[7, 14].map(n => <button type="button" key={n} onClick={() => applyPeriod(from, clampDay(addDays(from, n - 1)))}>{n} дней</button>)}<button className="ac-icon" type="button" aria-label="Следующий период" title="Следующий период" onClick={() => { const n = Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1; applyPeriod(clampDay(addDays(from, n)), clampDay(addDays(to, n))) }}><ChevronRight size={18} /></button><button type="button" className="ac-icon" disabled={loading} aria-label="Обновить календарь" title="Обновить календарь" onClick={() => void refresh().catch(() => undefined)}><RefreshCw size={16} /></button></div></div>
+  return <div className="ac ac-page ac-compact"><div className="ac-header-band"><header className={`ac-page-head${['readiness', 'workload'].includes(view) ? ' ac-header-simple' : ''}`}>
+      <div className="ac-page-title"><h1>Календарь аудита</h1><p className="ac-muted">Сетевой план-график</p></div>
+      <div className="ac-header-controls"><div className="ac-toolbar">
+        {data && !denied && !['readiness', 'workload'].includes(view) && <>
+          {view === 'availability' && <div className="ac-availability-controls" ref={setAvailabilityControls} />}
+          <label>Группа<select value={group} onChange={e => update({ group: e.target.value })}><option value="">Все группы</option>{data.groups.map(g => <option key={g.id} value={g.id}>{g.code}</option>)}</select></label>
+          {view !== 'availability' && <label>Участник<select value={person} onChange={e => update({ person: e.target.value })}><option value="">Все участники</option>{data.members.map(m => <option key={m.user_id} value={m.user_id}>{m.code} · {m.full_name}</option>)}</select></label>}
+          {view === 'graph' && <CalendarMeetingWindowsControls state={data} duration={windowDuration} speakerId={windowSpeaker} onControlsChange={update} />}
+          <details className="ac-search-disclosure"><summary aria-label="Поиск активности" title={q ? `Поиск активности: ${q}` : 'Поиск активности'} data-active={!!q}><Search size={16} aria-hidden="true" /></summary><form className="ac-search" onSubmit={e => { e.preventDefault(); update({ q: search.trim() }) }}><label><span className="sr-only">Поиск активности</span><input type="search" value={search} maxLength={200} placeholder="Активность…" onChange={e => setSearch(e.target.value)} /></label><button className="ac-icon" type="submit" title="Найти" aria-label="Найти"><Search size={16} /></button></form></details>
+        </>}
+        <button type="button" className="ac-icon" disabled={loading} aria-label="Обновить календарь" title="Обновить календарь и доступные окна" onClick={() => void refresh().catch(() => undefined)}><RefreshCw size={16} /></button>
+      </div></div>
+      {data && !denied && <div className="ac-kpis" aria-label="Показатели периода">{([{ key: 'plan', label: 'План' }, { key: 'fact', label: 'Факт' }, { key: 'attention', label: 'Внимание' }, { key: 'target', label: 'Цель' }] as const).map(k => <div key={k.key} className={`ac-kpi ac-kpi-${k.key}`} title={k.key === 'target' ? `Цель: ${calendarTargetScopes[data.stats.target_scope]}. Поиск и участник не меняют цель и накопленный недобор.` : k.label}><strong>{numberLabel(data.stats[k.key])}</strong><span>{k.label}</span></div>)}</div>}
+    </header></div>
+    <div className="ac-workspace"><aside className="ac-local-column">
+      <div className="ac-local-tools"><div className="ac-local-context"><CalendarDays size={22} /><strong>Аудит</strong><span>{data?.scope.archived ? 'Архив' : data?.actor.can_manage ? 'Помощник' : 'Просмотр'}</span></div>
+        <details className="ac-period-panel" data-fixed-window={view === 'availability'} open={periodOpen} onToggle={event => setPeriodOpen(event.currentTarget.open)}><summary>Период <span>{from.split('-').reverse().join('.')} – {(view === 'availability' ? queryTo : to).split('-').reverse().join('.')}</span></summary>
+          <div className="ac-period-presets"><button type="button" onClick={() => { const today = data?.scope.today || initialToday; applyPeriod(today, clampDay(addDays(today, 6))) }}>Сегодня</button>{[7, 14].map(n => <button type="button" key={n} aria-label={`${n} дней`} title={`${n} дней`} onClick={() => applyPeriod(from, clampDay(addDays(from, n - 1)))}>{n}</button>)}<button className="ac-icon" type="button" aria-label="Предыдущий период" title="Предыдущий период" onClick={() => { const n = Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1; applyPeriod(clampDay(addDays(from, -n)), clampDay(addDays(to, -n))) }}><ChevronLeft size={16} /></button><button className="ac-icon" type="button" aria-label="Следующий период" title="Следующий период" onClick={() => { const n = Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1; applyPeriod(clampDay(addDays(from, n)), clampDay(addDays(to, n))) }}><ChevronRight size={16} /></button></div>
+          <form className="ac-period" onSubmit={e => { e.preventDefault(); applyPeriod(draftFrom, draftTo) }}><label><span className="sr-only">С</span><input type="date" min={MIN_DATE} max={MAX_DATE} required value={draftFrom} onChange={e => setDraftFrom(e.target.value)} /></label><label><span className="sr-only">По</span><input type="date" min={MIN_DATE} max={MAX_DATE} required value={draftTo} onChange={e => setDraftTo(e.target.value)} /></label><button type="submit">Применить</button></form>
+        </details>
         {(validation || urlError) && <p className="ac-error" role="alert">{validation || urlError}</p>}
-        {data && !denied && !['readiness', 'workload'].includes(view) && <div className="ac-toolbar"><label>Группа<select value={group} onChange={e => update({ group: e.target.value })}><option value="">Все группы</option>{data.groups.map(g => <option key={g.id} value={g.id}>{g.code}</option>)}</select></label>{view !== 'availability' && <label>Участник<select value={person} onChange={e => update({ person: e.target.value })}><option value="">Все участники</option>{data.members.map(m => <option key={m.user_id} value={m.user_id}>{m.code} · {m.full_name}</option>)}</select></label>}<form className="ac-search" onSubmit={e => { e.preventDefault(); update({ q: search.trim() }) }}><label><span className="sr-only">Поиск активности</span><input type="search" value={search} maxLength={200} placeholder="Активность…" onChange={e => setSearch(e.target.value)} /></label><button className="ac-icon" type="submit" title="Найти" aria-label="Найти"><Search size={16} /></button></form><div className="ac-legend"><span className="ac-plan-label">План</span><span className="ac-fact-label">Факт</span><span>△ Внимание</span></div></div>}
+      </div>
+      <nav aria-label="Представления календаря">{views.filter(canView).map(({ id, label, Icon }) => { const next = new URLSearchParams(params); next.set('view', id); if (id === 'readiness') next.set('to', readinessEnd(from, to)); return <Link key={id} to={`?${next}`} aria-current={view === id ? 'page' : undefined}><Icon size={18} /><span>{label}</span></Link> })}</nav>
+    </aside><main className="ac-content" aria-busy={loading}>
         {error && <div className="ac-error" role="alert" ref={errorPanel} tabIndex={-1}><strong>{denied ? 'Нет доступа к контуру' : 'Данные не обновлены'}</strong><p>{error}</p><button type="button" onClick={() => void refresh().catch(() => undefined)}>Повторить</button></div>}
         {loading && !data && <p className="ac-empty" role="status">Загрузка календаря…</p>}
-        {data && !denied && <div className="ac-bound-content" ref={node => node?.toggleAttribute('inert', loading || dataQuery !== query)} aria-busy={loading || dataQuery !== query}>{view !== 'workload' && <p className="ac-scope-caption">Цель: {calendarTargetScopes[data.stats.target_scope]}. Поиск и участник не меняют цель и накопленный недобор.{data.scope.archived ? ' Контур архивирован, изменения заблокированы.' : ''}</p>}
+        {data && !denied && <div className="ac-bound-content" data-view={view} ref={node => node?.toggleAttribute('inert', loading || dataQuery !== query)} aria-busy={loading || dataQuery !== query}>{view === 'management' && <p className="ac-scope-caption">Цель: {calendarTargetScopes[data.stats.target_scope]}. Поиск и участник не меняют цель и накопленный недобор.</p>}{data.scope.archived && <p className="ac-scope-caption">Контур архивирован, изменения заблокированы.</p>}
           {view === 'graph' && <CalendarGraph state={data} from={from} to={to} day={selectedDay} groupId={group || null} setDay={day => update({ day })} onOpen={open} windows={{ duration: windowDuration, speakerId: windowSpeaker, enabled: windowsEnabled, sourceKey: query, sourceError: error || urlError, onControlsChange: update, onRefresh: refresh, onSelect: (date, start, prefill) => {
             if (windowsEnabled && data.actor.can_manage && !data.scope.archived && prefill.version === data.scope.version) setMeeting({ date, start, prefill })
           } }} />}
-          {view === 'availability' && <><CalendarAvailability state={data} from={from} person={params.get('availability_person') || data.actor.user_id} setPerson={availability_person => update({ availability_person })} day={selectedDay} setDay={day => update({ day })} onRefresh={refresh} onAbsence={user => setAction({ kind: 'absence', user })} onAction={setAvailabilityAction} /><h3>Отсутствия</h3><AbsenceList state={data} onAction={setAction} /></>}
-          {view === 'readiness' && <CalendarReadiness state={data} from={from} to={to} onAction={setAvailabilityAction} />}
+          {view === 'availability' && <><CalendarAvailability state={data} from={from} person={params.get('availability_person') || data.actor.user_id} setPerson={availability_person => update({ availability_person })} day={selectedDay} setDay={day => update({ day })} onRefresh={refresh} onAbsence={user => setAction({ kind: 'absence', user })} onAction={setAvailabilityAction} controlsTarget={availabilityControls} enabled={!loading && dataQuery === query && !error && !urlError} /><h3>Отсутствия</h3><AbsenceList state={data} onAction={setAction} /></>}
+          {view === 'readiness' && <CalendarReadiness state={data} from={from} to={to} onAction={setAvailabilityAction} onRefresh={refresh} />}
           {view === 'workload' && <CalendarWorkload state={data} from={from} to={to} groupId={group} enabled={!loading && dataQuery === query && !error && !urlError} onGroupChange={value => update({ group: value })} />}
           {view === 'dataset' && <CalendarDataset state={data} onOpen={open} onRestore={setRestore} />}
           {view === 'directories' && <CalendarDirectories state={data} onAction={setAction} />}

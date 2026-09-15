@@ -5,6 +5,7 @@ import { auditCalendar, type CalendarReadiness as Readiness, type CalendarState 
 import { ApiError } from '@/api/client'
 import { calendarRoles, calendarStatuses, dateLabel, errorText, isWorkingDay, requestStatuses, serverTimeLabel, timeLabel } from '@/lib/auditCalendar'
 import type { AvailabilityAction } from './CalendarAvailabilityAction'
+import { CalendarAvailabilityTimeline } from './CalendarAvailabilityTimeline'
 
 const employeeStatuses = { missing: 'Не заполнено', partial: 'Частично', filled: 'Заполнено', absent: 'Отсутствие' }
 const groupStatuses = { no_composition: 'Нет состава', missing: 'Доступность не заполнена', absent: 'Отсутствие участника', no_overlap: 'Нет общего свободного окна', booked: 'Общие окна заняты встречами', available: 'Есть свободное окно' }
@@ -14,9 +15,10 @@ function availabilityHref(user: string, date: string) {
   return `/audit-calendar?${new URLSearchParams({ view: 'availability', from: date, to: date, day: date, availability_person: user })}`
 }
 
-export function CalendarReadiness({ state, from, to, onAction }: { state: CalendarState; from: string; to: string; onAction: (action: AvailabilityAction) => void }) {
+export function CalendarReadiness({ state, from, to, onAction, onRefresh }: { state: CalendarState; from: string; to: string; onAction: (action: AvailabilityAction) => void; onRefresh: () => Promise<unknown> }) {
   const [params, setParams] = useSearchParams()
-  const tab = ['employees', 'groups', 'requests'].includes(params.get('summary_tab') || '') ? params.get('summary_tab')! : 'employees'
+  const tab = ['timeline', 'employees', 'groups', 'requests'].includes(params.get('summary_tab') || '') ? params.get('summary_tab')! : 'timeline'
+  const needsReadiness = tab === 'employees' || tab === 'groups'
   const rawDuration = Number(params.get('duration') || 30)
   const duration = Number.isInteger(rawDuration) && rawDuration >= 30 && rawDuration <= 480 && rawDuration % 30 === 0 ? rawDuration : 30
   const [result, setResult] = useState<Readiness | null>(null)
@@ -25,6 +27,7 @@ export function CalendarReadiness({ state, from, to, onAction }: { state: Calend
   const query = JSON.stringify({ from, to, duration, version: state.scope.version })
   const [loadedQuery, setLoadedQuery] = useState('')
   useEffect(() => {
+    if (!needsReadiness) return
     const controller = new AbortController()
     setError(''); setLoadedQuery('')
     auditCalendar.readiness({ from, to, duration }, controller.signal).then(data => {
@@ -35,8 +38,8 @@ export function CalendarReadiness({ state, from, to, onAction }: { state: Calend
       setError(errorText(e)); setResult(null)
     })
     return () => controller.abort()
-  }, [from, to, duration, query, reload])
-  const loading = !error && loadedQuery !== query
+  }, [from, to, duration, query, reload, needsReadiness])
+  const loading = needsReadiness && !error && loadedQuery !== query
   const current = !loading && !error ? result : null
   const stale = !!current && current.scope_version !== state.scope.version
   const canNotify = state.actor.can_manage && !state.scope.archived && !stale
@@ -45,18 +48,17 @@ export function CalendarReadiness({ state, from, to, onAction }: { state: Calend
   const inPeriod = (date: string) => date >= from && date <= to && isWorkingDay(date)
   const personLink = (id: string, date: string, label = name(id)) => <Link className="ac-readiness-link" to={availabilityHref(id, date)}>{label}<ArrowRight size={14} aria-hidden="true" /></Link>
   return <section className="ac-readiness" aria-label="Сводка доступности">
-    <header className="ac-section-head"><h2>Сводка доступности</h2><button type="button" className="ac-icon" title="Обновить сводку" aria-label="Обновить сводку" disabled={loading} onClick={() => setReload(n => n + 1)}><RefreshCw size={16} /></button></header>
-    <p className="ac-muted">{dateLabel(from)}–{dateLabel(to)} · Пн–Пт · {timeLabel(current?.working_start ?? 600)}–{timeLabel(current?.working_end ?? 1080)} · Europe/Moscow</p>
-    <nav className="ac-summary-tabs" aria-label="Вкладки сводки">{([{ id: 'employees', label: 'Сотрудники' }, { id: 'groups', label: 'Группы' }, { id: 'requests', label: 'Заявки' }]).map(item => {
+    <header className="ac-section-head"><div><h2>Сводка доступности</h2><small>{dateLabel(from)}–{dateLabel(to)} · Пн–Пт · {timeLabel(current?.working_start ?? 600)}–{timeLabel(current?.working_end ?? 1080)} · Europe/Moscow</small></div><button type="button" className="ac-icon" title="Обновить сводку" aria-label="Обновить сводку" disabled={loading} onClick={() => setReload(n => n + 1)}><RefreshCw size={16} /></button></header>
+    <div className="ac-summary-controls"><nav className="ac-summary-tabs" aria-label="Вкладки сводки">{([{ id: 'timeline', label: 'По времени' }, { id: 'employees', label: 'Заполненность' }, { id: 'groups', label: 'Группы' }, { id: 'requests', label: 'Заявки' }]).map(item => {
       const next = new URLSearchParams(params); next.set('summary_tab', item.id)
       return <Link key={item.id} to={`?${next}`} aria-current={tab === item.id ? 'page' : undefined}>{item.label}{item.id === 'requests' ? ` (${requests.filter(r => ['pending', 'approved'].includes(r.status)).length})` : ''}</Link>
-    })}</nav>
-    {tab !== 'requests' && <>
-      {tab === 'groups' && <div className="ac-toolbar"><label>Окно встречи, мин<select value={duration} onChange={e => { const next = new URLSearchParams(params); next.set('duration', e.target.value); setParams(next) }}>{Array.from({ length: 16 }, (_, i) => (i + 1) * 30).map(n => <option key={n} value={n}>{n}</option>)}</select></label></div>}
+    })}</nav>{tab === 'groups' && <label className="ac-duration-field">Окно (мин)<select aria-label="Окно встречи, мин" value={duration} onChange={e => { const next = new URLSearchParams(params); next.set('duration', e.target.value); setParams(next) }}>{Array.from({ length: 16 }, (_, i) => (i + 1) * 30).map(n => <option key={n} value={n}>{n}</option>)}</select></label>}</div>
+    {needsReadiness && <>
       {error && <div className="ac-error" role="alert">{error}<button type="button" onClick={() => setReload(n => n + 1)}>Повторить загрузку сводки</button></div>}
       {loading && <p className="ac-empty" role="status">Загрузка сводки…</p>}
       {stale && <p className="ac-warning" role="status">Версия сводки отличается от календаря. Обновите календарь перед отправкой уведомлений.</p>}
     </>}
+    {tab === 'timeline' && <CalendarAvailabilityTimeline state={state} from={from} to={to} reload={reload} onReload={() => setReload(n => n + 1)} onRefresh={onRefresh} />}
     {tab === 'employees' && current && <div className="ac-readiness-list">{current.employees.length ? current.employees.map(employee => <section className="ac-readiness-person" key={employee.user_id} aria-label={employee.full_name}>
       <header className="ac-section-head"><h3>{employee.code} · {employee.full_name}</h3><span className="ac-muted">{calendarRoles[employee.role]} · заполнено {employee.filled_days} из {employee.total_days}</span></header>
       <div className="ac-readiness-days">{employee.days.filter(d => inPeriod(d.date)).map(day => <Link key={day.date} className={`ac-readiness-day ac-readiness-${day.status}`} to={availabilityHref(employee.user_id, day.date)} aria-label={`${employee.full_name}, ${day.date}: ${employeeStatuses[day.status]}${day.locked ? ', день закрыт' : ''}`}>
