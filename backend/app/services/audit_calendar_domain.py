@@ -8,8 +8,8 @@ from app.services.audit_calendar_math import AvailabilityWindow, Absence, availa
 MOSCOW = ZoneInfo("Europe/Moscow")
 
 
-def issue(code, message):
-    return {"code": code, "message": message}
+def issue(code, message, **details):
+    return {"code": code, "message": message, **details}
 
 
 def meeting_instant(day, start):
@@ -36,32 +36,36 @@ def historical_source_issues(original, actual_date, today, *, actual_group_code=
 
 def availability_issues(day, start, duration, user_ids, windows, absences):
     errors, warnings = [], []
-    for user_id in set(user_ids):
+    for user_id in sorted(set(user_ids), key=str):
         pid = str(user_id)
         value = availability_value(windows, person_id=pid, day=day,
                                    start_minute=start, end_minute=start + duration, absences=absences)
         if value is False:
-            errors.append(issue("UNAVAILABLE", "Один из участников отсутствует или занят в это время"))
+            errors.append(issue("UNAVAILABLE", "Участник отсутствует или занят в это время", user_id=pid))
         elif value is None:
             has_free = any(w.person_id == pid and w.day == day and w.available for w in windows)
             (errors if has_free else warnings).append(issue(
                 "OUTSIDE_AVAILABILITY" if has_free else "AVAILABILITY_UNKNOWN",
-                "Свободные интервалы участника не покрывают встречу целиком" if has_free else "Свободное время одного из участников на эту дату не указано",
+                "Свободные интервалы участника не покрывают встречу целиком" if has_free else "Свободное время участника на эту дату не указано", user_id=pid,
             ))
     return errors, warnings
 
 
-def composition_issues(group, version, members, users, activity, speaker_id):
+def composition_issues(group, version, members, users, activity, speaker_id, *, require_speaker=True):
     errors = []
     if group.legacy or group.archived or version is None:
         errors.append(issue("GROUP_UNAVAILABLE", "Нужна действующая версия состава современной группы"))
     roles = [(getattr(version, "auditor_id", None), "auditor"),
-             (getattr(version, "tech_id", None), "tech"), (speaker_id, "speaker")]
+             (getattr(version, "tech_id", None), "tech")]
+    if require_speaker or speaker_id:
+        roles.append((speaker_id, "speaker"))
     for uid, role in roles:
         member, user = members.get(uid), users.get(uid)
         if not uid or not member or not member.active or member.role != role or not user or not user.is_active or not user.audit_calendar_enabled:
-            errors.append(issue("MEMBER_ROLE", "Проверьте роли, активное участие и допуск к календарю у аудитора, техспециалиста и докладчика"))
-    if len({uid for uid, _ in roles if uid}) != 3:
+            role_label = {"auditor": "Аудитор", "tech": "Техспециалист", "speaker": "Докладчик"}[role]
+            errors.append(issue("MEMBER_ROLE", f"{role_label}: проверьте роль, активное участие и допуск к календарю",
+                                role=role, **({"user_id": str(uid)} if uid else {})))
+    if len({uid for uid, _ in roles if uid}) != len(roles):
         errors.append(issue("PARTICIPANTS_DISTINCT", "Аудитор, техспециалист и докладчик должны быть разными участниками"))
     if not activity.strip() or len(activity.strip()) > 80:
         errors.append(issue("ACTIVITY_MISSING", "Укажите активность длиной от 1 до 80 символов"))
@@ -80,8 +84,10 @@ def conflict_issues(candidate, participants, records, by_record, *, facts=False)
             continue
         if facts and other.outcome != "completed" or not facts and other.status == "cancelled":
             continue
-        if overlaps(candidate, other) and ids.intersection(by_record.get(other.id, ())):
-            result.append(issue("FACT_CONFLICT" if facts else "PARTICIPANT_CONFLICT", "Один из участников уже участвует в другой встрече в это время"))
+        if overlaps(candidate, other):
+            for uid in sorted(ids.intersection(by_record.get(other.id, ())), key=str):
+                result.append(issue("FACT_CONFLICT" if facts else "PARTICIPANT_CONFLICT", "Участник уже участвует в другой встрече в это время",
+                                    user_id=str(uid), record_id=str(other.id)))
     return result
 
 

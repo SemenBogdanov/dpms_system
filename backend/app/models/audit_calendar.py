@@ -162,6 +162,35 @@ class AuditCalendarAbsence(Scoped, Base):
     status: Mapped[str] = mapped_column(String(16), default="active")
 
 
+class AuditCalendarAvailabilityLock(Scoped, Base):
+    __tablename__ = "audit_calendar_availability_locks"
+    __table_args__ = constraints("availability_lock", member_fk("user_id"), UniqueConstraint("scope_id", "user_id", "date"), date_constraint("date", "lock"))
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    date: Mapped[DateType] = mapped_column(Date)
+    locked: Mapped[bool] = mapped_column(Boolean, default=True)
+    locked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    locked_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    snapshot: Mapped[list] = mapped_column(JSON_VALUE)
+
+
+class AuditCalendarChangeRequest(Scoped, Base):
+    __tablename__ = "audit_calendar_change_requests"
+    __table_args__ = constraints("change_request", member_fk("user_id"), date_constraint("date", "request"), CheckConstraint("status IN ('pending','approved','closed','rejected')", name="ck_ac_request_status"))
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    date: Mapped[DateType] = mapped_column(Date)
+    reason: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    requested_by_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    opened_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_by_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    resolution: Mapped[str] = mapped_column(Text, default="")
+    before: Mapped[list] = mapped_column(JSON_VALUE)
+    after: Mapped[list | None] = mapped_column(JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql"), nullable=True)
+
+
 class AuditCalendarNormRevision(Scoped, Base):
     __tablename__ = "audit_calendar_norm_revisions"
     __table_args__ = constraints("norm", scoped_fk("group_id", "groups"), date_constraint("effective_from", "norm"), CheckConstraint("value BETWEEN 0 AND 1000", name="ck_ac_norm_value"), UniqueConstraint("scope_id", "revision"))

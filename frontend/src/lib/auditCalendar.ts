@@ -4,6 +4,7 @@ export const MIN_DATE = '2000-01-01'
 export const MAX_DATE = '2100-12-31'
 export const calendarRoles = { auditor: 'Аудитор', tech: 'Техспециалист', speaker: 'Докладчик', observer: 'Наблюдатель' }
 export const calendarStatuses = { draft: 'Черновик', planned: 'Запланировано', cancelled: 'Отменено', completed: 'Проведено' }
+export const requestStatuses = { pending: 'Ожидает решения', approved: 'Открыто для изменений', closed: 'Закрыта, день зафиксирован', rejected: 'Отклонена' }
 export const calendarTargetScopes = { team: 'Команда', group: 'Группа' }
 export function validDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || value < MIN_DATE || value > MAX_DATE) return false
@@ -16,6 +17,11 @@ export function addDays(date: string, count: number) {
   return next.toISOString().slice(0, 10)
 }
 export function clampDay(date: string) { return date < MIN_DATE ? MIN_DATE : date > MAX_DATE ? MAX_DATE : date }
+export function readinessEnd(from: string, to: string) { return [to, clampDay(addDays(from, 30))].sort()[0] }
+export function isWorkingDay(date: string) { return ![0, 6].includes(new Date(`${date}T00:00:00Z`).getUTCDay()) }
+export function serverTimeLabel(value: string | null) { return value ? new Date(value).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }) : '—' }
+export function availabilityLocked(state: CalendarState, user: string, date: string) { return state.availability_locks.some(lock => lock.user_id === user && lock.date === date && lock.locked) }
+export function activeChangeRequest(state: CalendarState, user: string, date: string) { return state.change_requests.find(request => request.user_id === user && request.date === date && ['pending', 'approved'].includes(request.status)) }
 export function periodError(from: string, to: string) {
   if (!validDate(from) || !validDate(to)) return 'Даты должны быть в диапазоне 2000–2100.'
   if (from > to) return 'Дата «По» не может быть раньше даты «С».'

@@ -90,10 +90,18 @@ class Meeting(StrictModel):
 
 
 class PlanSave(Meeting):
+    duration: Annotated[StrictInt, Field(ge=30, le=1440, multiple_of=30)] = 30
     id: UUID | None = None
     group_id: UUID
     status: Literal["draft", "planned", "cancelled"]
     reason: Text = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def update_duration(cls, value):
+        if isinstance(value, dict) and value.get("id") is not None and "duration" not in value:
+            raise ValueError("При изменении встречи укажите длительность; 30 минут по умолчанию только для новой встречи")
+        return value
 
 
 class FactRecord(Meeting):
@@ -163,12 +171,18 @@ class AvailabilityPatch(StrictModel):
 class AvailabilityPaint(StrictModel):
     user_id: UUID
     patches: Annotated[list[AvailabilityPatch], Field(min_length=1, max_length=672)]
+    expected: Annotated[list[AvailabilityPatch], Field(min_length=1, max_length=672)] | None = None
 
     @model_validator(mode="after")
     def period(self):
         dates = [p.date for p in self.patches]
         if (max(dates) - min(dates)).days > 13:
             raise ValueError("За одну операцию можно изменить доступность не более чем за 14 дней")
+        if self.expected is not None:
+            touched = {(p.date, minute) for p in self.patches for minute in range(p.start, p.end, 30)}
+            cells = [(p.date, p.start) for p in self.expected]
+            if any(p.end != p.start + 30 for p in self.expected) or len(cells) != len(set(cells)) or set(cells) != touched:
+                raise ValueError("Исходные значения должны содержать каждый изменяемый интервал по 30 минут ровно один раз")
         return self
 
 
@@ -200,6 +214,45 @@ class NormSet(StrictModel):
 class ScopeArchive(StrictModel):
     archived: StrictBool
     reason: Reason
+
+
+class AvailabilityDay(StrictModel):
+    user_id: UUID
+    date: Day
+    reason: Reason
+
+
+class AvailabilityResolve(StrictModel):
+    id: UUID
+    action: Literal["approve", "close", "reject"]
+    reason: Reason
+
+
+class AvailabilityNotify(StrictModel):
+    group_id: UUID
+    date: Day
+    duration: Annotated[StrictInt, Field(ge=30, le=480, multiple_of=30)] = 30
+    reason: Reason
+
+
+class AvailabilityLockCommand(Versioned):
+    operation: Literal["availability.lock"]
+    payload: AvailabilityDay
+
+
+class AvailabilityRequestCommand(Versioned):
+    operation: Literal["availability.request"]
+    payload: AvailabilityDay
+
+
+class AvailabilityResolveCommand(Versioned):
+    operation: Literal["availability.resolve"]
+    payload: AvailabilityResolve
+
+
+class AvailabilityNotifyCommand(Versioned):
+    operation: Literal["availability.notify"]
+    payload: AvailabilityNotify
 
 
 class GroupCommand(Versioned):
@@ -257,7 +310,7 @@ class ArchiveCommand(Versioned):
     payload: ScopeArchive
 
 
-Command = Annotated[Union[GroupCommand, PlanCommand, ReviseCommand, FactCommand, RestoreCommand, NoticeCommand, AvailabilityCommand, AbsenceCommand, EndCommand, NormCommand, ArchiveCommand], Field(discriminator="operation")]
+Command = Annotated[Union[GroupCommand, PlanCommand, ReviseCommand, FactCommand, RestoreCommand, NoticeCommand, AvailabilityCommand, AbsenceCommand, EndCommand, NormCommand, ArchiveCommand, AvailabilityLockCommand, AvailabilityRequestCommand, AvailabilityResolveCommand, AvailabilityNotifyCommand], Field(discriminator="operation")]
 command_adapter = TypeAdapter(Command)
 
 

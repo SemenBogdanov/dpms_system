@@ -39,6 +39,9 @@ IMPORTANT_NOTIFICATION_TYPES = frozenset(
         "purchase_approved",
         "purchase_rejected",
         "rollover",
+        "calendar_availability_requested",
+        "calendar_availability_resolved",
+        "calendar_group_reconcile_requested",
     }
 )
 

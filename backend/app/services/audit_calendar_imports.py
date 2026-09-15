@@ -8,7 +8,7 @@ from sqlalchemy import select
 from app.models.audit_calendar import AuditCalendarImportMapping as Mapping
 from app.services.audit_calendar import (
     CalendarService, Scope, Member, Group, Plan, PlanParticipant, Fact, FactParticipant,
-    Availability, Absence, Norm, Notice, ImportBatch, ImportRow, ImportApplication,
+    Availability, Absence, Norm, Notice, ImportBatch, ImportRow, ImportApplication, DayLock,
     encoded, fail, columns,
 )
 from app.services.audit_calendar_domain import composition_issues, conflict_issues, issue, meeting_instant, availability_issues, availability_projections, historical_source_issues
@@ -100,6 +100,10 @@ class CalendarImportService(CalendarService):
                 issues.append(issue("PAST_PLAN", "Прошедший новый план или рабочая редакция не дают права на историческое исключение"))
             if row.origin == "working-revision" and not (original.sourceRow is not None and HISTORY_FROM <= original.date <= HISTORY_TO):
                 issues.append(issue("SOURCE_HORIZON", "Оригинал рабочей редакции находится за пределами установленного периода источника"))
+            if not historic and row.speakerId and not missing:
+                member = self.members.get(mapping[row.speakerId])
+                if not member or member.role != "speaker":
+                    issues.append(issue("MEMBER_ROLE", "Докладчик нового плана из источника должен иметь календарную роль «Докладчик», включая черновики"))
             if not historic and row.status == "planned" and not missing:
                 group = by_code.get(row.groupId)
                 pair = group_mapping.get(row.groupId)
@@ -159,8 +163,11 @@ class CalendarImportService(CalendarService):
         # absence set, before insertion. The same path is used again at apply.
         if not missing:
             windows, absences = availability_projections(await self.rows(Availability), await self.rows(Absence))
+            locked_days = await self.rows(DayLock, DayLock.locked.is_(True))
             for w in source.data.availability:
                 uid = str(mapping[w.personId])
+                if any(str(l.user_id) == uid and l.date == w.date for l in locked_days):
+                    issues.append(issue("AVAILABILITY_LOCKED", "Импорт затрагивает закрытую доступность; сначала согласуйте заявку на этот день"))
                 overlapping = [old for old in windows if old.person_id == uid and old.day == w.date
                                and old.start_minute < w.end and old.end_minute > w.start]
                 new = Window(uid, w.date, w.start, w.end, w.available)
@@ -170,6 +177,8 @@ class CalendarImportService(CalendarService):
                     windows.append(new)
             if source.data.planning:
                 for a in source.data.planning.absences:
+                    if any(l.user_id == mapping[a.personId] and a.from_ <= l.date <= a.to for l in locked_days):
+                        issues.append(issue("AVAILABILITY_LOCKED", "Отсутствие из импорта затрагивает закрытый день"))
                     new = MathAbsence(str(mapping[a.personId]), a.from_, a.to)
                     if any(old.person_id == new.person_id and old.start <= new.end and old.end >= new.start and old != new for old in absences):
                         issues.append(issue("ABSENCE_CONFLICT", "Отсутствие из источника пересекается с сохранённым или другим входящим периодом"))

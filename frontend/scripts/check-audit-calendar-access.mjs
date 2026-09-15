@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { spawnSync } from 'node:child_process'
 import ts from 'typescript'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -20,13 +21,33 @@ function loadModule(path, overrides = {}) {
 }
 const access = loadModule('src/lib/access.ts')
 const nav = loadModule('src/lib/sidebarNavigation.ts', { '@/lib/access': access })
+let combinations = 0
 for (const role of ['executor', 'teamlead', 'admin']) {
   for (const audit of [false, true]) {
     for (const enabled of [false, true]) {
-      const user = { role, audit_enabled: audit, audit_calendar_enabled: enabled }
-      assert.equal(access.hasAuditCalendarAccess(user), enabled)
-      assert.equal(nav.visibleSidebarNav(user).some((item) => item.id === 'audit-calendar'), enabled)
-      assert.equal(access.firstAvailablePath(user), '/messages')
+      for (const task of [false, true]) {
+        for (const development of [false, true]) {
+          for (const constructor of [false, true]) {
+            for (const feedback of [false, true]) {
+              const user = {
+                role, audit_enabled: audit, audit_calendar_enabled: enabled,
+                task_workspace_enabled: task, competency_development_enabled: development,
+                competency_constructor_enabled: constructor, feedback_enabled: feedback,
+              }
+              const visible = nav.visibleSidebarNav(user)
+              assert.equal(access.hasAuditCalendarAccess(user), enabled)
+              assert.equal(visible.some((item) => item.id === 'audit-calendar'), enabled)
+              assert.equal(access.hasAuditAccess(user), role === 'admin' || audit)
+              assert.equal(visible.some((item) => item.id === 'audit'), role === 'admin' || audit)
+              assert.equal(access.hasTaskWorkspaceAccess(user), role === 'admin' || task)
+              assert.equal(access.firstAvailablePath(user), '/messages')
+              const menuItems = nav.defaultSidebarOrder.groups.flatMap((group) => nav.visibleItemsForButton(group, visible))
+              assert.equal(menuItems.some((item) => item.id === 'audit-calendar'), enabled)
+              combinations += 1
+            }
+          }
+        }
+      }
     }
   }
 }
@@ -49,4 +70,9 @@ const deliberatelyHidden = nav.normalizeSidebarOrder({
 assert.equal(deliberatelyHidden.groups.flatMap((g) => g.itemIds).includes('audit-calendar'), false)
 assert.equal(nav.visibleSidebarNav({ role: 'executor', audit_calendar_enabled: true })
   .some((item) => item.id === 'audit-calendar'), true)
-console.log('Audit calendar access OK: 12 role/grant combinations, old-menu migration, custom-menu preservation, Messages default.')
+const regressions = spawnSync(process.execPath, ['--test',
+  resolve(root, 'tests/calendar-access-refresh.test.mjs'),
+  resolve(root, 'tests/calendar-access-components.test.mjs'),
+], { stdio: 'inherit' })
+assert.equal(regressions.status, 0, 'Calendar access component/refresh regressions failed')
+console.log(`Audit calendar access OK: ${combinations} role/grant combinations, old-menu migration, custom-menu preservation, Messages default.`)

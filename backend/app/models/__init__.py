@@ -32,6 +32,8 @@ from app.models.audit_calendar import (
     AuditCalendarImportMapping,
     AuditCalendarImportApplication,
     AuditCalendarIdempotency,
+    AuditCalendarAvailabilityLock,
+    AuditCalendarChangeRequest,
 )
 from app.models.catalog import CatalogItem
 from app.models.task import (
@@ -155,6 +157,8 @@ __all__ = [
     "AuditCalendarImportMapping",
     "AuditCalendarImportApplication",
     "AuditCalendarIdempotency",
+    "AuditCalendarAvailabilityLock",
+    "AuditCalendarChangeRequest",
     "CatalogItem",
     "Task",
     "TaskAcceptanceCriterion",

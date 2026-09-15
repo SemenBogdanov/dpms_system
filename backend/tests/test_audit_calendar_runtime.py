@@ -14,6 +14,7 @@ from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
 import unittest
+from unittest.mock import patch
 from uuid import UUID, uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -24,7 +25,7 @@ READY = DEPENDENCIES and bool(TEST_URL)
 
 def load_runtime():
     """An isolated model registry prevents importing production configuration."""
-    global sa, async_sessionmaker, create_async_engine, models, service, imports, schema, User, migration, Operations, MigrationContext
+    global sa, async_sessionmaker, create_async_engine, models, service, imports, schema, User, migration, controls_migration, request_guards, Operations, MigrationContext
     import sqlalchemy as sa
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -57,6 +58,13 @@ def load_runtime():
     spec = importlib.util.spec_from_file_location("calendar_test_migration_087", path)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
+    path = path.with_name("089_calendar_availability_control.py")
+    spec = importlib.util.spec_from_file_location("calendar_test_migration_089", path)
+    controls_migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(controls_migration)
+    spec = importlib.util.spec_from_file_location("calendar_test_migration_091", path.with_name("091_calendar_request_guards.py"))
+    request_guards = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(request_guards)
 
 
 @unittest.skipUnless(READY, "Requires dependencies and AUDIT_CALENDAR_TEST_DATABASE_URL for an approved disposable DB")
@@ -82,6 +90,8 @@ class CalendarRuntimeTests(unittest.IsolatedAsyncioTestCase):
             def upgrade(sync):
                 with Operations.context(MigrationContext.configure(sync)):
                     migration.upgrade()
+                    controls_migration.upgrade()
+                    request_guards.upgrade()
             await conn.run_sync(upgrade)
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
         self.today = datetime.now(service.MOSCOW).date()
@@ -192,6 +202,96 @@ class CalendarRuntimeTests(unittest.IsolatedAsyncioTestCase):
         with self.assert_status(403):
             await self.call("speaker", "admin_state")
 
+    async def test_clock_refreshes_after_waiting_for_scope_lock(self):
+        started = asyncio.Event()
+        class Clock(datetime):
+            current = datetime.combine(self.today, datetime.min.time(), service.MOSCOW) + timedelta(hours=23, minutes=59)
+
+            @classmethod
+            def now(cls, tz=None):
+                started.set()
+                return cls.current.astimezone(tz or timezone.utc)
+
+        body = self.body("availability.paint", {"user_id": self.actors["auditor"].id,
+            "patches": [{"date": self.today, "start": 600, "end": 630, "value": True}],
+            "expected": [{"date": self.today, "start": 600, "end": 630, "value": None}]})
+
+        async def waiting_command():
+            async with self.sessions.begin() as db:
+                return await service.CalendarService(db, self.actors["auditor"]).command(body)
+
+        task = None
+        with patch.object(service, "datetime", Clock):
+            try:
+                async with self.sessions.begin() as holder:
+                    await holder.execute(sa.select(models.AuditCalendarScope).with_for_update(read=True))
+                    task = asyncio.create_task(waiting_command())
+                    await asyncio.wait_for(started.wait(), 2)
+                    await asyncio.sleep(0.05)
+                    self.assertFalse(task.done())
+                    Clock.current += timedelta(minutes=2)
+                with self.assert_status(422):
+                    await asyncio.wait_for(task, 3)
+            finally:
+                if task and not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+        state = await self.call("helper", "state", self.today, self.today)
+        self.assertEqual(state["availability"], [])
+        self.assertEqual(state["scope"]["version"], self.version)
+
+    def scoped_paint(self, actor="auditor", *, day=None, start=600, value=True, before=None):
+        cell = {"date": day or self.today, "start": start, "end": start+30}
+        return self.body("availability.paint", {"user_id": self.actors[actor].id,
+            "patches": [{**cell, "value": value}], "expected": [{**cell, "value": before}]})
+
+    async def test_concurrent_independent_cells_people_and_dates_commit(self):
+        intents = [("auditor", self.scoped_paint()), ("tech", self.scoped_paint("tech")),
+                   ("auditor", self.scoped_paint(start=630)),
+                   ("auditor", self.scoped_paint(day=self.today+timedelta(days=1)))]
+        responses = await asyncio.gather(*(self.call(actor, "command", body) for actor, body in intents))
+        self.assertEqual(sorted(r["version"] for r in responses), list(range(self.version+1, self.version+5)))
+        state = await self.call("helper", "state", self.today, self.today+timedelta(days=1))
+        self.assertEqual(len(state["availability"]), 4)
+        self.assertEqual(state["scope"]["version"], self.version+4)
+
+    async def test_concurrent_same_cell_one_winner_and_uuid_replay_once(self):
+        from fastapi import HTTPException
+        answers = await asyncio.gather(self.call("auditor", "command", self.scoped_paint()),
+            self.call("auditor", "command", self.scoped_paint(value=False)), return_exceptions=True)
+        self.assertEqual(sum(isinstance(a, dict) for a in answers), 1)
+        conflict = next(a for a in answers if isinstance(a, HTTPException))
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(conflict.detail["code"], "AVAILABILITY_CHANGED")
+        state = await self.call("helper", "state", self.today, self.today)
+        self.assertEqual(state["scope"]["version"], self.version+1)
+        body = self.scoped_paint(start=660)
+        duplicates = await asyncio.gather(*(self.call("auditor", "command", body) for _ in range(2)))
+        self.assertEqual(duplicates[0], duplicates[1])
+        state = await self.call("helper", "state", self.today, self.today)
+        self.assertEqual(state["scope"]["version"], self.version+2)
+
+    async def test_scoped_paint_waits_then_observes_day_lock(self):
+        body = self.scoped_paint()
+        task = None
+        try:
+            async with self.sessions.begin() as db:
+                lock_command = self.body("availability.lock", {"user_id": self.actors["auditor"].id,
+                    "date": self.today, "reason": "Lock wins transaction ordering"})
+                result = await service.CalendarService(db, self.actors["helper"], now=self.now).command(lock_command)
+                task = asyncio.create_task(self.call("auditor", "command", body))
+                await asyncio.sleep(0.05)
+                self.assertFalse(task.done())
+            with self.assert_status(409):
+                await asyncio.wait_for(task, 3)
+            state = await self.call("helper", "state", self.today, self.today)
+            self.assertEqual(state["availability"], [])
+            self.assertEqual(state["scope"]["version"], result["version"])
+        finally:
+            if task and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+
     async def test_membership_requires_explicit_section_grant(self):
         with self.assert_status(422):
             await self.call("admin", "save_member", schema.MemberSave(request_id=uuid4(), expected_version=self.version,
@@ -289,7 +389,7 @@ class CalendarRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(before["stats"]["target"], filtered["stats"]["target"])
         self.assertEqual(before["stats"]["backlog"], filtered["stats"]["backlog"])
         self.assertEqual(len(before["stats"]["daily_targets"]), 7)
-        await self.command("scope.archive", {"archived": True, "reason": "Synthetic archive"})
+        await self.command("scope.archive", {"archived": True, "reason": "Synthetic archive"}, actor="admin")
         with self.assert_status(409):
             await self.command("plan.save", self.plan_payload(gid))
         self.assertTrue((await self.call("helper", "state", self.today, self.today))["scope"]["archived"])

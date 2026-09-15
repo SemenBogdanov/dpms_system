@@ -47,7 +47,7 @@ async def main():
             AND (personal_task_id IS NOT NULL OR linked_task_id IS NOT NULL)
         """))
         checks = {
-            "migration_head": revision == "088_audit_calendar_guide",
+            "migration_head": revision == "093_calendar_windows_guide",
             "knowledge_articles": article_count == 7,
             "legacy_transfer_guide": bool(transfer_guide_ready),
             "note_group_owner_isolation": invalid_note_groups == 0,

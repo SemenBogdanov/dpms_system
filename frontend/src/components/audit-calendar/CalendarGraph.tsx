@@ -1,13 +1,23 @@
 import type { CalendarFact, CalendarPlan, CalendarState } from '@/api/auditCalendar'
 import { allSlots, calendarDailyTarget, dateLabel, dateRange, numberLabel, timeLabel, workSlots } from '@/lib/auditCalendar'
 import { AlertTriangle, Plus } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { CalendarMeetingWindowsCell, CalendarMeetingWindowsControls, CalendarMeetingWindowsDetails } from './CalendarMeetingWindows'
+import { useCalendarMeetingWindows, type CalendarMeetingWindowsProps } from './CalendarMeetingWindowsQuery'
 
 type Meeting = CalendarPlan | CalendarFact
-export function CalendarGraph({ state, from, to, day, groupId = null, setDay, onOpen }: { state: CalendarState; from: string; to: string; day: string; groupId?: string | null; setDay: (day: string) => void; onOpen: (date: string, start: number, plan?: CalendarPlan, fact?: CalendarFact) => void }) {
+export function CalendarGraph({ state, from, to, day, groupId = null, setDay, onOpen, windows }: { state: CalendarState; from: string; to: string; day: string; groupId?: string | null; setDay: (day: string) => void; onOpen: (date: string, start: number, plan?: CalendarPlan, fact?: CalendarFact) => void; windows: CalendarMeetingWindowsProps }) {
   const days = dateRange(from, to)
   const selected = days.includes(day) ? day : from
   const outside = [...state.plans, ...state.facts].some(p => p.start < 600 || p.start + p.duration > 1080)
   const canCreate = state.actor.can_manage && !state.scope.archived
+  const windowContext = { ...windows, state, from, to, groupId: groupId || '', fullDay: outside }
+  const availableWindows = useCalendarMeetingWindows(windowContext)
+  const targetContext = useMemo(() => ({ from, to, selected, groupId, duration: windows.duration, speakerId: windows.speakerId, sourceKey: windows.sourceKey, outside }), [from, to, selected, groupId, windows.duration, windows.speakerId, windows.sourceKey, outside])
+  const [windowTarget, setWindowTarget] = useState<{ context: typeof targetContext; date: string; start: number } | null>(null)
+  function windowCell(date: string, start: number) {
+    return <CalendarMeetingWindowsCell key={start} date={date} start={start} duration={windows.duration} cell={availableWindows.cells.get(`${date}:${start}`)} loading={availableWindows.loading} error={availableWindows.error} onOpen={() => setWindowTarget({ context: targetContext, date, start })} />
+  }
   function label(record: Meeting) {
     return `${state.groups.find(g => g.id === record.group_id)?.code || '—'} ${record.activity || 'Без активности'} ${state.members.find(m => m.user_id === record.speaker_id)?.code || '—'}`
   }
@@ -34,15 +44,17 @@ export function CalendarGraph({ state, from, to, day, groupId = null, setDay, on
   }
   const slots = outside ? allSlots : workSlots
   return <section aria-label="График встреч" className={outside ? 'ac-graph ac-force-day' : 'ac-graph'} onClickCapture={event => (event.target as Element).closest<HTMLButtonElement>('button')?.focus()}>
+    <CalendarMeetingWindowsControls context={windowContext} loading={availableWindows.loading || !windows.enabled} error={availableWindows.error} />
     <div className="ac-desktop-graph"><div className="ac-graph-heading"><span>Дата / нагрузка</span><div>{workSlots.map(t => <span key={t}>{timeLabel(t)}</span>)}</div></div>
-      {days.map(date => <div className={`ac-day ${[0, 6].includes(new Date(`${date}T00:00:00Z`).getUTCDay()) ? 'ac-weekend' : ''}`} key={date}><div className="ac-day-label"><strong>{dateLabel(date)}</strong><span title="Запланировано / цель дня">{state.plans.filter(p => p.date === date && p.status === 'planned').length} / {numberLabel(calendarDailyTarget(state, date, groupId))}</span><small>план / цель</small></div><div className="ac-day-layers">{desktopRow(date, 'plan')}{desktopRow(date, 'fact')}</div></div>)}
+      {days.map(date => <div className={`ac-day ${[0, 6].includes(new Date(`${date}T00:00:00Z`).getUTCDay()) ? 'ac-weekend' : ''}`} key={date}><div className="ac-day-label"><strong>{dateLabel(date)}</strong><span title="Запланировано / цель дня">{state.plans.filter(p => p.date === date && p.status === 'planned').length} / {numberLabel(calendarDailyTarget(state, date, groupId))}</span><small>план / цель</small></div><div className="ac-day-layers">{desktopRow(date, 'plan')}{desktopRow(date, 'fact')}</div><div className="ac-window-row"><span>Доступные окна</span><div className="ac-window-track">{workSlots.map(start => windowCell(date, start))}</div></div></div>)}
     </div>
     <div className="ac-day-graph"><label className="ac-day-select">День<select value={selected} onChange={e => setDay(e.target.value)}>{days.map(d => <option key={d} value={d}>{dateLabel(d)} · {d}</option>)}</select></label>{outside && <p className="ac-muted">Встречи вне 10:00–18:00 · полный день</p>}
-      <div className="ac-vertical-heading"><span>Время</span><span>План</span><span>Факт</span></div>
-      {slots.map(t => <div className="ac-vertical-row" key={t}><time>{timeLabel(t)}</time>{(['plan', 'fact'] as const).map(layer => {
+      <div className="ac-vertical-heading ac-window-vertical"><span>Время</span><span>План</span><span>Факт</span><span title="Доступные окна" aria-label="Доступные окна">Окна</span></div>
+      {slots.map(t => <div className="ac-vertical-row ac-window-vertical" key={t}><time>{timeLabel(t)}</time>{(['plan', 'fact'] as const).map(layer => {
         const records: Meeting[] = (layer === 'plan' ? state.plans : state.facts).filter(p => p.date === selected && p.start < t + 30 && p.start + p.duration > t)
         return <div key={layer}>{records.map(p => p.start === t ? entry(p, layer) : <span className="ac-continuation" key={p.id}>Продолжение до {timeLabel(p.start + p.duration)}</span>)}{!records.length && layer === 'plan' && canCreate && selected >= state.scope.today && <button className="ac-empty-slot" type="button" aria-label={`Создать план ${selected} ${timeLabel(t)}`} onClick={() => onOpen(selected, t)}><Plus size={16} /></button>}</div>
-      })}</div>)}
+      })}<div className="ac-window-mobile-cell">{windowCell(selected, t)}</div></div>)}
     </div>
+    {windowTarget?.context === targetContext && <CalendarMeetingWindowsDetails context={{ ...windowContext, enabled: !!availableWindows.enabled }} target={windowTarget} onClose={() => setWindowTarget(null)} />}
   </section>
 }

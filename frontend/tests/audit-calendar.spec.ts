@@ -107,7 +107,8 @@ test('whole-day and ownership are server-scoped, no optimistic partial writes', 
   const { commands } = await mountCalendar(page, { view: 'availability', helper: false })
   await page.getByRole('button', { name: '2026-09-14: Свободен, весь день 00:00–24:00', exact: true }).filter({ visible: true }).click()
   await expect.poll(() => commands.length).toBe(1)
-  expect(commands[0].payload).toEqual({ user_id: ids.a, patches: [{ date: '2026-09-14', start: 0, end: 1440, value: true }] })
+  expect(commands[0].payload).toEqual({ user_id: ids.a, patches: [{ date: '2026-09-14', start: 0, end: 1440, value: true }],
+    expected: Array.from({ length: 48 }, (_, i) => ({ date: '2026-09-14', start: i * 30, end: i * 30 + 30, value: null })) })
   await expect(page.locator('.ac-bound-content')).not.toHaveAttribute('inert')
   await page.getByRole('region', { name: 'Доступное время', exact: true }).getByRole('combobox', { name: 'Участник', exact: true }).selectOption(ids.t)
   await expect(page.getByRole('button', { name: '2026-09-14: Свободен, весь день 00:00–24:00', exact: true }).filter({ visible: true })).toBeDisabled()
@@ -157,6 +158,34 @@ test('admin panel uses existing membership endpoint without calendar state', asy
   await expect.poll(() => commands.length).toBe(1)
   expect(commands[0]).toMatchObject({ user_id: ids.a, can_manage: false, expected_version: 1 })
 })
+
+for (const active of [true, false]) for (const revoked of ['grant', 'account']) {
+  test(`admin edits saved membership without silently changing it: active=${active}, revoked=${revoked}`, async ({ page }) => {
+    const { state, commands } = await mountCalendar(page, { admin: true })
+    await page.route('**/api/audit-calendar/admin', route => route.fulfill({ json: {
+      scope: { ...state.scope, version: 99 }, members: state.members.map(m => ({ ...m, active })),
+      users: state.members.map(m => ({ id: m.user_id, full_name: m.full_name,
+        email: 'synthetic@example.invalid', audit_calendar_enabled: revoked !== 'grant', is_active: revoked !== 'account' })),
+    } }))
+    await page.getByRole('button', { name: 'Обновить участников календаря', exact: true }).click()
+    await expect(page.getByText('Синтетический тестовый контур · Europe/Moscow · версия 99', { exact: true })).toBeVisible()
+    await expect(page.getByRole('row').filter({ hasText: 'Тестовый аудитор' })).toContainText(active ? 'Активно' : 'Отключено')
+    await page.getByRole('button', { name: 'Изменить участие Тестовый аудитор', exact: true }).click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toContainText(active ? 'Участие сохранено, но доступ к календарю закрыт' : 'Перед активацией участия нужны допуск')
+    await expect(dialog.getByLabel('Активное участие')).toBeChecked({ checked: active })
+    await dialog.getByLabel('Код', { exact: true }).fill('EDIT')
+    if (!active) await dialog.getByLabel('Активное участие').check()
+    await dialog.getByRole('button', { name: 'Сохранить', exact: true }).click()
+    if (active) {
+      await expect.poll(() => commands.length).toBe(1)
+      expect(commands[0]).toMatchObject({ user_id: ids.a, code: 'EDIT', active: true })
+    } else {
+      await expect(dialog.getByRole('alert')).toContainText('Сначала выдайте активному пользователю допуск')
+      expect(commands).toHaveLength(0)
+    }
+  })
+}
 
 test('period date edge and malformed URL never produce 2101 or crash', async ({ page }) => {
   await mountCalendar(page)

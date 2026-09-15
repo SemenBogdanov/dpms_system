@@ -2,7 +2,7 @@
  * Контекст аутентификации: user из JWT, login, logout.
  * При монтировании: если есть токен — GET /api/auth/me.
  */
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import type { AuthenticatedUser } from '@/api/types'
 import { getToken, setToken, clearToken } from '@/lib/auth'
@@ -25,24 +25,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [token, setTokenState] = useState<string | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const profileRevision = useRef(0)
 
   const loadUser = useCallback(async (silent = false) => {
+    const revision = ++profileRevision.current
     if (!silent) setLoading(true)
     setAuthError(null)
     const t = getToken()
     if (!t) {
       setUser(null)
       setTokenState(null)
-      if (!silent) setLoading(false)
+      setLoading(false)
       return
     }
     setTokenState(t)
     try {
       const u = await api.get<AuthenticatedUser>('/api/auth/me')
+      // Focus, visibility and polling can overlap; never restore stale grants.
+      if (revision !== profileRevision.current || getToken() !== t) return
       setUser(u)
     } catch (error) {
-      setUser(null)
+      if (revision !== profileRevision.current) return
       const remainingToken = getToken()
+      if (remainingToken && remainingToken !== t) return
+      setUser(null)
       if (remainingToken) {
         setTokenState(remainingToken)
         setAuthError(error instanceof Error ? error.message : 'Не удалось проверить сессию')
@@ -50,12 +56,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setTokenState(null)
       }
     } finally {
-      if (!silent) setLoading(false)
+      if (revision === profileRevision.current) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
     void loadUser()
+    return () => { profileRevision.current += 1 }
   }, [loadUser])
 
   useEffect(() => {
@@ -78,23 +85,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         email: email.trim().toLowerCase(),
         password,
       })
+      profileRevision.current += 1
       setToken(res.access_token)
       setTokenState(res.access_token)
       setUser(res.user)
       setAuthError(null)
+      setLoading(false)
     },
     []
   )
 
   const updateUser = useCallback((updatedUser: AuthenticatedUser) => {
+    profileRevision.current += 1
     setUser(updatedUser)
+    setLoading(false)
   }, [])
 
   const logout = useCallback(() => {
+    profileRevision.current += 1
     clearToken()
     setTokenState(null)
     setUser(null)
     setAuthError(null)
+    setLoading(false)
     window.location.href = '/login'
   }, [])
 

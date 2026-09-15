@@ -44,6 +44,43 @@ async def command(body: Command, db: DB, actor: Actor):
     return await CalendarService(db, actor).command(body)
 
 
+@router.get("/readiness")
+async def readiness(db: DB, actor: Actor, date_from: date = Query(alias="from"), date_to: date = Query(alias="to"),
+                    duration: int = Query(30, ge=30, le=480, multiple_of=30)):
+    return await CalendarService(db, actor).readiness(date_from, date_to, duration)
+
+
+@router.get("/meeting-options")
+async def meeting_options(db: DB, actor: Actor, meeting_date: date = Query(alias="date"),
+                          start: int = Query(ge=0, le=1410, multiple_of=30),
+                          duration: int = Query(ge=30, le=1440, multiple_of=30),
+                          speaker_id: UUID | None = None, plan_id: UUID | None = None):
+    return await CalendarService(db, actor).meeting_options(meeting_date, start, duration, speaker_id=speaker_id, plan_id=plan_id)
+
+
+@router.get("/workload")
+async def workload(db: DB, actor: Actor, date_from: date = Query(alias="from"), date_to: date = Query(alias="to"),
+                   group: UUID | None = None):
+    return await CalendarService(db, actor).workload(date_from, date_to, group_id=group)
+
+
+@router.get("/meeting-windows")
+async def meeting_windows(db: DB, actor: Actor, date_from: date = Query(alias="from"), date_to: date = Query(alias="to"),
+                          duration: int = Query(30, ge=30, le=480, multiple_of=30), group: UUID | None = None,
+                          speaker_id: UUID | None = None, full_day: bool = False):
+    return await CalendarService(db, actor).meeting_windows(date_from, date_to, duration,
+        group_id=group, speaker_id=speaker_id, full_day=full_day)
+
+
+@router.get("/meeting-window-options")
+async def meeting_window_options(db: DB, actor: Actor, meeting_date: date = Query(alias="date"),
+                                 start: int = Query(ge=0, le=1410, multiple_of=30),
+                                 duration: int = Query(30, ge=30, le=480, multiple_of=30),
+                                 group: UUID | None = None, speaker_id: UUID | None = None):
+    return await CalendarService(db, actor).meeting_window_options(meeting_date, start, duration,
+        group_id=group, speaker_id=speaker_id)
+
+
 @router.get("/history")
 async def history(db: DB, actor: Actor, limit: int = Query(100, ge=1, le=1000)):
     return await CalendarService(db, actor).history(limit)

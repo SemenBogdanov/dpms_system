@@ -23,6 +23,9 @@ from app.models.audit_calendar import (
     AuditCalendarImportMapping as ImportMapping,
 )
 from app.services import audit_calendar_math as math
+from app.services.audit_calendar_controls import AvailabilityControl, DayLock, ChangeRequest
+from app.services.audit_calendar_reporting import CalendarReporting
+from app.services.audit_calendar_windows import MeetingWindowSearch
 from app.services.audit_calendar_domain import (
     MOSCOW, attendance_state, availability_issues, availability_projections,
     composition_issues, conflict_issues, issue, meeting_instant, historical_source_issues,
@@ -54,10 +57,11 @@ def fact_value(row):
     return columns(row, "id plan_id date start duration group_id activity speaker_id outcome reason evidence recorded_by_id recorded_at participant_snapshot planned_snapshot composition_unknown origin")
 
 
-class CalendarService:
+class CalendarService(AvailabilityControl, CalendarReporting, MeetingWindowSearch):
     def __init__(self, db, actor, *, now=None):
         self.db, self.actor_id = db, actor.id
         self.session_version = getattr(actor, "auth_version", None)
+        self.fixed_now = now
         self.now = (now or datetime.now(timezone.utc)).astimezone(MOSCOW)
         self.today = self.now.date()
         self.scope = None
@@ -91,6 +95,8 @@ class CalendarService:
             fail(404, "Контур календаря ещё не настроен")
         self.members = {m.user_id: m for m in await self.rows(Member)}
         self.users = await self.load_users([self.actor_id, *self.members, *extra_users], lock=True)
+        self.now = (self.fixed_now or datetime.now(timezone.utc)).astimezone(MOSCOW)
+        self.today = self.now.date()
         self.actor = self.users.get(self.actor_id)
         self.authorize(admin=admin, helper=helper)
 
@@ -121,15 +127,19 @@ class CalendarService:
             fail(403, "Сотрудник может изменять только свою доступность и свои отсутствия")
         self.require_member(user_id)
 
-    async def replay(self, operation, body):
-        digest = body_hash(operation, body.model_dump(mode="json"))
+    async def replay(self, operation, body, *, scoped_availability=False):
+        payload = body.model_dump(mode="json")
+        # Preserve receipts issued before cell-level availability preconditions.
+        if operation == "availability.paint" and payload["payload"].get("expected") is None:
+            payload["payload"].pop("expected", None)
+        digest = body_hash(operation, payload)
         previous = await self.db.scalar(select(Replay).where(Replay.scope_id == self.scope.id,
             Replay.actor_id == self.actor_id, Replay.request_id == body.request_id))
         if previous:
             if previous.body_hash != digest:
                 fail(409, "Этот идентификатор запроса уже использован с другими данными")
             return previous.response, digest
-        if hasattr(body, "expected_version") and body.expected_version != self.scope.version:
+        if not scoped_availability and hasattr(body, "expected_version") and body.expected_version != self.scope.version:
             fail(409, {"code": "STALE_VERSION", "version": self.scope.version})
         return None, digest
 
@@ -137,7 +147,8 @@ class CalendarService:
         self.scope.version += 1
         response = encoded({**result, "version": self.scope.version} if raw else {"version": self.scope.version, "result": result})
         self.db.add(Event(scope_id=self.scope.id, action=operation, actor_id=self.actor_id,
-                          actor_name=self.actor.full_name, detail=encoded(detail or body.model_dump(mode="json"))))
+                          actor_name=self.actor.full_name, occurred_at=self.now,
+                          detail=encoded(detail or body.model_dump(mode="json"))))
         self.db.add(Replay(scope_id=self.scope.id, actor_id=self.actor_id, request_id=body.request_id,
                           body_hash=digest, response=response))
         await self.db.flush()
@@ -151,8 +162,9 @@ class CalendarService:
         return {**columns(self.scope, "id name timezone baseline version archived history_complete"),
                 "today": self.today, "now": self.now}
 
-    def member_values(self):
+    def member_values(self, *, effective=True):
         return [{**columns(m, "user_id code role can_manage active"),
+                 "active": m.active and (not effective or (self.users[m.user_id].is_active and self.users[m.user_id].audit_calendar_enabled)),
                  "full_name": self.users[m.user_id].full_name} for m in self.members.values()]
 
     async def admin_state(self):
@@ -162,7 +174,7 @@ class CalendarService:
         self.scope = await self.db.scalar(select(Scope).where(Scope.singleton == 1))
         self.users = await self.load_users()
         self.members = {m.user_id: m for m in await self.rows(Member)} if self.scope else {}
-        return encoded({"scope": self.scope_value() if self.scope else None, "members": self.member_values(),
+        return encoded({"scope": self.scope_value() if self.scope else None, "members": self.member_values(effective=False),
                         "users": [columns(u, "id full_name email audit_calendar_enabled is_active") for u in self.users.values()]})
 
     async def setup(self, body):
@@ -196,11 +208,12 @@ class CalendarService:
         if prior:
             return prior
         user = self.users.get(body.user_id)
-        if user is None or body.active and (not user.is_active or not user.audit_calendar_enabled):
+        member = self.members.get(body.user_id)
+        activating = body.active and (member is None or not member.active)
+        if user is None or activating and (not user.is_active or not user.audit_calendar_enabled):
             fail(422, "Перед активацией участия выдайте пользователю допуск к разделу календаря")
         if any(m.code == body.code and m.user_id != body.user_id for m in self.members.values()):
             fail(409, "Этот код уже назначен другому участнику")
-        member = self.members.get(body.user_id)
         before = columns(member, "user_id code role can_manage active version") if member else None
         if member is None:
             member = Member(id=uuid4(), scope_id=self.scope.id, user_id=body.user_id, version=0)
@@ -212,21 +225,27 @@ class CalendarService:
         return await self.finish("admin.members", body, digest, after, {"before": before, "after": after})
 
     async def command(self, body):
-        personal = body.operation in ("availability.paint", "absence.add", "absence.end")
-        await self.lock(helper=not personal, write=True)
+        personal = body.operation in ("availability.paint", "availability.request", "absence.add", "absence.end")
+        admin = body.operation == "scope.archive"
+        await self.lock(admin=admin, helper=not personal and not admin, write=True)
         if personal:
             target = (await self.one(Absence, body.payload.id)).user_id if body.operation == "absence.end" else body.payload.user_id
             self.ownership(target)
-        prior, digest = await self.replay(body.operation, body)
+        prior, digest = await self.replay(body.operation, body, scoped_availability=(
+            body.operation == "availability.paint" and body.payload.expected is not None))
         if prior:
             return prior
         self.editable(body.operation)
+        self.command_request_id = body.request_id
         handlers = {"group.save": self.save_group, "plan.save": self.save_plan, "plan.revise": self.revise_plan, "fact.record": self.record_fact,
                     "fact.restore": self.restore_fact, "notice.record": self.record_notice,
                     "availability.paint": self.paint, "absence.add": self.add_absence,
-                    "absence.end": self.end_absence, "norm.set": self.set_norm, "scope.archive": self.archive}
+                    "absence.end": self.end_absence, "norm.set": self.set_norm, "scope.archive": self.archive,
+                    "availability.lock": self.lock_day, "availability.request": self.request_day,
+                    "availability.resolve": self.resolve_day, "availability.notify": self.notify_group}
         result = await handlers[body.operation](body.payload)
-        return await self.finish(body.operation, body, digest, result)
+        return await self.finish(body.operation, body, digest, result,
+                                 {"command": body.model_dump(mode="json"), "result": result})
 
     async def group_version(self, group_id, day):
         return await self.db.scalar(select(GroupVersion).where(GroupVersion.scope_id == self.scope.id,
@@ -260,12 +279,22 @@ class CalendarService:
                                      auditor_id=p.auditor_id, tech_id=p.tech_id, reason=p.reason))
         return {"id": group.id}
 
-    async def diagnostics(self, candidate, group, version, *, facts=False, check_availability=True):
-        errors, people = composition_issues(group, version, self.members, self.users, candidate.activity, candidate.speaker_id)
-        warnings = []
+    def label_issues(self, issues):
+        result = []
+        for item in issues:
+            uid = UUID(item["user_id"]) if item.get("user_id") else None
+            member, user = self.members.get(uid), self.users.get(uid)
+            if member and user:
+                item = {**item, "message": f"{member.code}: {item['message']}",
+                        "participant_code": member.code, "participant_name": user.full_name}
+            result.append(item)
+        return result
+
+    async def diagnostic_context(self, day, *, facts=False):
         participant_model, record_model = (FactParticipant, Fact) if facts else (PlanParticipant, Plan)
-        records = await self.rows(record_model, record_model.date == candidate.date)
-        links = await self.rows(participant_model)
+        records = await self.rows(record_model, record_model.date == day)
+        reference = participant_model.fact_id if facts else participant_model.plan_id
+        links = await self.rows(participant_model, reference.in_([r.id for r in records]))
         by_record = {}
         for link in links:
             rid = link.fact_id if facts else link.plan_id
@@ -274,15 +303,60 @@ class CalendarService:
             for record in records:
                 if record.speaker_id:
                     by_record.setdefault(record.id, set()).add(record.speaker_id)
+        completed = [] if facts else await self.rows(Fact, Fact.date == day, Fact.outcome == "completed")
+        by_fact = {}
+        if completed:
+            for link in await self.rows(FactParticipant, FactParticipant.fact_id.in_([f.id for f in completed])):
+                by_fact.setdefault(link.fact_id, set()).add(link.user_id)
+            for record in completed:
+                if record.speaker_id:
+                    by_fact.setdefault(record.id, set()).add(record.speaker_id)
+        windows, absences = availability_projections(
+            await self.rows(Availability, Availability.date == day),
+            await self.rows(Absence, Absence.start_date <= day, Absence.end_date >= day))
+        return records, by_record, completed, by_fact, windows, absences
+
+    async def diagnostics(self, candidate, group, version, *, facts=False, check_availability=True, require_speaker=True, context=None):
+        errors, people = composition_issues(group, version, self.members, self.users, candidate.activity, candidate.speaker_id,
+                                           require_speaker=require_speaker)
+        warnings = []
+        records, by_record, completed, by_fact, windows, absences = context or await self.diagnostic_context(candidate.date, facts=facts)
         errors += conflict_issues(candidate, [uid for uid, _ in people], records, by_record, facts=facts)
+        if not facts:
+            errors += conflict_issues(candidate, [uid for uid, _ in people], completed, by_fact, facts=True)
         if check_availability:
-            windows, absences = availability_projections(
-                await self.rows(Availability, Availability.date == candidate.date),
-                await self.rows(Absence, Absence.start_date <= candidate.date, Absence.end_date >= candidate.date))
             extra, warnings = availability_issues(candidate.date, candidate.start, candidate.duration,
                                                    [uid for uid, _ in people], windows, absences)
             errors += extra
-        return errors, warnings, people
+        return self.label_issues(errors), self.label_issues(warnings), people
+
+    async def meeting_options(self, day, start, duration, *, speaker_id=None, plan_id=None):
+        if not math.MIN_DATE <= day <= math.MAX_DATE or start % 30 or duration % 30 or not 0 <= start < start + duration <= 1440:
+            fail(422, "Выберите дату и полный интервал встречи с шагом 30 минут")
+        await self.lock()
+        frozen_plan = False
+        if plan_id:
+            await self.one(Plan, plan_id)
+            frozen_plan = bool(await self.rows(Fact, Fact.plan_id == plan_id))
+        if speaker_id and speaker_id not in self.members:
+            fail(422, "Докладчик должен входить в контур календаря")
+        groups = await self.rows(Group)
+        versions = await self.rows(GroupVersion, GroupVersion.effective_from <= day)
+        context = await self.diagnostic_context(day)
+        options = []
+        for group in sorted(groups, key=lambda g: g.code):
+            candidate = SimpleNamespace(id=plan_id, date=day, start=start, duration=duration, speaker_id=speaker_id, activity="Выбор группы")
+            version = max((v for v in versions if v.group_id == group.id), key=lambda v: v.effective_from, default=None)
+            errors, warnings, _ = await self.diagnostics(candidate, group, version, require_speaker=bool(speaker_id), context=context)
+            if day < self.today:
+                errors.append(issue("PAST_DATE", "Нельзя назначить новую встречу задним числом"))
+            if self.scope.archived:
+                errors.append(issue("SCOPE_ARCHIVED", "Контур находится в архиве"))
+            if frozen_plan:
+                errors.append(issue("PLAN_FROZEN", "План с зафиксированным фактом нельзя изменять"))
+            options.append({"id": group.id, "code": group.code, "label": group.label,
+                            "eligible": not errors, "issues": errors, "warnings": warnings})
+        return encoded({"version": self.scope.version, "date": day, "start": start, "duration": duration, "groups": options})
 
     async def revise_plan(self, p):
         plan = await self.one(Plan, p.id)
@@ -295,6 +369,8 @@ class CalendarService:
 
     async def save_plan(self, p, *, source_revision=False):
         plan = await self.one(Plan, p.id) if p.id else None
+        if p.speaker_id and (plan is None or plan.speaker_id != p.speaker_id):
+            self.require_member(p.speaker_id, "speaker")
         if plan and await self.rows(Fact, Fact.plan_id == plan.id):
             fail(409, "План с зафиксированным фактом нельзя изменять")
         if p.date < self.today or plan and plan.date < self.today and not source_revision:
@@ -318,7 +394,9 @@ class CalendarService:
         for uid, role in people:
             self.require_member(uid)
             self.db.add(PlanParticipant(scope_id=self.scope.id, plan_id=plan.id, user_id=uid, role=role))
-        return {**plan_value(plan), "issues": errors, "warnings": warnings}
+        return {**plan_value(plan), "issues": errors, "warnings": warnings,
+                "availability_at_booking": [{"user_id": uid, "date": p.date,
+                    "snapshot": await self.day_snapshot(uid, p.date)} for uid, _ in people]}
 
     async def canonical_source(self, source):
         applications = {a.batch_id: a for a in await self.rows(ImportApplication)}
@@ -447,8 +525,30 @@ class CalendarService:
         if any(patch.date < self.today for patch in p.patches):
             fail(422, "Доступность за прошедшие даты нельзя изменять")
         days = {patch.date for patch in p.patches}
+        await self.assert_days_open(p.user_id, days)
+        absences = await self.rows(Absence, Absence.user_id == p.user_id, Absence.status == "active",
+            Absence.start_date <= max(days), Absence.end_date >= min(days))
+        if any(a.start_date <= day <= a.end_date for a in absences for day in days):
+            fail(409, {"code": "AVAILABILITY_ABSENCE", "message": "На выбранную дату указано отсутствие. Сначала согласуйте изменение периода отсутствия."})
+        before = [{"date": day, "snapshot": await self.day_snapshot(p.user_id, day)} for day in sorted(days)]
         old = await self.rows(Availability, Availability.user_id == p.user_id, Availability.date.in_(days))
         windows, _ = availability_projections(old, [])
+        if p.expected is not None:
+            intended = {(patch.date, minute): patch.value for patch in p.patches for minute in range(patch.start, patch.end, 30)}
+            conflicts = []
+            for expected in p.expected:
+                current = math.availability_value(windows, person_id=str(p.user_id), day=expected.date,
+                    start_minute=expected.start, end_minute=expected.end)
+                requested = intended[(expected.date, expected.start)]
+                if current != expected.value and current != requested:
+                    conflicts.append({"date": expected.date, "start": expected.start, "end": expected.end,
+                        "expected": expected.value, "current": current, "requested": requested})
+            if conflicts:
+                fail(409, encoded({"code": "AVAILABILITY_CHANGED", "message": "Эти интервалы уже изменены. Сравните изменения перед сохранением.",
+                    "conflicts": conflicts, "version": self.scope.version}))
+        touched = {(patch.date, minute) for patch in p.patches for minute in range(patch.start, patch.end, 30)}
+        previous = {(day, minute): math.availability_value(windows, person_id=str(p.user_id), day=day,
+            start_minute=minute, end_minute=minute+30) for day, minute in touched}
         for patch in p.patches:
             windows = math.paint_availability(windows, person_id=str(p.user_id), day=patch.date,
                 start_minute=patch.start, end_minute=patch.end, value=patch.value)
@@ -457,11 +557,17 @@ class CalendarService:
         for w in windows:
             self.db.add(Availability(scope_id=self.scope.id, user_id=p.user_id, date=w.day,
                                      start=w.start_minute, end=w.end_minute, available=w.available))
-        return {"user_id": p.user_id, "days": sorted(days)}
+        await self.db.flush()
+        after = [{"date": day, "snapshot": await self.day_snapshot(p.user_id, day)} for day in sorted(days)]
+        changed_cells = sum(previous[(day, minute)] != math.availability_value(windows, person_id=str(p.user_id), day=day,
+            start_minute=minute, end_minute=minute+30) for day, minute in touched)
+        return {"user_id": p.user_id, "days": sorted(days), "before": before, "after": after, "changed_at": self.now,
+                "changed_cells": changed_cells, "unchanged": changed_cells == 0}
 
     async def add_absence(self, p):
         if p.start_date < self.today:
             fail(422, "Прошедшее отсутствие можно добавить только через подтверждённый импорт источника")
+        await self.assert_days_open(p.user_id, math.day_range(p.start_date, p.end_date))
         overlaps = await self.rows(Absence, Absence.user_id == p.user_id, Absence.status == "active",
                                   Absence.start_date <= p.end_date, Absence.end_date >= p.start_date)
         if overlaps:
@@ -474,6 +580,7 @@ class CalendarService:
         absence = await self.one(Absence, p.id)
         if absence.status != "active" or absence.end_date < self.today:
             fail(409, "Этот период отсутствия уже завершён или отменён")
+        await self.assert_days_open(absence.user_id, math.day_range(max(self.today, absence.start_date), absence.end_date))
         before = columns(absence, "id user_id start_date end_date reason version status")
         if absence.start_date >= self.today:
             absence.status = "cancelled"
@@ -527,6 +634,9 @@ class CalendarService:
             by_plan.setdefault(link.plan_id, set()).add(link.user_id)
         for link in fact_links:
             by_fact.setdefault(link.fact_id, set()).add(link.user_id)
+        for fact in visible_facts:
+            if fact.speaker_id:
+                by_fact.setdefault(fact.id, set()).add(fact.speaker_id)
         windows = await self.rows(Availability, Availability.date >= start, Availability.date <= end)
         absences = await self.rows(Absence, Absence.start_date <= end, Absence.end_date >= start)
         projected_windows, projected_absences = availability_projections(windows, absences)
@@ -557,6 +667,7 @@ class CalendarService:
                     errors, _ = composition_issues(group_map[plan.group_id], version_map.get(plan.group_version_id),
                         self.members, self.users, plan.activity, plan.speaker_id)
                     errors += conflict_issues(plan, people, plans, by_plan)
+                    errors += conflict_issues(plan, people, visible_facts, by_fact, facts=True)
                     availability_errors, warnings = availability_issues(plan.date, plan.start, plan.duration,
                         people, projected_windows, projected_absences)
                     errors += availability_errors
@@ -565,8 +676,9 @@ class CalendarService:
                     if current and current.id != plan.group_version_id:
                         errors.append(issue("COMPOSITION_CHANGED", "Состав группы изменился; пересогласуйте план встречи"))
                 if attendance_state(plan, notices, self.now) in ("absence", "late-absence"):
-                    errors.append(issue("ABSENCE_NOTICE", "Участник сообщил об отсутствии"))
-            plan_values.append({**plan_value(plan), "issues": errors, "warnings": warnings})
+                    for uid in sorted({n.user_id for n in notices if n.plan_id == plan.id and n.reported_at <= self.now}, key=str):
+                        errors.append(issue("ABSENCE_NOTICE", "Участник сообщил об отсутствии", user_id=str(uid)))
+            plan_values.append({**plan_value(plan), "issues": self.label_issues(errors), "warnings": self.label_issues(warnings)})
         fact_values = [fact_value(f) for f in visible_facts if matches(f, by_fact.get(f.id, set()) | ({f.speaker_id} if f.speaker_id else set()))]
         norms = sorted(await self.rows(Norm), key=lambda n: n.revision)
         latest = {}
@@ -612,7 +724,9 @@ class CalendarService:
                                    for day in math.day_range(start, end)},
                  "backlog": float(accumulated.backlog), "through": accumulated.through,
                  "target_scope": "group" if group_id else "team", "groups": group_totals, "fortnights": fortnights}
-        return encoded({"scope": self.scope_value(), "actor": {"user_id": self.actor_id, "can_manage": self.members[self.actor_id].can_manage},
+        return encoded({"scope": self.scope_value(), "actor": {"user_id": self.actor_id, "can_manage": self.members[self.actor_id].can_manage,
+            "can_archive": getattr(self.actor.role, "value", self.actor.role) == "admin"},
+            **await self.control_state(start, end),
             "members": self.member_values(), "groups": [{**columns(g, "id code label legacy archived"),
                 "versions": [columns(v, "id effective_from auditor_id tech_id") for v in versions if v.group_id == g.id]} for g in groups],
             "plans": plan_values, "facts": fact_values,
