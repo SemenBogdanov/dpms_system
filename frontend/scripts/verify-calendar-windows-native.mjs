@@ -130,6 +130,8 @@ for (const [name, engine] of [['chromium', chromium], ['webkit', webkit]]) {
     await capture(page, name, 'graph')
     const eligible = windows.cells.find(cell => cell.status !== 'unavailable')
     assert(eligible, 'Fixture must contain an eligible future trio; do not mutate local data to create one')
+    const daySelect = page.getByRole('combobox', { name: 'День', exact: true })
+    if (await daySelect.isVisible()) await daySelect.selectOption(eligible.date)
     const detailsPending = responseFor(page, '/api/audit-calendar/meeting-window-options')
     await page.locator(`.ac-window-cell[data-date="${eligible.date}"][data-start="${eligible.start}"]:visible`).click()
     const detailsResponse = await detailsPending
