@@ -23,8 +23,9 @@ export function calendarGraphLanes(plans: CalendarPlan[], facts: CalendarFact[],
   const first = (family: CalendarGraphLane) => Math.min(...[...family.plans, ...family.facts].map(r => r.start))
   const lanes: CalendarGraphLane[] = []
   for (const [, family] of [...families].sort(([a, x], [b, y]) => first(x) - first(y) || a.localeCompare(b))) {
-    let lane = lanes.find(l => !family.plans.some(p => l.plans.some(other => overlaps(p, other)))
-      && !family.facts.some(f => l.facts.some(other => overlaps(f, other))))
+    const records = [...family.plans, ...family.facts]
+    // Both layers must stay clear of other families to avoid false visual pairs.
+    let lane = lanes.find(l => !records.some(record => [...l.plans, ...l.facts].some(other => overlaps(record, other))))
     if (!lane) { lane = { plans: [], facts: [] }; lanes.push(lane) }
     lane.plans.push(...family.plans)
     lane.facts.push(...family.facts)

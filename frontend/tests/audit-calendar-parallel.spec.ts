@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { fixtureState, ids, mountCalendar } from './audit-calendar.fixtures'
+import { calendarGraphLanes } from '../src/lib/auditCalendarGraph'
 
 type State = ReturnType<typeof fixtureState>
 type Plan = State['plans'][number]
@@ -216,6 +217,41 @@ test('parallel plan/fact lanes preserve plan_id association when fact order and 
     await add(page, '10:30').click()
     await expectFreshSlot(page, 630)
     await closeModal(page)
+  }
+  expect(commands).toEqual([])
+})
+
+test('lane packing separates cross-layer overlaps while reusing touching intervals', () => {
+  const state = parallelState()
+  state.plans[0] = { ...state.plans[0], start: 600, duration: 30 }
+  state.plans[1] = { ...state.plans[1], start: 660, duration: 30 }
+  state.facts = [fact(state, state.plans[0], 501, { start: 660 }), fact(state, state.plans[1], 502, { start: 600 })]
+  const lanes = calendarGraphLanes(state.plans, state.facts, day)
+  expect(lanes).toHaveLength(2)
+  for (const lane of lanes) expect(lane.facts[0].plan_id).toBe(lane.plans[0].id)
+  state.plans[1].start = 630
+  state.facts = state.plans.map((plan, i) => fact(state, plan, 501 + i))
+  expect(calendarGraphLanes(state.plans, state.facts, day)).toHaveLength(1)
+})
+
+test('swapped actual times never place a different meeting fact beneath a plan', async ({ page }) => {
+  const state = parallelState()
+  state.plans[0] = { ...state.plans[0], start: 600, duration: 30 }
+  state.plans[1] = { ...state.plans[1], start: 660, duration: 30 }
+  state.facts = [fact(state, state.plans[0], 501, { start: 660 }), fact(state, state.plans[1], 502, { start: 600 })]
+  const { commands } = await mountCalendar(page, { state })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  for (const plan of state.plans) {
+    const lane = graph(page).getByRole('group', { name: /^Встречи 2026-09-14, дорожка / }).filter({ has: page.locator('.ac-plan').filter({ hasText: plan.activity }) })
+    await expect(lane.locator('.ac-plan')).toHaveCount(1)
+    await expect(lane.locator('.ac-fact')).toHaveCount(1)
+    await expect(lane.locator('.ac-fact')).toContainText(state.facts.find(item => item.plan_id === plan.id)!.activity)
+  }
+  await page.setViewportSize({ width: 390, height: 900 })
+  for (const plan of state.plans) {
+    const row = graph(page).locator('.ac-vertical-row').filter({ has: page.locator('.ac-plan').filter({ hasText: plan.activity }) })
+    await expect(row).toHaveCount(1)
+    await expect(row.locator('.ac-fact')).toHaveCount(0)
   }
   expect(commands).toEqual([])
 })
