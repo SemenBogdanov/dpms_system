@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError } from '@/api/client'
 import { auditCalendar, type CalendarMeetingWindowPrefill, type CalendarState } from '@/api/auditCalendar'
 import { allSlots, dateRange, errorText, periodError, workSlots } from '@/lib/auditCalendar'
+import { calendarInstant, clockSample, expiredWindow, useCalendarClock, type ClockSample } from './useCalendarClock'
 
 export type CalendarMeetingWindowsProps = {
   duration: number
@@ -21,7 +22,7 @@ export function checkWindowVersion(version: number, now: string, state: Calendar
   }
 }
 
-export function useCalendarMeetingWindows(context: CalendarMeetingWindowsContext) {
+export function useCalendarMeetingWindows(context: Omit<CalendarMeetingWindowsContext, 'onControlsChange' | 'onRefresh' | 'onSelect'>) {
   const { state, from, to, duration, groupId, speakerId, fullDay, enabled, sourceKey } = context
   const validation = periodError(from, to)
     || (Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1 > 31 ? 'Поиск доступных окон ограничен 31 днём. Сократите период; график встреч остаётся доступен.' : '')
@@ -39,20 +40,22 @@ export function useCalendarMeetingWindows(context: CalendarMeetingWindowsContext
       const valid = expected.delete(`${cell.date}:${cell.start}`)
         && Number.isInteger(cell.confirmed) && cell.confirmed >= 0 && Number.isInteger(cell.uncertain) && cell.uncertain >= 0
         && cell.confirmed + cell.uncertain <= 2000
-        && cell.status === (cell.confirmed > 0 ? 'available' : cell.uncertain > 0 ? 'warning' : 'unavailable')
+        && cell.status === (cell.confirmed > 0 ? (calendarInstant(cell.date, cell.start) < Date.parse(data.now) ? 'expired' : 'available') : cell.uncertain > 0 ? 'warning' : 'unavailable')
+        && !(cell.uncertain > 0 && cell.confirmed === 0 && calendarInstant(cell.date, cell.start) < Date.parse(data.now))
       return !valid
     })) throw new Error('Получен неполный или некорректный набор окон. Повторите поиск.')
     return data
   }, [enabled, validation, from, to, duration, groupId, speakerId, fullDay, state])
   const result = useCalendarWindowRequest(request, sourceKey, state.scope.version)
-  const cells = useMemo(() => new Map(result.data?.cells.map(cell => [`${cell.date}:${cell.start}`, cell])), [result.data])
+  const clock = useCalendarClock(result.data?.now || state.scope.now, result.started)
+  const cells = new Map(result.data?.cells.map(cell => [`${cell.date}:${cell.start}`, expiredWindow(cell, clock.now)]))
   return { ...result, cells, error: validation || context.sourceError || result.error, enabled: enabled && !validation }
 }
 
 // Each request identity is disposable, including an A -> B -> A parameter change.
 export function useCalendarWindowRequest<T>(request: ((signal: AbortSignal) => Promise<T>) | null, sourceKey: string, version: number) {
   const identity = useMemo(() => ({ request, sourceKey, version }), [request, sourceKey, version])
-  const [result, setResult] = useState<{ identity: typeof identity; data?: T; error?: string } | null>(null)
+  const [result, setResult] = useState<{ identity: typeof identity; data?: T; error?: string; started?: ClockSample } | null>(null)
   const revoked = useRef(false)
   const controller = useRef<AbortController | null>(null)
   useEffect(() => {
@@ -63,9 +66,10 @@ export function useCalendarWindowRequest<T>(request: ((signal: AbortSignal) => P
   useEffect(() => {
     if (!identity.request || revoked.current) return
     const abort = new AbortController()
+    const started = clockSample()
     controller.current = abort
     void identity.request(abort.signal).then(data => {
-      if (!abort.signal.aborted && !revoked.current) setResult({ identity, data })
+      if (!abort.signal.aborted && !revoked.current) setResult({ identity, data, started })
     }).catch(error => {
       if (abort.signal.aborted || revoked.current) return
       if (error instanceof ApiError && [401, 403].includes(error.status)) {
@@ -78,5 +82,5 @@ export function useCalendarWindowRequest<T>(request: ((signal: AbortSignal) => P
     return () => abort.abort()
   }, [identity])
   const current = request && !revoked.current && result?.identity === identity ? result : null
-  return { data: current?.data, error: current?.error || '', loading: !!request && !current }
+  return { data: current?.data, started: current?.started, error: current?.error || '', loading: !!request && !current }
 }

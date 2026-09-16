@@ -14,9 +14,10 @@ export function CalendarCommandForm({ title, version, onRefresh, onClose, childr
   const [draftVersion, setDraftVersion] = useState(version)
   async function submit(event: FormEvent) {
     event.preventDefault()
-    const error = validate?.()
-    if (error) { mutation.setError(error); return }
     const body = command()
+    // An identical uncertain attempt confirms its original receipt, not a new plan.
+    const error = mutation.isReplay(body, draftVersion) ? '' : validate?.()
+    if (error) { mutation.setError(error); return }
     const result = await mutation.run(body, draftVersion, (id, expected) => auditCalendar.command(body, id, expected))
     if (!result) return
     setConfirmed(true)

@@ -73,7 +73,7 @@ test('one batch supplies independent semantic windows without changing occupied 
   await expect(cell(page)).toHaveAttribute('title', /Доступные окна/)
   await expect(cell(page).locator('svg')).toHaveCount(1)
   await expect(page.locator('.ac-plan:visible').first()).toContainText('И43')
-  await expect(page.locator('button[aria-label="Создать план 2026-09-14 10:00"]:visible')).toHaveCount(0)
+  await expect(page.locator('button[aria-label="Создать план 2026-09-14 10:00"]:visible')).toHaveCount(1)
   expect(batches).toHaveLength(1)
   expect(Object.fromEntries(batches[0])).toEqual({ from: '2026-09-14', to: '2026-09-20', duration: '30', full_day: 'false' })
   expect(details).toHaveLength(0)

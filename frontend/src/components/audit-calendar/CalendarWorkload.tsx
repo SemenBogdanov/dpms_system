@@ -3,6 +3,7 @@ import { RefreshCw, AlertTriangle } from 'lucide-react'
 import { auditCalendar, type CalendarState, type CalendarWorkload as Workload } from '@/api/auditCalendar'
 import { ApiError } from '@/api/client'
 import { calendarRoles, dateLabel, errorText, numberLabel, periodError, timeLabel } from '@/lib/auditCalendar'
+import { CalendarExpiredWindows } from './CalendarExpiredWindows'
 
 type Props = {
   state: CalendarState
@@ -11,6 +12,7 @@ type Props = {
   groupId: string
   enabled: boolean
   onGroupChange: (group: string) => void
+  onRefresh: () => Promise<unknown>
 }
 type Result = {
   query: string
@@ -24,7 +26,7 @@ function percentage(value: number | null, missing: string) {
   return value === null || !Number.isFinite(value) ? missing : `${numberLabel(value)} %`
 }
 
-export function CalendarWorkload({ state, from, to, groupId, enabled, onGroupChange }: Props) {
+export function CalendarWorkload({ state, from, to, groupId, enabled, onGroupChange, onRefresh }: Props) {
   const groupFieldId = useId()
   const [result, setResult] = useState<Result | null>(null)
   const [retry, setRetry] = useState(0)
@@ -33,6 +35,10 @@ export function CalendarWorkload({ state, from, to, groupId, enabled, onGroupCha
   const controller = useRef<AbortController | null>(null)
   const validation = periodError(from, to)
   const query = JSON.stringify({ from, to, group: groupId })
+  async function refreshReport() {
+    try { await onRefresh(); setRetry(value => value + 1) }
+    catch (error) { setResult({ query, source: state, data: null, error: errorText(error), loading: false }) }
+  }
 
   useEffect(() => {
     const revoke = () => {
@@ -85,14 +91,15 @@ export function CalendarWorkload({ state, from, to, groupId, enabled, onGroupCha
         <div className="ac-field"><label htmlFor={groupFieldId}>Группа отчёта</label><select id={groupFieldId} name="workload-group" value={groupId} disabled={denied || !enabled} onChange={event => onGroupChange(event.target.value)}>
           <option value="">Все группы</option>{state.groups.map(group => <option key={group.id} value={group.id}>{group.code} · {group.label}{group.archived ? ' (архив)' : ''}</option>)}
         </select></div>
-        <button type="button" className="ac-icon" title="Обновить отчёт" aria-label="Обновить отчёт" disabled={loading || denied || !enabled || !!validation} onClick={() => setRetry(value => value + 1)}><RefreshCw size={18} aria-hidden="true" /></button>
+        <button type="button" className="ac-icon" title="Обновить отчёт" aria-label="Обновить отчёт" disabled={loading || denied || !enabled || !!validation} onClick={() => void refreshReport()}><RefreshCw size={18} aria-hidden="true" /></button>
       </div>
     </header>
     {denied ? <p className="ac-error" role="alert">Доступ к отчётности отозван. Обратитесь к администратору контура.</p>
       : validation ? <p className="ac-error" role="alert">{validation}</p>
-      : current?.error ? <div className="ac-error" role="alert"><strong>Отчёт не загружен</strong><p>{current.error}</p><button type="button" onClick={() => setRetry(value => value + 1)}><RefreshCw size={16} aria-hidden="true" />Повторить загрузку отчёта</button></div>
+      : current?.error ? <div className="ac-error" role="alert"><strong>Отчёт не загружен</strong><p>{current.error}</p><button type="button" onClick={() => void refreshReport()}><RefreshCw size={16} aria-hidden="true" />Повторить загрузку отчёта</button></div>
       : loading ? <p className="ac-empty" role="status">Загрузка отчётности…</p> : null}
     {data && <>
+      <CalendarExpiredWindows state={state} from={from} to={to} groupId={groupId} enabled={enabled && !denied} retry={retry} />
       <div className="ac-workload-period"><span>Рабочих дней: <strong>{numberLabel(data.working_days)}</strong></span><span>Пн–Пт · {timeLabel(data.working_window.start)}–{timeLabel(data.working_window.end)} · Europe/Moscow</span><span>Сотрудников: <strong>{numberLabel(data.members.length)}</strong></span></div>
       {data.members.length === 0 ? <p className="ac-empty" role="status">В выбранной группе нет сотрудников за этот период.</p>
         : <div className="ac-workload-table-wrap"><table className="ac-workload-table" role="table" aria-label="Плановая загрузка сотрудников">

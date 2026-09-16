@@ -5,6 +5,7 @@ import { MAX_DATE, MIN_DATE, calendarStatuses, timeLabel, allSlots, validDate } 
 import { CalendarCommandForm } from './CalendarCommandForm'
 import { CalendarModal } from './CalendarModal'
 import { useCalendarMeetingOptions } from './useCalendarMeetingOptions'
+import { calendarInstant, useCalendarClock } from './useCalendarClock'
 
 function MeetingIssues({ issues }: { issues: CalendarIssue[] }) {
   const seen = new Set<string>()
@@ -38,7 +39,8 @@ export function CalendarMeetingEditor({ state, date: initialDate, start: initial
   const [reportedAt, setReportedAt] = useState(`${state.scope.today}T10:00`)
   const [workingRevision, setWorkingRevision] = useState(false)
   const [timeEditing, setTimeEditing] = useState(false)
-  const editable = state.actor.can_manage && !state.scope.archived && !frozenFact
+  const clock = useCalendarClock(prefill?.server_now || state.scope.now, prefill?.clock_started)
+  const editable = state.actor.can_manage && !state.scope.archived && !frozenFact && !plan?.fact_outcome
   const needsOptions = editable && mode === 'plan' && status !== 'cancelled'
   const options = useCalendarMeetingOptions({ date, start, duration, speaker, planId: plan?.id, version: state.scope.version, enabled: needsOptions && (!prefill || prefillEnabled) })
   const selectedOption = options.data?.groups.find(g => g.id === group)
@@ -58,6 +60,7 @@ export function CalendarMeetingEditor({ state, date: initialDate, start: initial
     const record = frozenFact || plan
     return <CalendarModal title={frozenFact ? 'Факт встречи' : 'План встречи'} onClose={onClose}>
       {!record && <p className="ac-muted">Только просмотр. {state.scope.archived ? 'Контур архивирован.' : 'Назначение доступно помощнику контура.'}</p>}
+      {!frozenFact && plan?.fact_outcome && <p className="ac-muted">Результат зафиксирован вне текущей выборки: {calendarStatuses[plan.fact_outcome]}. План неизменяем.</p>}
       {record && <><dl className="ac-details"><dt>Дата и время</dt><dd>{record.date}, {timeLabel(record.start)}–{timeLabel(record.start + record.duration)}</dd><dt>Группа</dt><dd>{state.groups.find(g => g.id === record.group_id)?.code || 'Без группы'}</dd><dt>Активность</dt><dd>{record.activity || 'Не указана'}</dd><dt>Докладчик</dt><dd>{personName(record.speaker_id)}</dd><dt>Статус</dt><dd>{calendarStatuses[frozenFact ? frozenFact.outcome : plan!.status]}</dd><dt>Происхождение</dt><dd>{record.origin}</dd>
         {frozenFact && <><dt>Основание</dt><dd>{frozenFact.reason || 'Не указано'}</dd><dt>Подтверждение</dt><dd>{frozenFact.evidence || 'Не указано'}</dd><dt>Ответственный</dt><dd>{personName(frozenFact.recorded_by_id)}</dd><dt>Зафиксировано</dt><dd>{new Date(frozenFact.recorded_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}</dd><dt>Состав</dt><dd>{frozenFact.composition_unknown ? 'Состав не установлен' : <pre>{JSON.stringify(frozenFact.participant_snapshot, null, 2)}</pre>}</dd></>}
       </dl>{frozenFact && <details><summary tabIndex={0}>Неизменяемый снимок плана</summary><pre>{JSON.stringify(frozenFact.planned_snapshot, null, 2)}</pre></details>}
@@ -67,6 +70,7 @@ export function CalendarMeetingEditor({ state, date: initialDate, start: initial
   }
   const validate = () => {
     if (prefill && !prefillEnabled) return 'Дождитесь обновления календаря перед сохранением.'
+    if (prefill && mode === 'plan' && calendarInstant(date, start) < clock.current()) return 'Выбранное окно истекло. Укажите новое время встречи.'
     if (mode === 'notice') return !noticeUser ? 'Выберите участника встречи.' : ''
     if (timeError) { setTimeEditing(true); return timeError }
     if (mode === 'plan' && !plan && date < state.scope.today) { setTimeEditing(true); return 'Новый план нельзя назначить задним числом.' }

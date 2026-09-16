@@ -187,7 +187,7 @@ test('scope refresh refetches report even when period and version are unchanged'
 
 test('empty selected group has an explicit empty state', async ({ page }) => {
   await mountReport(page, (route, value) => route.fulfill({ json: { ...value, members: [] } }))
-  await expect(page.locator('.ac-workload').getByRole('status')).toContainText('нет сотрудников')
+  await expect(page.locator('.ac-workload > .ac-empty[role="status"]')).toContainText('нет сотрудников')
   await expect(page.locator('.ac-workload-table')).toHaveCount(0)
 })
 

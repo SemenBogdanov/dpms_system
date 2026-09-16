@@ -146,7 +146,8 @@ class MeetingWindowSearch:
             people = {uid for _, _, _, participants in variants for uid in participants}
             for start in range(begin, end, 30):
                 confirmed, uncertain = 0, 0
-                if start + duration <= end and meeting_instant(day, start) >= self.now:
+                past = meeting_instant(day, start) < self.now
+                if start + duration <= end:
                     # Evaluate each person once per interval; shared groups reuse the verdict.
                     statuses = {uid: context.person(day, start, duration, uid) for uid in people}
                     for _, _, _, participants in variants:
@@ -156,8 +157,14 @@ class MeetingWindowSearch:
                             uncertain += 1
                         else:
                             confirmed += 1
+                if past:
+                    status = "expired" if confirmed else "unavailable"
+                    if not confirmed:
+                        uncertain = 0
+                else:
+                    status = "available" if confirmed else "warning" if uncertain else "unavailable"
                 cells.append({"date": day, "start": start,
-                    "status": "available" if confirmed else "warning" if uncertain else "unavailable",
+                    "status": status,
                     "confirmed": confirmed, "uncertain": uncertain})
                 if (start - begin) % 240 == 210:
                     await asyncio.sleep(0)

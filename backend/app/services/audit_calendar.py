@@ -651,13 +651,13 @@ class CalendarService(AvailabilityControl, CalendarReporting, MeetingWindowSearc
                     and (not query or query.casefold() in haystack.casefold()))
 
         plan_values = []
-        frozen_ids = {f.plan_id for f in await self.rows(Fact, Fact.plan_id.in_([p.id for p in plans]))}
+        fact_outcomes = {f.plan_id: f.outcome for f in await self.rows(Fact, Fact.plan_id.in_([p.id for p in plans]))}
         for plan in plans:
             people = by_plan.get(plan.id, set())
             if not matches(plan, people):
                 continue
             errors, warnings = [], []
-            if plan.id not in frozen_ids and plan.status != "cancelled":
+            if plan.id not in fact_outcomes and plan.status != "cancelled":
                 historical = plan.origin == "source" and plan.date < self.today
                 if historical:
                     if not plan.activity:
@@ -679,7 +679,8 @@ class CalendarService(AvailabilityControl, CalendarReporting, MeetingWindowSearc
                 if attendance_state(plan, notices, self.now) in ("absence", "late-absence"):
                     for uid in sorted({n.user_id for n in notices if n.plan_id == plan.id and n.reported_at <= self.now}, key=str):
                         errors.append(issue("ABSENCE_NOTICE", "Участник сообщил об отсутствии", user_id=str(uid)))
-            plan_values.append({**plan_value(plan), "issues": self.label_issues(errors), "warnings": self.label_issues(warnings)})
+            plan_values.append({**plan_value(plan), "fact_outcome": fact_outcomes.get(plan.id),
+                                "issues": self.label_issues(errors), "warnings": self.label_issues(warnings)})
         fact_values = [fact_value(f) for f in visible_facts if matches(f, by_fact.get(f.id, set()) | ({f.speaker_id} if f.speaker_id else set()))]
         norms = sorted(await self.rows(Norm), key=lambda n: n.revision)
         latest = {}

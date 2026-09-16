@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { AlertTriangle, ArrowRight, Check, Clock3, Minus, RefreshCw } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Check, Clock3, Minus, RefreshCw, X } from 'lucide-react'
 import { auditCalendar, type CalendarMeetingWindowCell, type CalendarMeetingWindowOption, type CalendarState } from '@/api/auditCalendar'
 import { timeLabel } from '@/lib/auditCalendar'
 import { CalendarModal } from './CalendarModal'
 import { checkWindowVersion, useCalendarWindowRequest, type CalendarMeetingWindowsContext as Context } from './CalendarMeetingWindowsQuery'
+import { calendarInstant, useCalendarClock } from './useCalendarClock'
 type Target = { date: string; start: number }
 
 export function CalendarMeetingWindowsControls({ state, duration, speakerId, onControlsChange }: Pick<Context, 'state' | 'duration' | 'speakerId' | 'onControlsChange'>) {
@@ -30,12 +31,12 @@ export function CalendarMeetingWindowsCell({ date, start, duration, cell, loadin
 }) {
   const status = cell?.status || (error ? 'error' : 'pending')
   const count = cell ? cell.confirmed + cell.uncertain : 0
-  const Icon = status === 'available' ? Check : status === 'warning' || status === 'error' ? AlertTriangle : status === 'pending' ? Clock3 : Minus
-  const detail = cell ? `Вариантов: ${count}; подтверждено: ${cell.confirmed}; с неизвестной доступностью: ${cell.uncertain}` : error || 'Доступность не проверена'
+  const Icon = status === 'expired' ? X : status === 'available' ? Check : status === 'warning' || status === 'error' ? AlertTriangle : status === 'pending' ? Clock3 : Minus
+  const detail = status === 'expired' ? 'Окно истекло; свободный состав по сохранённой доступности' : cell ? `Вариантов: ${count}; подтверждено: ${cell.confirmed}; с неизвестной доступностью: ${cell.uncertain}` : error || 'Доступность не проверена'
   const interval = Number.isInteger(duration) && duration >= 30 && duration <= 480 && duration % 30 === 0 ? `${timeLabel(start)}–${timeLabel(start + duration)}` : timeLabel(start)
   const label = `Доступные окна ${date} ${interval} · ${detail}`
-  return <button type="button" className={`ac-window-cell ac-window-${status}`} data-date={date} data-start={start} aria-label={label} title={label} aria-busy={loading} disabled={!cell || cell.status === 'unavailable'} onClick={event => { event.currentTarget.focus(); onOpen() }}>
-    <Icon size={12} aria-hidden="true" />{count > 0 && <span>{count}</span>}
+  return <button type="button" className={`ac-window-cell ac-window-${status}`} data-date={date} data-start={start} aria-label={label} title={label} aria-busy={loading} disabled={!cell || cell.status === 'unavailable' || status === 'expired'} onClick={event => { event.currentTarget.focus(); onOpen() }}>
+    <Icon size={12} aria-hidden="true" />{count > 0 && status !== 'expired' && <span>{count}</span>}
   </button>
 }
 
@@ -66,12 +67,14 @@ export function CalendarMeetingWindowsDetails({ context, target, onClose }: { co
     return data
   }, [enabled, date, start, duration, groupId, speakerId, state])
   const result = useCalendarWindowRequest(request, sourceKey, state.scope.version)
+  const clock = useCalendarClock(result.data?.now || state.scope.now, result.started)
+  const expired = calendarInstant(date, start) < clock.now
   const error = context.sourceError || result.error
   useEffect(() => {
     const dialog = refreshButton.current?.closest('[role="dialog"]')
     if (dialog && !dialog.contains(document.activeElement)) refreshButton.current?.focus()
   }, [result.data, error, enabled])
-  const canSelect = enabled && state.actor.can_manage && !state.scope.archived && !!result.data
+  const canSelect = enabled && state.actor.can_manage && !state.scope.archived && !!result.data && !expired
   const name = useCallback((id: string) => {
     const member = state.members.find(m => m.user_id === id)
     return member ? `${member.code} · ${member.full_name}` : id
@@ -83,6 +86,7 @@ export function CalendarMeetingWindowsDetails({ context, target, onClose }: { co
     <div className="ac-window-detail">
       <div className="ac-window-detail-head"><strong>{date} · {timeLabel(start)}–{timeLabel(start + duration)} · {duration} мин</strong><button ref={refreshButton} type="button" className="ac-icon" aria-label="Обновить варианты окна" title="Обновить варианты окна" onClick={() => void onRefresh().catch(() => undefined)}><RefreshCw size={18} aria-hidden="true" /></button></div>
       {!state.actor.can_manage || state.scope.archived ? <p className="ac-muted">Только просмотр. {state.scope.archived ? 'Контур архивирован.' : 'Назначение доступно помощнику контура.'}</p> : null}
+      {expired && <p className="ac-warning" role="status">Окно истекло. Назначение на это время недоступно.</p>}
       <div aria-live="polite">{error ? <p className="ac-error" role="alert">{error}</p> : !result.data ? <p role="status">Проверка вариантов окна…</p> : <p>Вариантов: {options.length}. Подтверждено: {options.filter(o => o.status === 'available').length}. С неизвестной доступностью: {options.filter(o => o.status === 'warning').length}.</p>}</div>
       {result.data && !options.length && <p className="ac-muted">Для этого интервала вариантов больше нет.</p>}
       <ul className="ac-window-options">{options.slice(currentPage * 50, (currentPage + 1) * 50).map(option => {
@@ -92,9 +96,9 @@ export function CalendarMeetingWindowsDetails({ context, target, onClose }: { co
           <dl className="ac-window-participants"><dt>Аудитор</dt><dd>{name(option.auditor_id)}</dd><dt>Техспециалист</dt><dd>{name(option.tech_id)}</dd><dt>Докладчик</dt><dd>{name(option.speaker_id)}</dd></dl>
           {option.warnings.map((warning, i) => <p className="ac-warning" key={`${warning.code}:${warning.user_id || ''}:${i}`}>{warning.participant_name || (warning.user_id ? name(warning.user_id) : warning.participant_code) ? <strong>{warning.participant_name || (warning.user_id ? name(warning.user_id) : warning.participant_code)}: </strong> : null}{warning.message}</p>)}
           {canSelect && <button type="button" aria-label={`Выбрать ${group.code}, докладчик ${name(option.speaker_id)}`} onClick={() => {
-            if (!canSelect || !result.data || !optionMatchesState(option, state, date)) return
+            if (!canSelect || !result.data || calendarInstant(date, start) < clock.current() || !optionMatchesState(option, state, date)) return
             onClose()
-            onSelect(date, start, { duration, group_id: option.group_id, speaker_id: option.speaker_id, version: result.data.version })
+            onSelect(date, start, { duration, group_id: option.group_id, speaker_id: option.speaker_id, version: result.data.version, server_now: result.data.now, clock_started: result.started })
           }}><ArrowRight size={16} aria-hidden="true" />Выбрать</button>}
         </li>
       })}</ul>

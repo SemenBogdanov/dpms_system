@@ -153,7 +153,7 @@ export function AuditCalendarPage() {
           } }} />}
           {view === 'availability' && <><CalendarAvailability state={data} from={from} person={params.get('availability_person') || data.actor.user_id} setPerson={availability_person => update({ availability_person })} day={selectedDay} setDay={day => update({ day })} onRefresh={refresh} onAbsence={user => setAction({ kind: 'absence', user })} onAction={setAvailabilityAction} controlsTarget={availabilityControls} enabled={!loading && dataQuery === query && !error && !urlError} /><h3>Отсутствия</h3><AbsenceList state={data} onAction={setAction} /></>}
           {view === 'readiness' && <CalendarReadiness state={data} from={from} to={to} onAction={setAvailabilityAction} onRefresh={refresh} />}
-          {view === 'workload' && <CalendarWorkload state={data} from={from} to={to} groupId={group} enabled={!loading && dataQuery === query && !error && !urlError} onGroupChange={value => update({ group: value })} />}
+          {view === 'workload' && <CalendarWorkload state={data} from={from} to={to} groupId={group} enabled={!loading && dataQuery === query && !error && !urlError} onGroupChange={value => update({ group: value })} onRefresh={refresh} />}
           {view === 'dataset' && <CalendarDataset state={data} onOpen={open} onRestore={setRestore} />}
           {view === 'directories' && <CalendarDirectories state={data} onAction={setAction} />}
           {view === 'management' && (data.actor.can_manage || data.actor.can_archive) && <CalendarManagement state={data} onAction={setAction} />}

@@ -305,11 +305,11 @@ test('immutable fact summary participates in modal keyboard cycle', async ({ pag
   await expect(dialog.getByRole('button', { name: 'Сохранить', exact: true })).toHaveCount(0)
 })
 
-test('outside hours use 48 rows with one meeting and continuations', async ({ page }) => {
+test('outside hours use 48 time slots with one meeting and continuations', async ({ page }) => {
   const state = fixtureState(); state.plans[0].start = 480
   await mountCalendar(page, { state })
   await expect(page.locator('.ac-day-graph')).toBeVisible()
-  await expect(page.locator('.ac-vertical-row')).toHaveCount(48)
+  await expect(page.locator('.ac-vertical-slot')).toHaveCount(48)
   await expect(page.locator('.ac-day-graph .ac-meeting')).toHaveCount(1)
   await expect(page.locator('.ac-day-graph .ac-continuation')).toHaveCount(2)
 })

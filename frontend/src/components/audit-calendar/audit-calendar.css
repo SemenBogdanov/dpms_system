@@ -69,6 +69,17 @@
 .ac-day-label span { color: hsl(var(--muted-foreground)); }
 .ac-weekend { background: hsl(var(--surface-muted) / .65); }
 .ac-day-layers, .ac-grid-tracks { min-width: 0; }
+.ac-graph-controls { display: flex; justify-content: flex-end; padding-block: 4px 8px; }
+.ac .ac-window-cell.ac-window-expired:disabled { color: hsl(var(--destructive)); background: hsl(var(--destructive) / .07); border-color: hsl(var(--destructive) / .25); opacity: 1; }
+.ac-expired-report { padding: 10px 0; border-block: 1px solid hsl(var(--border)); margin-bottom: 12px; }
+.ac-expired-report > div { display: flex; align-items: center; gap: 8px; }
+.ac .ac-expired-report h3 { font-size: 14px; margin: 0; }
+.ac-expired-report strong { font-size: 20px; margin-left: auto; }
+.ac-expired-report p { margin: 6px 0 0; }
+.ac-meeting-lane + .ac-meeting-lane { border-top: 1px solid hsl(var(--border)); }
+.ac .ac-add-meeting-row .ac-track, .ac .ac-add-meeting-row .ac-empty-slot { min-height: 26px; }
+.ac-add-meeting-row .ac-layer-label { padding-block: 6px; }
+.ac-add-meeting-row .ac-empty-slot svg { opacity: .7; }
 .ac-graph-row { display: grid; grid-template-columns: 41px minmax(0, 1fr); }
 .ac-graph-row + .ac-graph-row { border-top: 1px dashed hsl(var(--border)); }
 .ac-layer-label { padding: 12px 3px; font-size: 10px; color: hsl(var(--muted-foreground)); }

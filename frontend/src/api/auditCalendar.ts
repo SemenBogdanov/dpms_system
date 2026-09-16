@@ -6,7 +6,7 @@ export type CalendarMember = { user_id: string; full_name: string; code: string;
 export type CalendarGroup = { id: string; code: string; label: string; legacy: boolean; archived: boolean; versions: { id: string; effective_from: string; auditor_id: string | null; tech_id: string | null }[] }
 export type CalendarIssue = { code: string; message: string; user_id?: string; participant_code?: string; participant_name?: string; role?: CalendarRole; record_id?: string }
 export type CalendarMeetingOptions = { version: number; date: string; start: number; duration: number; groups: { id: string; code: string; label: string; eligible: boolean; issues: CalendarIssue[]; warnings: CalendarIssue[] }[] }
-export type CalendarMeetingWindowCell = { date: string; start: number; status: 'available' | 'warning' | 'unavailable'; confirmed: number; uncertain: number }
+export type CalendarMeetingWindowCell = { date: string; start: number; status: 'available' | 'warning' | 'unavailable' | 'expired'; confirmed: number; uncertain: number }
 export type CalendarMeetingWindowQuery = { date: string; start: number; duration: number; group_id: string | null; speaker_id: string | null }
 export type CalendarMeetingWindowOption = { group_id: string; group_version_id: string; auditor_id: string; tech_id: string; speaker_id: string; status: 'available' | 'warning'; warnings: CalendarIssue[] }
 export type CalendarMeetingWindows = {
@@ -15,7 +15,7 @@ export type CalendarMeetingWindows = {
   cells: CalendarMeetingWindowCell[]
 }
 export type CalendarMeetingWindowOptions = { version: number; now: string; query: CalendarMeetingWindowQuery; options: CalendarMeetingWindowOption[] }
-export type CalendarMeetingWindowPrefill = { duration: number; group_id: string; speaker_id: string; version: number }
+export type CalendarMeetingWindowPrefill = { duration: number; group_id: string; speaker_id: string; version: number; server_now?: string; clock_started?: { wall: number; monotonic: number } }
 export type CalendarWorkload = {
   version: number; period: { from: string; to: string; group_id: string | null }; working_days: number
   working_window: { start: number; end: number; slot_minutes: number }
@@ -23,7 +23,7 @@ export type CalendarWorkload = {
     free_slots: number; free_minutes: number; planned_meetings: number; planned_minutes: number; planned_work_minutes: number
     outside_work_minutes: number; target: number; power_percent: number | null; norm_percent: number | null })[]
 }
-export type CalendarPlan = { id: string; date: string; start: number; duration: number; group_id: string; group_version_id: string | null; activity: string; speaker_id: string | null; status: 'draft' | 'planned' | 'cancelled'; version: number; origin: string; source_id: string | null; issues: CalendarIssue[]; warnings: CalendarIssue[] }
+export type CalendarPlan = { id: string; date: string; start: number; duration: number; group_id: string; group_version_id: string | null; activity: string; speaker_id: string | null; status: 'draft' | 'planned' | 'cancelled'; fact_outcome?: 'completed' | 'cancelled' | null; version: number; origin: string; source_id: string | null; issues: CalendarIssue[]; warnings: CalendarIssue[] }
 export type CalendarFact = { id: string; plan_id: string | null; date: string; start: number; duration: number; group_id: string | null; activity: string; speaker_id: string | null; outcome: 'completed' | 'cancelled'; reason: string; evidence: string; recorded_by_id: string; recorded_at: string; participant_snapshot: unknown[]; planned_snapshot: unknown; composition_unknown: boolean; origin: string }
 export type CalendarAvailability = { user_id: string; date: string; start: number; end: number; available: boolean }
 export type CalendarAvailabilityLock = { id: string; user_id: string; date: string; locked: boolean; locked_at: string; locked_by_id: string; snapshot: unknown[] }

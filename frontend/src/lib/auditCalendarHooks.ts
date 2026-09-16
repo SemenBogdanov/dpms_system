@@ -64,5 +64,6 @@ export function useCalendarMutation() {
     } finally { flight.current = false; setBusy(false) }
   }, [])
   const rebase = (message = 'Данные перечитаны. Проверьте ввод и повторите сохранение.') => { attempt.current = null; setStale(false); setUncertain(false); setError(message) }
-  return { busy, error, stale, uncertain, run, rebase, setError }
+  const isReplay = (body: unknown, version: number) => uncertain && attempt.current?.signature === JSON.stringify(body) && attempt.current.version === version
+  return { busy, error, stale, uncertain, run, rebase, setError, isReplay }
 }
