@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh expiring DPMS private model container routes
+
+[Timer]
+OnBootSec=20
+OnUnitActiveSec=20
+AccuracySec=1
+Unit=dpms-connector-guard.service
+
+[Install]
+WantedBy=timers.target

@@ -1,8 +1,11 @@
-# Local llama.cpp connector: preparation checkpoint
+# Local llama.cpp connector
 
-This directory currently contains only the fail-closed network preparation for
-an explicitly approved VPS-to-Mac connector. It is not a working model connector.
-Do not publish the unauthenticated llama-server with Tailscale Serve or Funnel.
+Private VPS-to-Mac transport was activated with explicit approval on 2026-09-17.
+The application version is unchanged; model-profile registration and full audit-job
+acceptance remain separate gates. See `ACTIVATION.md` for verified results and
+rollback, and `GATEWAY.md` for gateway design. Never publish the unauthenticated
+llama-server with Serve or Funnel. The preparation steps below are historical;
+do not reapply quarantine to an active connector without intending to stop it.
 
 ## Host prerequisites
 
@@ -49,7 +52,7 @@ must still block application traffic after successful login.
 The CLI timeout does not cancel the pending browser login. Leave the guard in
 place and inspect status separately; use `tailscale down` for an explicit stop.
 
-## Remaining activation gates
+## Preparation And Acceptance Gates
 
 1. Confirm the user-selected tailnet and review existing grants/ACLs. A narrow
    added allow rule does not override a broad existing allow-all rule.
