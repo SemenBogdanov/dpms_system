@@ -1,14 +1,19 @@
 """Generate/install a user LaunchAgent without embedding a gateway credential."""
 
 import argparse
+import http.client
 import json
 import os
 from pathlib import Path
 import plistlib
 import subprocess
+import time
+
+from recovery_state import RecoveryState
 
 LABEL = "ru.dpms.local-llm.gateway"
 SOURCE = Path(__file__).resolve().parent
+STATE_DIRECTORY = Path.home() / "Library/Application Support/DPMSLocalLLM/state"
 
 
 def job_pid(output: str) -> int | None:
@@ -29,6 +34,63 @@ def service_status(output: str, listeners: set[int]) -> str:
     if pid is not None:
         return "RUNNING" if listeners == {pid} else "STARTING"
     return "NOT_RUNNING"
+
+
+def llama_slots_idle() -> bool:
+    connection = http.client.HTTPConnection("127.0.0.1", 8080, timeout=5)
+    try:
+        connection.request("GET", "/slots", headers={"Accept-Encoding": "identity", "Connection": "close"})
+        response = connection.getresponse()
+        body = response.read(64 * 1024 + 1)
+    finally:
+        connection.close()
+    if response.status != 200 or len(body) > 64 * 1024:
+        raise ValueError("Cannot verify local model slots")
+    try:
+        slots = json.loads(body)
+    except (UnicodeDecodeError, ValueError):
+        raise ValueError("Cannot verify local model slots") from None
+    if not isinstance(slots, list) or not 1 <= len(slots) <= 32:
+        raise ValueError("Cannot verify local model slots")
+    for slot in slots:
+        if not isinstance(slot, dict) or type(slot.get("is_processing")) is not bool:
+            raise ValueError("Cannot verify local model slots")
+    return all(not slot["is_processing"] for slot in slots)
+
+
+def recover_pending(
+    service_state: str,
+    *,
+    state_directory: Path = STATE_DIRECTORY,
+    idle_check=llama_slots_idle,
+    pause=time.sleep,
+) -> dict:
+    if service_state != "NOT_RUNNING":
+        raise ValueError("Stop the gateway before confirming recovery")
+    recovery = RecoveryState(str(state_directory))
+    if not recovery.pending:
+        return {"status": "RECOVERY_NOT_REQUIRED"}
+    if not idle_check():
+        raise ValueError("Local model is still processing")
+    pause(1.0)
+    if not idle_check():
+        raise ValueError("Local model is still processing")
+    archived = recovery.archive_pending()
+    return {"status": "RECOVERED", "archived_marker": archived.name}
+
+
+def inspect_service(job: str) -> tuple[str, bool]:
+    result = subprocess.run(["launchctl", "print", job], capture_output=True, timeout=10, text=True)
+    if result.returncode not in (0, 113):
+        raise ValueError("Cannot inspect gateway service")
+    listener = subprocess.run(
+        ["/usr/sbin/lsof", "-nP", "-a", "-iTCP:18080", "-sTCP:LISTEN", "-t"],
+        capture_output=True, timeout=10, text=True,
+    )
+    if listener.returncode not in (0, 1) or listener.stderr.strip():
+        raise ValueError("Cannot inspect gateway listener")
+    listeners = {int(value) for value in listener.stdout.splitlines() if value.isdigit()}
+    return service_status(result.stdout if result.returncode == 0 else "", listeners), result.returncode == 0
 
 
 def definition(model: str, source: Path = SOURCE, home: Path | None = None):
@@ -56,7 +118,7 @@ def definition(model: str, source: Path = SOURCE, home: Path | None = None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["plan", "install", "start", "stop", "status"])
+    parser.add_argument("action", choices=["plan", "install", "start", "stop", "status", "recover"])
     parser.add_argument("--model")
     args = parser.parse_args()
     target = Path.home() / "Library/LaunchAgents" / (LABEL + ".plist")
@@ -87,17 +149,12 @@ def main():
             result = subprocess.run(["launchctl", "bootout", job], capture_output=True, timeout=100)
             print(json.dumps({"status": "STOP_REQUESTED" if result.returncode == 0 else "STOP_FAILED"}))
             raise SystemExit(0 if result.returncode == 0 else 2)
-        else:
-            result = subprocess.run(["launchctl", "print", job], capture_output=True, timeout=10, text=True)
-            listener = subprocess.run(
-                ["/usr/sbin/lsof", "-nP", "-a", "-iTCP:18080", "-sTCP:LISTEN", "-t"],
-                capture_output=True, timeout=10, text=True,
-            )
-            if listener.returncode not in (0, 1) or listener.stderr.strip():
-                raise ValueError("Cannot inspect gateway listener")
-            listeners = {int(value) for value in listener.stdout.splitlines() if value.isdigit()}
-            state = service_status(result.stdout if result.returncode == 0 else "", listeners)
+        elif args.action == "status":
+            state, _ = inspect_service(job)
             print(json.dumps({"status": state, "installed": target.exists()}))
+        else:
+            state, _ = inspect_service(job)
+            print(json.dumps(recover_pending(state)))
     except (ValueError, OSError, subprocess.TimeoutExpired):
         raise SystemExit("Local gateway service operation failed; existing service was not replaced") from None
 

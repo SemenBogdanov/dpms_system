@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from hashlib import sha256
 import json
+import math
 import ssl
 from typing import Any, TYPE_CHECKING
 from uuid import UUID
@@ -25,6 +26,12 @@ if TYPE_CHECKING:
 
 MAX_AI_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_AI_PROMPT_CHARS = 60_000
+_LOCAL_GATEWAY_ERRORS = {
+    "local_model_busy": (429, "Локальная модель уже обрабатывает другой запрос"),
+    "local_model_recovery_required": (503, "Локальный шлюз ожидает подтверждения восстановления"),
+    "local_model_timeout": (504, "Локальная модель не завершила обработку вовремя"),
+    "local_model_unavailable": (503, "Локальная модель недоступна"),
+}
 
 
 class AIProviderError(Exception):
@@ -202,6 +209,7 @@ async def generate_text(
     temperature: float = 0.2,
     allow_disabled: bool = False,
     allow_unverified: bool = False,
+    read_timeout_seconds: float | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> str:
     if not provider.enabled and not allow_disabled:
@@ -221,12 +229,23 @@ async def generate_text(
         clean_messages.append({"role": role, "content": content})
     if total_chars > MAX_AI_PROMPT_CHARS:
         raise AIProviderError("prompt_too_large", "Запрос к ИИ превышает допустимый размер", 413)
+    request_timeout = (
+        settings.AI_PROVIDER_READ_TIMEOUT_SECONDS
+        if read_timeout_seconds is None
+        else read_timeout_seconds
+    )
+    if (
+        type(request_timeout) not in (int, float)
+        or not math.isfinite(request_timeout)
+        or not 1 <= request_timeout <= 3600
+    ):
+        raise AIProviderError("invalid_timeout", "Некорректный таймаут ИИ-провайдера", 500)
     url = normalize_ai_base_url(provider.base_url).rstrip("/") + "/chat/completions"
     api_key = decrypt_ai_api_key(provider.api_key_ciphertext)
     timeout = httpx.Timeout(
         connect=settings.AI_PROVIDER_CONNECT_TIMEOUT_SECONDS,
-        read=settings.AI_PROVIDER_READ_TIMEOUT_SECONDS,
-        write=settings.AI_PROVIDER_READ_TIMEOUT_SECONDS,
+        read=request_timeout,
+        write=request_timeout,
         pool=settings.AI_PROVIDER_CONNECT_TIMEOUT_SECONDS,
     )
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -247,6 +266,18 @@ async def generate_text(
             async with client.stream("POST", url, headers=headers, json=payload) as response:
                 if response.is_redirect:
                     raise AIProviderError("redirect_blocked", "ИИ-провайдер вернул redirect; проверьте точный API URL", 502)
+                local_error_code = response.headers.get("x-dpms-local-gateway-error", "")
+                if (
+                    local_error_code in _LOCAL_GATEWAY_ERRORS
+                    and response.status_code == _LOCAL_GATEWAY_ERRORS[local_error_code][0]
+                ):
+                    error_status, error_message = _LOCAL_GATEWAY_ERRORS[local_error_code]
+                    raise AIProviderError(
+                        local_error_code,
+                        error_message,
+                        error_status,
+                        retry_after_seconds=_parse_retry_after(response.headers.get("retry-after")),
+                    )
                 if response.status_code == 401:
                     raise AIProviderError("invalid_credentials", "ИИ-провайдер отклонил API key", 502)
                 if response.status_code == 403:

@@ -9,7 +9,14 @@ from unittest.mock import patch
 import httpx
 from fastapi.responses import JSONResponse
 
-from gateway import MAX_PROMPT_CHARS, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, Settings, create_app
+from gateway import (
+    MAX_INFERENCE_DEADLINE_SECONDS,
+    MAX_PROMPT_CHARS,
+    MAX_REQUEST_BYTES,
+    MAX_RESPONSE_BYTES,
+    Settings,
+    create_app,
+)
 
 BEARER = "test-only-not-a-real-credential-" + "x" * 32
 MODEL = "synthetic-local-model"
@@ -183,7 +190,9 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.1)
             return completed()
         async with self.client(upstream, deadline=0.02) as client:
-            self.assertEqual((await client.post("/v1/chat/completions", json=PAYLOAD, headers=HEADERS)).status_code, 504)
+            timed_out = await client.post("/v1/chat/completions", json=PAYLOAD, headers=HEADERS)
+            self.assertEqual(timed_out.status_code, 504)
+            self.assertEqual(timed_out.headers["x-dpms-local-gateway-error"], "local_model_timeout")
             result = await client.post("/v1/chat/completions", json=PAYLOAD, headers=HEADERS)
             self.assertEqual(result.status_code, 503)
             self.assertEqual(result.json()["error"]["code"], "local_model_recovery_required")
@@ -293,7 +302,8 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         for model in ("", "x" * 201, "line\nbreak"):
             with self.assertRaises(ValueError):
                 Settings(BEARER, model)
-        for deadline in (0, 81, float("nan"), float("inf")):
+        self.assertEqual(Settings(BEARER, MODEL).deadline_seconds, 900)
+        for deadline in (False, 0, MAX_INFERENCE_DEADLINE_SECONDS + 1, float("nan"), float("inf")):
             with self.assertRaises(ValueError):
                 Settings(BEARER, MODEL, deadline_seconds=deadline)
 

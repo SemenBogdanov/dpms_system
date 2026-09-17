@@ -467,6 +467,7 @@ class NativeWorkerTests(unittest.IsolatedAsyncioTestCase):
             await _generate_batch_with_retry(SimpleNamespace(), batch, 1)
         self.assertEqual(generate.await_count, 2)
         for call in generate.await_args_list:
+            self.assertEqual(call.kwargs["read_timeout_seconds"], 930.0)
             payload = json.loads(call.args[1][1]["content"])
             self.assertIn("UNIQUE selected instruction", payload["methodology"]["instructions"])
             self.assertEqual(payload["methodology"]["rules"], ["UNIQUE selected rule."])

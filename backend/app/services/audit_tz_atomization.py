@@ -11,6 +11,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from app.config import settings
 from app.services.ai_provider import AIProviderError, generate_text
 
 
@@ -631,7 +632,13 @@ async def generate_batch_result(
 ) -> CanonicalBatchResult:
     messages = build_batch_messages(batch, total_batches, correction_code=correction_code)
     try:
-        raw = await generate_text(provider, messages, max_tokens=4096, temperature=0)
+        raw = await generate_text(
+            provider,
+            messages,
+            max_tokens=4096,
+            temperature=0,
+            read_timeout_seconds=settings.AUDIT_TZ_AI_READ_TIMEOUT_SECONDS,
+        )
     except AIProviderError:
         raise
     return validate_batch_result(

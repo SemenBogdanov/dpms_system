@@ -153,6 +153,29 @@ class RecoveryStateTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(state.marker.stat().st_mode & 0o777, 0o600)
             self.assertTrue(RecoveryState(directory).pending)
 
+    def test_operator_recovery_archives_marker_without_reading_or_overwrite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = RecoveryState(directory)
+            state.begin()
+            state.owned = False
+
+            archived = state.archive_pending()
+
+            self.assertFalse(state.pending)
+            self.assertTrue(archived.is_file())
+            self.assertEqual(archived.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(archived.read_bytes(), b"pending\n")
+            with self.assertRaises(FileNotFoundError):
+                state.archive_pending()
+
+    def test_operator_recovery_rejects_foreign_marker_shape(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = RecoveryState(directory)
+            state.marker.write_bytes(b"unexpected")
+            state.marker.chmod(0o600)
+            with self.assertRaises(ValueError):
+                state.archive_pending()
+
     def test_abrupt_process_exit_keeps_marker(self):
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run([

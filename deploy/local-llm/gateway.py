@@ -21,6 +21,7 @@ from bounded_transport import BoundedH11Protocol
 MAX_REQUEST_BYTES = 512 * 1024
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_PROMPT_CHARS = 60_000
+MAX_INFERENCE_DEADLINE_SECONDS = 900.0
 
 
 @dataclass(frozen=True)
@@ -28,7 +29,7 @@ class Settings:
     bearer: str = field(repr=False)
     model: str
     upstream_port: int = 8080
-    deadline_seconds: float = 80.0
+    deadline_seconds: float = MAX_INFERENCE_DEADLINE_SECONDS
     state_directory: str | None = None
 
     def __post_init__(self):
@@ -39,8 +40,12 @@ class Settings:
         self.model.encode("utf-8")
         if type(self.upstream_port) is not int or not 1024 <= self.upstream_port <= 65535:
             raise ValueError("Invalid loopback port")
-        if not math.isfinite(self.deadline_seconds) or not 0 < self.deadline_seconds <= 80:
-            raise ValueError("Deadline must be positive and below the DPMS 90s timeout")
+        if (
+            type(self.deadline_seconds) not in (int, float)
+            or not math.isfinite(self.deadline_seconds)
+            or not 0 < self.deadline_seconds <= MAX_INFERENCE_DEADLINE_SECONDS
+        ):
+            raise ValueError("Deadline must be positive and no longer than 15 minutes")
 
 
 class GatewayError(Exception):
@@ -51,7 +56,7 @@ class GatewayError(Exception):
 
 
 def error(status: int, code: str) -> JSONResponse:
-    headers = {"Cache-Control": "no-store"}
+    headers = {"Cache-Control": "no-store", "X-DPMS-Local-Gateway-Error": code}
     if status in (429, 503):
         headers["Retry-After"] = "5"
     if status == 401:

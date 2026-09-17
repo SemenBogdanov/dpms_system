@@ -68,6 +68,41 @@ class AIProviderTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(result, "OK")
 
+    async def test_generate_text_uses_bounded_explicit_read_timeout(self):
+        async def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.extensions["timeout"]["read"], 930.0)
+            return httpx.Response(200, json={"choices": [{"message": {"content": "OK"}}]})
+
+        with (
+            patch.object(settings, "INTEGRATION_SECRET_KEY", INTEGRATION_KEY),
+            patch.object(settings, "AI_PROVIDER_ALLOWED_ORIGINS", "https://ai.example.test"),
+        ):
+            provider = SimpleNamespace(
+                enabled=True,
+                base_url="https://ai.example.test/v1",
+                model_name="test-model",
+                api_key_ciphertext=encrypt_ai_api_key("provider-secret"),
+                config_version=1,
+                last_test_status="ok",
+                last_verified_config_version=1,
+            )
+            result = await generate_text(
+                provider,
+                [{"role": "user", "content": "test"}],
+                read_timeout_seconds=930,
+                transport=httpx.MockTransport(handler),
+            )
+            for invalid in (False, 0, 3601, float("nan"), float("inf")):
+                with self.subTest(invalid=invalid), self.assertRaises(AIProviderError) as raised:
+                    await generate_text(
+                        provider,
+                        [{"role": "user", "content": "test"}],
+                        read_timeout_seconds=invalid,
+                        transport=httpx.MockTransport(handler),
+                    )
+                self.assertEqual(raised.exception.code, "invalid_timeout")
+        self.assertEqual(result, "OK")
+
     async def test_provider_http_errors_are_actionable_and_redacted(self):
         cases = {
             400: "invalid_provider_request",
@@ -104,6 +139,66 @@ class AIProviderTests(unittest.IsolatedAsyncioTestCase):
                     )
                 self.assertEqual(context.exception.code, expected_code)
                 self.assertNotIn("remote diagnostic", context.exception.message)
+
+    async def test_local_gateway_errors_preserve_safe_operational_code(self):
+        async def handler(_: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                504,
+                headers={"X-DPMS-Local-Gateway-Error": "local_model_timeout"},
+                json={"error": {"message": "must-not-be-exposed"}},
+            )
+
+        with (
+            patch.object(settings, "INTEGRATION_SECRET_KEY", INTEGRATION_KEY),
+            patch.object(settings, "AI_PROVIDER_ALLOWED_ORIGINS", "https://ai.example.test"),
+        ):
+            provider = SimpleNamespace(
+                enabled=True,
+                base_url="https://ai.example.test/v1",
+                model_name="test-model",
+                api_key_ciphertext=encrypt_ai_api_key("provider-secret"),
+                config_version=1,
+                last_test_status="ok",
+                last_verified_config_version=1,
+            )
+            with self.assertRaises(AIProviderError) as raised:
+                await generate_text(
+                    provider,
+                    [{"role": "user", "content": "test"}],
+                    transport=httpx.MockTransport(handler),
+                )
+
+        self.assertEqual(raised.exception.code, "local_model_timeout")
+        self.assertNotIn("must-not-be-exposed", raised.exception.message)
+
+    async def test_local_gateway_error_header_requires_matching_status(self):
+        async def handler(_: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                headers={"X-DPMS-Local-Gateway-Error": "local_model_timeout"},
+                json={"choices": [{"message": {"content": "OK"}}]},
+            )
+
+        with (
+            patch.object(settings, "INTEGRATION_SECRET_KEY", INTEGRATION_KEY),
+            patch.object(settings, "AI_PROVIDER_ALLOWED_ORIGINS", "https://ai.example.test"),
+        ):
+            provider = SimpleNamespace(
+                enabled=True,
+                base_url="https://ai.example.test/v1",
+                model_name="test-model",
+                api_key_ciphertext=encrypt_ai_api_key("provider-secret"),
+                config_version=1,
+                last_test_status="ok",
+                last_verified_config_version=1,
+            )
+            result = await generate_text(
+                provider,
+                [{"role": "user", "content": "test"}],
+                transport=httpx.MockTransport(handler),
+            )
+
+        self.assertEqual(result, "OK")
 
     async def test_rate_limit_preserves_bounded_retry_after(self):
         async def handler(_: httpx.Request) -> httpx.Response:

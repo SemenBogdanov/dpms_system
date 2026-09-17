@@ -413,6 +413,23 @@ class AuditTZRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raised.exception.retry_after_seconds, 75)
         self.assertEqual(generate.await_count, 1)
 
+    async def test_local_recovery_error_is_deferred_without_blind_retry(self):
+        error = AIProviderError(
+            "local_model_recovery_required",
+            "recovery required",
+            503,
+            retry_after_seconds=5,
+        )
+        generate = AsyncMock(side_effect=error)
+
+        with patch("app.services.audit_tz_runtime.generate_batch_result", generate):
+            with self.assertRaises(AuditTZRuntimeError) as raised:
+                await _generate_batch_with_retry(SimpleNamespace(), SimpleNamespace(), 12)
+
+        self.assertTrue(raised.exception.retryable)
+        self.assertEqual(raised.exception.code, "local_model_recovery_required")
+        self.assertEqual(generate.await_count, 1)
+
     async def test_schema_retry_adds_targeted_correction_code(self):
         expected = SimpleNamespace(batch_index=1)
         generate = AsyncMock(
@@ -431,6 +448,40 @@ class AuditTZRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(result, expected)
         self.assertIsNone(generate.await_args_list[0].kwargs["correction_code"])
         self.assertEqual(generate.await_args_list[1].kwargs["correction_code"], "coverage_gap")
+
+    async def test_retry_renews_worker_lease_before_every_provider_attempt(self):
+        expected = SimpleNamespace(batch_index=1)
+        generate = AsyncMock(
+            side_effect=[AIProviderError("timeout", "slow", 504), expected]
+        )
+        renew = AsyncMock()
+
+        with (
+            patch("app.services.audit_tz_runtime.generate_batch_result", generate),
+            patch("app.services.audit_tz_runtime.asyncio.sleep", new=AsyncMock()),
+        ):
+            result = await _generate_batch_with_retry(
+                SimpleNamespace(),
+                SimpleNamespace(),
+                12,
+                before_attempt=renew,
+            )
+
+        self.assertIs(result, expected)
+        self.assertEqual(renew.await_count, 2)
+
+    async def test_provider_call_is_blocked_when_worker_lease_is_too_short(self):
+        generate = AsyncMock()
+        with (
+            patch.object(settings, "AUDIT_TZ_AI_READ_TIMEOUT_SECONDS", 930.0),
+            patch.object(settings, "AUDIT_TZ_WORKER_LEASE_SECONDS", 930),
+            patch("app.services.audit_tz_runtime.generate_batch_result", generate),
+        ):
+            with self.assertRaises(AuditTZRuntimeError) as raised:
+                await _generate_batch_with_retry(SimpleNamespace(), SimpleNamespace(), 12)
+
+        self.assertEqual(raised.exception.code, "runtime_timeout_configuration_invalid")
+        generate.assert_not_awaited()
 
     async def test_transient_failure_reschedules_and_preserves_checkpoints(self):
         now = datetime.now(timezone.utc)
