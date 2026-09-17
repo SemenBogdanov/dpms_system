@@ -1,8 +1,12 @@
 from pathlib import Path
 import plistlib
+import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from launch_agent import definition, job_pid, service_status
+from launch_agent import definition, inspect_service, job_pid, recover_pending, service_status
+from recovery_state import RecoveryState
 
 
 class LaunchAgentTests(unittest.TestCase):
@@ -44,6 +48,57 @@ class LaunchAgentTests(unittest.TestCase):
     def test_invalid_pid_is_not_running(self):
         for pid in ("", "0", "-1", "other"):
             self.assertIsNone(job_pid(f"job = {{\n\tstate = running\n\tpid = {pid}\n}}\n"))
+
+    def test_recovery_requires_stopped_gateway_and_two_idle_observations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = RecoveryState(directory)
+            state.begin()
+            state.owned = False
+            calls = []
+
+            def idle():
+                calls.append(True)
+                return True
+
+            with self.assertRaises(ValueError):
+                recover_pending("RUNNING", state_directory=Path(directory), idle_check=idle, pause=lambda _: None)
+            self.assertTrue(state.pending)
+
+            result = recover_pending(
+                "NOT_RUNNING",
+                state_directory=Path(directory),
+                idle_check=idle,
+                pause=lambda _: None,
+            )
+            self.assertEqual(result["status"], "RECOVERED")
+            self.assertEqual(len(calls), 2)
+            self.assertFalse(state.pending)
+            self.assertTrue((Path(directory) / result["archived_marker"]).is_file())
+
+    def test_recovery_refuses_busy_model_and_no_marker_is_noop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = RecoveryState(directory)
+            self.assertEqual(
+                recover_pending("NOT_RUNNING", state_directory=Path(directory), idle_check=lambda: False),
+                {"status": "RECOVERY_NOT_REQUIRED"},
+            )
+            state.begin()
+            state.owned = False
+            with self.assertRaises(ValueError):
+                recover_pending(
+                    "NOT_RUNNING",
+                    state_directory=Path(directory),
+                    idle_check=lambda: False,
+                    pause=lambda _: None,
+                )
+            self.assertTrue(state.pending)
+
+    def test_service_inspection_fails_closed_on_unexpected_launchctl_error(self):
+        failed = SimpleNamespace(returncode=2, stdout="", stderr="unexpected")
+        with patch("launch_agent.subprocess.run", return_value=failed) as run:
+            with self.assertRaises(ValueError):
+                inspect_service("gui/501/ru.dpms.local-llm.gateway")
+        self.assertEqual(run.call_count, 1)
 
 
 if __name__ == "__main__":

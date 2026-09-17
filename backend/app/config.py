@@ -75,8 +75,11 @@ class Settings(BaseSettings):
     AUDIT_TZ_WORKER_POLL_SECONDS: float = 2.0
     # A preflight can run several bounded CLI phases; keep the lease longer
     # than the combined command timeout so another worker cannot reclaim it.
-    AUDIT_TZ_WORKER_LEASE_SECONDS: int = 600
+    AUDIT_TZ_WORKER_LEASE_SECONDS: int = 1200
     AUDIT_TZ_CLI_TIMEOUT_SECONDS: int = 120
+    # Local models can spend several minutes on prompt ingestion and bounded
+    # structured generation. Keep this above the 900s local gateway deadline.
+    AUDIT_TZ_AI_READ_TIMEOUT_SECONDS: float = 930.0
     # Global kill switch. Canonical model calls additionally require a verified
     # provider and explicit confirmation for the selected immutable document.
     AUDIT_TZ_EXTERNAL_AI_ENABLED: bool = False

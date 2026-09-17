@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -966,8 +967,27 @@ async def process_preflight(job_id: UUID, lease_token: str, db_factory) -> None:
         await db.commit()
 
 
-async def _generate_batch_with_retry(provider, batch, total_batches: int):
+async def _generate_batch_with_retry(provider, batch, total_batches: int, *, before_attempt=None):
+    request_timeout = settings.AUDIT_TZ_AI_READ_TIMEOUT_SECONDS
+    lease_seconds = settings.AUDIT_TZ_WORKER_LEASE_SECONDS
+    if (
+        type(request_timeout) not in (int, float)
+        or type(lease_seconds) is not int
+        or not math.isfinite(request_timeout)
+        or not 1 <= request_timeout <= 3600
+        or lease_seconds < request_timeout + 60
+    ):
+        raise AuditTZRuntimeError(
+            "runtime_timeout_configuration_invalid",
+            "Таймаут ИИ-атомизации не согласован с worker lease",
+        )
     retryable_codes = {"timeout", "rate_limited", "provider_unavailable", "connection_failed"}
+    deferred_local_codes = {
+        "local_model_busy",
+        "local_model_recovery_required",
+        "local_model_timeout",
+        "local_model_unavailable",
+    }
     retryable_model_codes = {
         "invalid_model_json",
         "invalid_model_schema",
@@ -982,6 +1002,8 @@ async def _generate_batch_with_retry(provider, batch, total_batches: int):
     correction_code: str | None = None
     for attempt_number in range(1, 4):
         try:
+            if before_attempt is not None:
+                await before_attempt()
             return await generate_batch_result(
                 provider,
                 batch,
@@ -990,7 +1012,7 @@ async def _generate_batch_with_retry(provider, batch, total_batches: int):
             )
         except AIProviderError as error:
             last_error = error
-            if error.code == "rate_limited":
+            if error.code == "rate_limited" or error.code in deferred_local_codes:
                 raise AuditTZRuntimeError(
                     error.code,
                     error.message,
@@ -1010,7 +1032,7 @@ async def _generate_batch_with_retry(provider, batch, total_batches: int):
     raise AuditTZRuntimeError(
         last_error.code,
         last_error.message,
-        retryable=last_error.code in retryable_codes,
+        retryable=last_error.code in retryable_codes or last_error.code in deferred_local_codes,
         retry_after_seconds=last_error.retry_after_seconds,
     )
 
@@ -1329,7 +1351,6 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
                 continue
             if await _pause_atomization_if_requested(db_factory, job_id, lease_token):
                 return
-            await _renew_job_lease(db_factory, job_id, lease_token)
             async with db_factory() as db:
                 active_job = await db.scalar(
                     select(AuditTZRuntimeJob).where(
@@ -1345,7 +1366,12 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
                 # provider has already received the request.
                 active_run.external_ai_called = True
                 await db.commit()
-            generated = await _generate_batch_with_retry(provider_snapshot, batch, len(batches))
+            generated = await _generate_batch_with_retry(
+                provider_snapshot,
+                batch,
+                len(batches),
+                before_attempt=lambda: _renew_job_lease(db_factory, job_id, lease_token),
+            )
             result_by_index[batch.index] = generated
             batch_results = [result_by_index[index] for index in sorted(result_by_index)]
             async with db_factory() as db:
