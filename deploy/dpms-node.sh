@@ -20,6 +20,9 @@ DPMS_DOMAIN_PUNY="${DPMS_DOMAIN_PUNY:-xn--80ahdybnagjlbk.xn--p1ai}"
 DPMS_LOCK_FILE="${DPMS_LOCK_FILE:-/opt/dpms-tools/deploy.lock}"
 DPMS_NODE_IMAGE="${DPMS_NODE_IMAGE:-node:20-bookworm-slim}"
 DPMS_MIN_FREE_MB="${DPMS_MIN_FREE_MB:-1024}"
+DPMS_CONNECTOR_DIR="${DPMS_CONNECTOR_DIR:-/etc/dpms/local-llm}"
+DPMS_CONNECTOR_LOCK_FILE="${DPMS_CONNECTOR_LOCK_FILE:-/run/lock/dpms-llm-activation.lock}"
+DPMS_CONNECTOR_PAUSED=0
 
 usage() {
   cat <<'USAGE'
@@ -715,6 +718,38 @@ backup_app_state() {
   log "$backup_dir"
 }
 
+local_model_guard_pause() {
+  exec 8>"$DPMS_CONNECTOR_LOCK_FILE"
+  flock -n 8 || die "another local model activation or rollback is running"
+  [[ -f "$DPMS_CONNECTOR_DIR/compose-activated" ]] || return 0
+  [[ -r "$DPMS_CONNECTOR_DIR/connector.override.json" ]] || die "local model runtime override missing"
+  [[ -r "$DPMS_CONNECTOR_DIR/tailscale-quarantine.nft" ]] || die "local model quarantine missing"
+  python3 - "$DPMS_CONNECTOR_DIR/activation-state.json" <<'PY'
+import json, sys
+with open(sys.argv[1]) as stream:
+    state = json.load(stream)
+if state.get("phase") != "confirmed":
+    raise SystemExit("local model activation must be confirmed before an app release")
+PY
+  systemctl stop dpms-connector-guard.timer
+  systemctl stop dpms-connector-guard.service
+  nft -f "$DPMS_CONNECTOR_DIR/tailscale-quarantine.nft"
+  DPMS_CONNECTOR_PAUSED=1
+}
+
+local_model_guard_resume() {
+  [[ "$DPMS_CONNECTOR_PAUSED" == 1 ]] || return 0
+  if ! systemctl start dpms-connector-guard.service || ! systemctl start dpms-connector-guard.timer; then
+    systemctl stop dpms-connector-guard.timer || true
+    systemctl stop dpms-connector-guard.service || true
+    if ! nft -f "$DPMS_CONNECTOR_DIR/tailscale-quarantine.nft"; then
+      tailscale down || log "local model isolation needs immediate operator attention"
+    fi
+    die "local model guard resume failed; recovery checks required"
+  fi
+  DPMS_CONNECTOR_PAUSED=0
+}
+
 promote_release() {
   require_root
   with_lock
@@ -754,6 +789,7 @@ promote_release() {
     [[ "$allow_migrations" == 1 ]] || die "migrations detected; rerun with --allow-migrations and --backup-id after external DB backup"
     [[ -n "$backup_id" && "$backup_id" != "<external-db-backup-id>" ]] || die "--backup-id is required for migration releases"
   fi
+  local_model_guard_pause
   backup_dir="$(backup_app_state "$release_id")"
   log "app_backup_dir=$backup_dir"
   if [[ "$migrations_count" -gt 0 ]]; then
@@ -775,7 +811,13 @@ promote_release() {
   if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fx deadline-worker >/dev/null; then
     runtime_services+=(deadline-worker)
   fi
-  DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml up -d --no-build --force-recreate "${runtime_services[@]}"
+  local -a connector_files=()
+  if [[ -f "$DPMS_CONNECTOR_DIR/compose-activated" ]]; then
+    [[ -r "$DPMS_CONNECTOR_DIR/connector.override.json" ]] || die "local model runtime override missing"
+    connector_files=(-f "$DPMS_CONNECTOR_DIR/connector.override.json")
+  fi
+  DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml "${connector_files[@]}" up -d --no-build --force-recreate "${runtime_services[@]}"
+  local_model_guard_resume
   nginx -t
   systemctl reload nginx
   wait_for_healthcheck
@@ -792,6 +834,7 @@ rollback_release() {
   local backup_dir="${1:-}"
   local runtime_services=(backend email-worker)
   [[ -n "$backup_dir" && -d "$backup_dir" ]] || die "usage: rollback <backup-dir>"
+  local_model_guard_pause
   if [[ -f "$backup_dir/previous-backend-image-id.txt" ]]; then
     local previous_image
     previous_image="$(tr -d '[:space:]' < "$backup_dir/previous-backend-image-id.txt")"
@@ -850,7 +893,13 @@ rollback_release() {
     docker ps -q --filter "label=com.docker.compose.project=$DPMS_COMPOSE_PROJECT" \
       --filter "label=com.docker.compose.service=deadline-worker" | xargs -r docker stop >/dev/null
   fi
-  DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml up -d --no-build --force-recreate "${runtime_services[@]}"
+  local -a connector_files=()
+  if [[ -f "$DPMS_CONNECTOR_DIR/compose-activated" ]]; then
+    [[ -r "$DPMS_CONNECTOR_DIR/connector.override.json" ]] || die "local model runtime override missing"
+    connector_files=(-f "$DPMS_CONNECTOR_DIR/connector.override.json")
+  fi
+  DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml "${connector_files[@]}" up -d --no-build --force-recreate "${runtime_services[@]}"
+  local_model_guard_resume
   nginx -t
   systemctl reload nginx
   healthcheck
@@ -937,4 +986,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

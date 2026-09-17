@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh DPMS private model route
+After=tailscaled.service docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/dpms-local-llm/refresh_connector_guard.py
+TimeoutStartSec=45

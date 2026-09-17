@@ -18,6 +18,12 @@ TEST_MODE="${DPMS_BACKUP_TEST_MODE:-0}"
 log() { printf '%s\n' "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
+connector_files=()
+if [[ -f /etc/dpms/local-llm/compose-activated ]]; then
+  [[ -r /etc/dpms/local-llm/connector.override.json ]] || die "local model runtime override missing"
+  connector_files=(-f /etc/dpms/local-llm/connector.override.json)
+fi
+
 if [[ "$TEST_MODE" != "1" && "$(id -u)" != "0" ]]; then
   die "production export must run as root"
 fi
@@ -31,7 +37,7 @@ backend_stopped=0
 cleanup() {
   local exit_code=$?
   if [[ "$backend_stopped" == "1" ]]; then
-    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" up -d backend >/dev/null 2>&1 || true
+    docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" "${connector_files[@]}" up -d backend >/dev/null 2>&1 || true
   fi
   rm -rf "$stage"
   rm -rf "$db_stage"
@@ -134,7 +140,7 @@ PY
       --file /db-stage/database.dump >&2
 
   rm -f "$db_stage/.pgpass" "$db_stage/db-connection.json"
-  docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" up -d backend >&2
+  docker compose -p "$COMPOSE_PROJECT" -f "$COMPOSE_FILE" "${connector_files[@]}" up -d backend >&2
   backend_stopped=0
 
   health_ready=0
