@@ -62,7 +62,7 @@ class RecoveryStateTests(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(RecoveryState(directory).pending)
 
     async def test_upstream_failure_keeps_marker_across_restart(self):
-        for status in (301, 400, 401, 404, 500, 503):
+        for status in (301, 401, 404, 500, 503):
             with tempfile.TemporaryDirectory() as directory:
                 calls = []
                 async def handler(request):
@@ -76,6 +76,28 @@ class RecoveryStateTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(second.json()["error"]["code"], "local_model_recovery_required")
                 self.assertEqual(len(calls), 1)
                 self.assertTrue(RecoveryState(directory).pending)
+
+    async def test_complete_schema_rejection_is_retryable(self):
+        for status in (400, 422):
+            with tempfile.TemporaryDirectory() as directory:
+                calls = []
+
+                async def handler(request):
+                    calls.append(request)
+                    return response({"error": "synthetic"}, status=status)
+
+                async with self.client(directory, handler) as client:
+                    for _ in range(2):
+                        result = await client.post(
+                            "/v1/chat/completions", json=PAYLOAD, headers=HEADERS
+                        )
+                        self.assertEqual(result.status_code, 400)
+                        self.assertEqual(
+                            result.json()["error"]["code"],
+                            "local_model_rejected_request",
+                        )
+                        self.assertFalse(RecoveryState(directory).pending)
+                self.assertEqual(len(calls), 2)
 
     async def test_complete_rate_limit_refusal_is_retryable(self):
         with tempfile.TemporaryDirectory() as directory:
