@@ -101,6 +101,38 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+async def _attempt_for_job(
+    db: AsyncSession,
+    job: AuditTZRuntimeJob | None,
+    *,
+    for_update: bool = False,
+) -> AuditAIAtomizationAttempt | None:
+    if job is None or job.kind != "atomization":
+        return None
+    attempt_id = getattr(job, "attempt_id", None)
+    if attempt_id is not None:
+        query = select(AuditAIAtomizationAttempt).where(
+            AuditAIAtomizationAttempt.id == attempt_id,
+            AuditAIAtomizationAttempt.canonical_run_id == job.run_id,
+        )
+    elif job.run_id is not None:
+        # Compatibility for a job created immediately before migration 094.
+        query = (
+            select(AuditAIAtomizationAttempt)
+            .where(AuditAIAtomizationAttempt.canonical_run_id == job.run_id)
+            .order_by(AuditAIAtomizationAttempt.updated_at.desc())
+            .limit(1)
+        )
+    else:
+        return None
+    if for_update:
+        query = query.with_for_update()
+    attempt = await db.scalar(query)
+    if attempt is not None and getattr(job, "attempt_id", None) is None:
+        job.attempt_id = attempt.id
+    return attempt
+
+
 def _runtime_root() -> Path:
     root = Path(settings.AUDIT_TZ_RUNTIME_DIR).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -438,11 +470,7 @@ async def _recover_stale_jobs(db: AsyncSession, now: datetime) -> None:
                     run.identifier_ciphertext = None
                     run.identifiers_purged_at = now
                     if job.kind == "atomization":
-                        attempt = await db.scalar(
-                            select(AuditAIAtomizationAttempt).where(
-                                AuditAIAtomizationAttempt.canonical_run_id == run.id
-                            )
-                        )
+                        attempt = await _attempt_for_job(db, job, for_update=True)
                         if attempt is not None and attempt.status == "running":
                             attempt.status = "failed"
                             attempt.error_code = job.error_code[:80]
@@ -1000,6 +1028,7 @@ async def _generate_batch_with_retry(provider, batch, total_batches: int, *, bef
     }
     last_error: AIProviderError | None = None
     correction_code: str | None = None
+    correction_details: tuple[str, ...] = ()
     for attempt_number in range(1, 4):
         try:
             if before_attempt is not None:
@@ -1009,6 +1038,8 @@ async def _generate_batch_with_retry(provider, batch, total_batches: int, *, bef
                 batch,
                 total_batches,
                 correction_code=correction_code,
+                correction_details=correction_details,
+                before_provider_retry=before_attempt,
             )
         except AIProviderError as error:
             last_error = error
@@ -1026,6 +1057,7 @@ async def _generate_batch_with_retry(provider, batch, total_batches: int, *, bef
             if error.code not in retryable_model_codes or attempt_number == 3:
                 raise
             correction_code = error.code
+            correction_details = error.repair_details
             await asyncio.sleep(float(attempt_number))
     if last_error is None:
         raise AuditTZRuntimeError("provider_error", "ИИ-провайдер не сформировал ответ")
@@ -1067,15 +1099,7 @@ async def _reschedule_atomization(
             await db.rollback()
             return False
         run = await db.get(AuditTZRun, job.run_id) if job.run_id else None
-        attempt = (
-            await db.scalar(
-                select(AuditAIAtomizationAttempt).where(
-                    AuditAIAtomizationAttempt.canonical_run_id == run.id
-                )
-            )
-            if run is not None
-            else None
-        )
+        attempt = await _attempt_for_job(db, job, for_update=True) if run is not None else None
         if run is None or attempt is None or attempt.status != "running":
             await db.rollback()
             return False
@@ -1131,15 +1155,7 @@ async def _fail_atomization(
     async with db_factory() as db:
         job = await _complete_job(db, job_id, lease_token, status="failed", error_code=error_code)
         run = await db.get(AuditTZRun, job.run_id) if job and job.run_id else None
-        attempt = (
-            await db.scalar(
-                select(AuditAIAtomizationAttempt).where(
-                    AuditAIAtomizationAttempt.canonical_run_id == run.id
-                )
-            )
-            if run is not None
-            else None
-        )
+        attempt = await _attempt_for_job(db, job, for_update=True) if run is not None else None
         if attempt is not None and attempt.status == "running":
             attempt.status = "failed"
             attempt.error_code = error_code[:80]
@@ -1196,16 +1212,19 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
         )
     async with db_factory() as db:
         job = await db.get(AuditTZRuntimeJob, job_id)
-        run = await db.get(AuditTZRun, job.run_id) if job and job.run_id else None
-        attempt = (
-            await db.scalar(
-                select(AuditAIAtomizationAttempt).where(
-                    AuditAIAtomizationAttempt.canonical_run_id == run.id
-                )
+        if (
+            job is None
+            or job.kind != "atomization"
+            or job.status != "running"
+            or job.lease_token != lease_token
+        ):
+            raise AuditTZRuntimeError(
+                "worker_lease_lost",
+                "Запуск атомизации больше не принадлежит этому worker",
             )
-            if run is not None
-            else None
-        )
+        legacy_attempt_binding = job.attempt_id is None
+        run = await db.get(AuditTZRun, job.run_id) if job and job.run_id else None
+        attempt = await _attempt_for_job(db, job) if run is not None else None
         document = await db.get(AuditDocument, run.document_id) if run else None
         version = await db.get(AuditAtomizationSkillVersion, run.skill_version_id) if run else None
         skill = await db.get(AuditAtomizationSkill, version.skill_id) if version else None
@@ -1213,6 +1232,8 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
         provider = await db.get(AIProviderConfig, attempt.provider_config_id) if attempt else None
         if not all((job, run, attempt, document, version, skill, audit_case, provider)):
             raise AuditTZRuntimeError("runtime_context_missing", "Контекст атомизации не найден")
+        if legacy_attempt_binding:
+            await db.commit()
         if (
             attempt.status != "running"
             or attempt.canonical_run_id != run.id
@@ -1262,6 +1283,7 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
                 )
             )
         run_id = run.id
+        attempt_id = attempt.id
         case_id = run.case_id
         actor_id = attempt.requested_by_id
         digital_product = audit_case.digital_product
@@ -1313,11 +1335,7 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
 
         async with db_factory() as db:
             current_run = await db.get(AuditTZRun, run_id)
-            current_attempt = await db.scalar(
-                select(AuditAIAtomizationAttempt).where(
-                    AuditAIAtomizationAttempt.canonical_run_id == run_id
-                )
-            )
+            current_attempt = await db.get(AuditAIAtomizationAttempt, attempt_id)
             if current_run is None or current_attempt is None or current_attempt.status != "running":
                 raise AuditTZRuntimeError("runtime_context_changed", "Запуск атомизации изменился")
             current_attempt.prompt_sha256 = (
@@ -1357,6 +1375,7 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
                         AuditTZRuntimeJob.id == job_id,
                         AuditTZRuntimeJob.status == "running",
                         AuditTZRuntimeJob.lease_token == lease_token,
+                        AuditTZRuntimeJob.attempt_id == attempt_id,
                     )
                 )
                 active_run = await db.get(AuditTZRun, run_id)
@@ -1380,20 +1399,20 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
                         AuditTZRuntimeJob.id == job_id,
                         AuditTZRuntimeJob.status == "running",
                         AuditTZRuntimeJob.lease_token == lease_token,
+                        AuditTZRuntimeJob.attempt_id == attempt_id,
                     )
                 )
                 current_run = await db.get(AuditTZRun, run_id)
-                current_attempt = await db.scalar(
-                    select(AuditAIAtomizationAttempt).where(
-                        AuditAIAtomizationAttempt.canonical_run_id == run_id
-                    )
-                )
+                current_attempt = await db.get(AuditAIAtomizationAttempt, attempt_id)
                 if not all((current_job, current_run, current_attempt)) or current_attempt.status != "running":
                     raise AuditTZRuntimeError("worker_lease_lost", "Запуск атомизации больше не активен")
                 current_attempt.batch_results_json = [item.as_storage() for item in batch_results]
                 current_attempt.config_version += 1
+                current_attempt.error_code = None
+                current_job.error_code = None
                 current_run.completed_batch_count = len(batch_results)
                 current_run.external_ai_called = True
+                current_run.error_code = None
                 current_run.safe_summary_json = {
                     **dict(current_run.safe_summary_json or {}),
                     "atomization_batch_count": len(batches),
@@ -1462,6 +1481,7 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
                 AuditTZRuntimeJob.id == job_id,
                 AuditTZRuntimeJob.status == "running",
                 AuditTZRuntimeJob.lease_token == lease_token,
+                AuditTZRuntimeJob.attempt_id == attempt_id,
             )
             .with_for_update()
         )
@@ -1484,7 +1504,7 @@ async def process_atomization(job_id: UUID, lease_token: str, db_factory) -> Non
         run = await db.get(AuditTZRun, run_id)
         attempt = await db.scalar(
             select(AuditAIAtomizationAttempt)
-            .where(AuditAIAtomizationAttempt.canonical_run_id == run_id)
+            .where(AuditAIAtomizationAttempt.id == attempt_id)
             .with_for_update()
         )
         if job is None or run is None or attempt is None or audit_case is None:
@@ -1698,11 +1718,7 @@ async def fail_claimed_runtime_job(
                     )
                 )
                 if current.kind == "atomization":
-                    attempt = await db.scalar(
-                        select(AuditAIAtomizationAttempt).where(
-                            AuditAIAtomizationAttempt.canonical_run_id == run.id
-                        )
-                    )
+                    attempt = await _attempt_for_job(db, current, for_update=True)
                     if attempt is not None and attempt.status == "running":
                         attempt.status = "failed"
                         attempt.error_code = code[:80]

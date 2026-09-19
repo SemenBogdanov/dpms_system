@@ -4,6 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from importlib.util import module_from_spec, spec_from_file_location
 from io import BytesIO
 import json
 from pathlib import Path
@@ -78,9 +79,12 @@ class AuditTZRuntimeTests(unittest.IsolatedAsyncioTestCase):
         run_id = uuid4()
         actor_id = uuid4()
         saved_batches = [{"batch_index": 1}, {"batch_index": 2}]
+        attempt_id = uuid4()
         job = SimpleNamespace(
             id=uuid4(),
+            kind="atomization",
             run_id=run_id,
+            attempt_id=attempt_id,
             status="running",
             lease_token="lease",
             pause_requested_at=datetime.now(timezone.utc),
@@ -373,7 +377,7 @@ class AuditTZRuntimeTests(unittest.IsolatedAsyncioTestCase):
             identifier_ciphertext=None,
             identifiers_purged_at=None,
         )
-        attempt = SimpleNamespace(status="running", error_code=None, config_version=1)
+        attempt = SimpleNamespace(id=uuid4(), status="running", error_code=None, config_version=1)
 
         class ScalarRows:
             def all(self):
@@ -434,7 +438,11 @@ class AuditTZRuntimeTests(unittest.IsolatedAsyncioTestCase):
         expected = SimpleNamespace(batch_index=1)
         generate = AsyncMock(
             side_effect=[
-                CanonicalAtomizationError("coverage_gap", "missing"),
+                CanonicalAtomizationError(
+                    "coverage_gap",
+                    "missing",
+                    repair_details=["coverage.4.source_unit_id:missing"],
+                ),
                 expected,
             ]
         )
@@ -448,6 +456,10 @@ class AuditTZRuntimeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(result, expected)
         self.assertIsNone(generate.await_args_list[0].kwargs["correction_code"])
         self.assertEqual(generate.await_args_list[1].kwargs["correction_code"], "coverage_gap")
+        self.assertEqual(
+            generate.await_args_list[1].kwargs["correction_details"],
+            ("coverage.4.source_unit_id:missing",),
+        )
 
     async def test_retry_renews_worker_lease_before_every_provider_attempt(self):
         expected = SimpleNamespace(batch_index=1)
@@ -469,6 +481,14 @@ class AuditTZRuntimeTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(result, expected)
         self.assertEqual(renew.await_count, 2)
+        self.assertIs(
+            generate.await_args_list[0].kwargs["before_provider_retry"],
+            renew,
+        )
+        self.assertIs(
+            generate.await_args_list[1].kwargs["before_provider_retry"],
+            renew,
+        )
 
     async def test_provider_call_is_blocked_when_worker_lease_is_too_short(self):
         generate = AsyncMock()
@@ -487,9 +507,12 @@ class AuditTZRuntimeTests(unittest.IsolatedAsyncioTestCase):
         now = datetime.now(timezone.utc)
         run_id = uuid4()
         saved_batches = [{"batch_index": 1}, {"batch_index": 2}]
+        attempt_id = uuid4()
         job = SimpleNamespace(
             id=uuid4(),
+            kind="atomization",
             run_id=run_id,
+            attempt_id=attempt_id,
             status="running",
             lease_token="lease",
             attempt_count=1,
@@ -513,6 +536,7 @@ class AuditTZRuntimeTests(unittest.IsolatedAsyncioTestCase):
             finished_at=None,
         )
         attempt = SimpleNamespace(
+            id=attempt_id,
             status="running",
             error_code=None,
             config_version=1,
@@ -578,6 +602,38 @@ class AuditTZRuntimeTests(unittest.IsolatedAsyncioTestCase):
                 _read_json_file(link)
 
         self.assertEqual(raised.exception.code, "runtime_path_invalid")
+
+
+class AuditModelLaneMigrationTests(unittest.TestCase):
+    def setUp(self):
+        path = Path(__file__).parents[1] / "alembic/versions/094_audit_model_lane_checkpoints.py"
+        spec = spec_from_file_location("audit_model_lane_migration", path)
+        self.migration = module_from_spec(spec)
+        spec.loader.exec_module(self.migration)
+
+    def test_downgrade_refuses_to_detach_historical_model_lanes(self):
+        with patch.object(self.migration, "op") as op:
+            bind = op.get_bind.return_value
+            bind.execute.return_value.scalar_one.return_value = True
+
+            with self.assertRaisesRegex(RuntimeError, "historical checkpoints"):
+                self.migration.downgrade()
+
+            self.assertIn("LOCK TABLE", str(bind.execute.call_args_list[0].args[0]))
+            self.assertIn("HAVING count", str(bind.execute.call_args_list[1].args[0]))
+            op.drop_constraint.assert_not_called()
+            op.drop_column.assert_not_called()
+
+    def test_downgrade_proceeds_when_old_schema_can_represent_data(self):
+        with patch.object(self.migration, "op") as op:
+            bind = op.get_bind.return_value
+            bind.execute.return_value.scalar_one.return_value = False
+
+            self.migration.downgrade()
+
+            self.assertEqual(bind.execute.call_count, 2)
+            op.drop_column.assert_called_once_with("audit_tz_runtime_jobs", "attempt_id")
+            op.create_index.assert_called_once()
 
 
 def decrypt_with_key(ciphertext: str) -> list[str]:

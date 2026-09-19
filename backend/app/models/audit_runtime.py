@@ -116,8 +116,9 @@ class AuditTZRuntimeJob(Base):
         CheckConstraint("max_attempts BETWEEN 1 AND 10", name="ck_audit_tz_runtime_jobs_max_attempts"),
         CheckConstraint("priority BETWEEN 0 AND 100", name="ck_audit_tz_runtime_jobs_priority"),
         CheckConstraint(
-            "(kind = 'skill_selftest' AND run_id IS NULL) OR "
-            "(kind IN ('preflight', 'atomization') AND run_id IS NOT NULL)",
+            "(kind = 'skill_selftest' AND run_id IS NULL AND attempt_id IS NULL) OR "
+            "(kind = 'preflight' AND run_id IS NOT NULL AND attempt_id IS NULL) OR "
+            "(kind = 'atomization' AND run_id IS NOT NULL)",
             name="ck_audit_tz_runtime_jobs_target",
         ),
         Index(
@@ -161,6 +162,12 @@ class AuditTZRuntimeJob(Base):
         nullable=True,
         index=True,
     )
+    attempt_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_ai_atomization_attempts.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -191,6 +198,7 @@ class AuditTZRuntimeJob(Base):
 
     skill_version = relationship("AuditAtomizationSkillVersion")
     run = relationship("AuditTZRun", back_populates="jobs")
+    attempt = relationship("AuditAIAtomizationAttempt", foreign_keys=[attempt_id])
     pause_requested_by = relationship("User", foreign_keys=[pause_requested_by_id])
 
 

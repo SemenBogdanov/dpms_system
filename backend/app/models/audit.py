@@ -580,8 +580,11 @@ class AuditAIAtomizationAttempt(Base):
         CheckConstraint("config_version >= 1", name="ck_audit_ai_attempts_version"),
         Index("ix_audit_ai_attempts_case_created_at", "case_id", "created_at"),
         Index(
-            "uq_audit_ai_attempts_canonical_run",
+            "uq_audit_ai_attempts_canonical_lane",
             "canonical_run_id",
+            "provider_config_id",
+            "provider_config_version",
+            "model_name",
             unique=True,
             postgresql_where=text("canonical_run_id IS NOT NULL"),
         ),

@@ -68,6 +68,131 @@ class AIProviderTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(result, "OK")
 
+    async def test_generate_text_forwards_bounded_strict_json_schema(self):
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "audit_batch",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["items"],
+                    "properties": {"items": {"type": "array", "items": {"type": "string"}}},
+                },
+            },
+        }
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            payload = __import__("json").loads(request.content)
+            self.assertEqual(payload["response_format"], response_format)
+            return httpx.Response(200, json={"choices": [{"message": {"content": '{"items":[]}'}}]})
+
+        with (
+            patch.object(settings, "INTEGRATION_SECRET_KEY", INTEGRATION_KEY),
+            patch.object(settings, "AI_PROVIDER_ALLOWED_ORIGINS", "https://ai.example.test"),
+        ):
+            provider = SimpleNamespace(
+                enabled=True,
+                base_url="https://ai.example.test/v1",
+                model_name="test-model",
+                api_key_ciphertext=encrypt_ai_api_key("provider-secret"),
+                config_version=1,
+                last_test_status="ok",
+                last_verified_config_version=1,
+            )
+            result = await generate_text(
+                provider,
+                [{"role": "user", "content": "test"}],
+                response_format=response_format,
+                transport=httpx.MockTransport(handler),
+            )
+
+        self.assertEqual(result, '{"items":[]}')
+
+    async def test_generate_text_rejects_external_schema_reference_before_network(self):
+        calls = 0
+
+        async def handler(_: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(200, json={"choices": [{"message": {"content": "OK"}}]})
+
+        with (
+            patch.object(settings, "INTEGRATION_SECRET_KEY", INTEGRATION_KEY),
+            patch.object(settings, "AI_PROVIDER_ALLOWED_ORIGINS", "https://ai.example.test"),
+        ):
+            provider = SimpleNamespace(
+                enabled=True,
+                base_url="https://ai.example.test/v1",
+                model_name="test-model",
+                api_key_ciphertext=encrypt_ai_api_key("provider-secret"),
+                config_version=1,
+                last_test_status="ok",
+                last_verified_config_version=1,
+            )
+            with self.assertRaises(AIProviderError) as raised:
+                await generate_text(
+                    provider,
+                    [{"role": "user", "content": "test"}],
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "bad",
+                            "strict": True,
+                            "schema": {"type": "object", "$ref": "https://example.invalid/schema"},
+                        },
+                    },
+                    transport=httpx.MockTransport(handler),
+                )
+
+        self.assertEqual(raised.exception.code, "invalid_response_format")
+        self.assertEqual(calls, 0)
+
+    async def test_generate_text_rejects_non_finite_schema_number_before_network(self):
+        calls = 0
+
+        async def handler(_: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            return httpx.Response(200, json={"choices": [{"message": {"content": "OK"}}]})
+
+        with (
+            patch.object(settings, "INTEGRATION_SECRET_KEY", INTEGRATION_KEY),
+            patch.object(settings, "AI_PROVIDER_ALLOWED_ORIGINS", "https://ai.example.test"),
+        ):
+            provider = SimpleNamespace(
+                enabled=True,
+                base_url="https://ai.example.test/v1",
+                model_name="test-model",
+                api_key_ciphertext=encrypt_ai_api_key("provider-secret"),
+                config_version=1,
+                last_test_status="ok",
+                last_verified_config_version=1,
+            )
+            with self.assertRaises(AIProviderError) as raised:
+                await generate_text(
+                    provider,
+                    [{"role": "user", "content": "test"}],
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "bad",
+                            "strict": True,
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "score": {"type": "number", "maximum": float("nan")}
+                                },
+                            },
+                        },
+                    },
+                    transport=httpx.MockTransport(handler),
+                )
+
+        self.assertEqual(raised.exception.code, "invalid_response_format")
+        self.assertEqual(calls, 0)
+
     async def test_generate_text_uses_bounded_explicit_read_timeout(self):
         async def handler(request: httpx.Request) -> httpx.Response:
             self.assertEqual(request.extensions["timeout"]["read"], 930.0)
@@ -110,6 +235,7 @@ class AIProviderTests(unittest.IsolatedAsyncioTestCase):
             402: "provider_balance_required",
             403: "provider_access_forbidden",
             404: "model_or_endpoint_not_found",
+            422: "invalid_provider_request",
             429: "rate_limited",
             503: "provider_unavailable",
         }

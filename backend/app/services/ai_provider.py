@@ -8,6 +8,7 @@ from email.utils import parsedate_to_datetime
 from hashlib import sha256
 import json
 import math
+import re
 import ssl
 from typing import Any, TYPE_CHECKING
 from uuid import UUID
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
 
 MAX_AI_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_AI_PROMPT_CHARS = 60_000
+MAX_AI_RESPONSE_FORMAT_BYTES = 64 * 1024
 _LOCAL_GATEWAY_ERRORS = {
     "local_model_busy": (429, "Локальная модель уже обрабатывает другой запрос"),
     "local_model_recovery_required": (503, "Локальный шлюз ожидает подтверждения восстановления"),
@@ -64,6 +66,62 @@ def _parse_retry_after(value: str | None) -> int | None:
         except (TypeError, ValueError, OverflowError):
             return None
     return max(1, min(seconds, 3600))
+
+
+def _validated_response_format(value: dict[str, Any] | None) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"type", "json_schema"}:
+        raise AIProviderError("invalid_response_format", "Некорректная JSON-схема ответа", 422)
+    wrapper = value.get("json_schema")
+    if value.get("type") != "json_schema" or not isinstance(wrapper, dict):
+        raise AIProviderError("invalid_response_format", "Некорректная JSON-схема ответа", 422)
+    if set(wrapper) != {"name", "strict", "schema"}:
+        raise AIProviderError("invalid_response_format", "Некорректная JSON-схема ответа", 422)
+    name = wrapper.get("name")
+    schema = wrapper.get("schema")
+    if (
+        not isinstance(name, str)
+        or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", name)
+        or wrapper.get("strict") is not True
+        or not isinstance(schema, dict)
+        or schema.get("type") != "object"
+    ):
+        raise AIProviderError("invalid_response_format", "Некорректная JSON-схема ответа", 422)
+
+    nodes = 0
+
+    def validate_node(node: Any, depth: int = 0) -> None:
+        nonlocal nodes
+        nodes += 1
+        if depth > 20 or nodes > 2_000:
+            raise AIProviderError("invalid_response_format", "JSON-схема ответа слишком сложна", 422)
+        if isinstance(node, dict):
+            for key, item in node.items():
+                if not isinstance(key, str) or len(key) > 100:
+                    raise AIProviderError("invalid_response_format", "Некорректная JSON-схема ответа", 422)
+                if key == "$ref" and (not isinstance(item, str) or not item.startswith("#/")):
+                    raise AIProviderError("invalid_response_format", "Внешние ссылки JSON-схемы запрещены", 422)
+                validate_node(item, depth + 1)
+        elif isinstance(node, list):
+            for item in node:
+                validate_node(item, depth + 1)
+        elif isinstance(node, str):
+            if len(node) > 4_000:
+                raise AIProviderError("invalid_response_format", "JSON-схема ответа слишком велика", 422)
+        elif isinstance(node, float) and not math.isfinite(node):
+            raise AIProviderError("invalid_response_format", "Некорректная JSON-схема ответа", 422)
+        elif node is not None and type(node) not in {bool, int, float}:
+            raise AIProviderError("invalid_response_format", "Некорректная JSON-схема ответа", 422)
+
+    validate_node(value)
+    try:
+        encoded = json.dumps(value, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    except (TypeError, ValueError, OverflowError):
+        raise AIProviderError("invalid_response_format", "Некорректная JSON-схема ответа", 422) from None
+    if len(encoded) > MAX_AI_RESPONSE_FORMAT_BYTES:
+        raise AIProviderError("invalid_response_format", "JSON-схема ответа слишком велика", 422)
+    return json.loads(encoded)
 
 
 def _integration_secret() -> str:
@@ -210,6 +268,7 @@ async def generate_text(
     allow_disabled: bool = False,
     allow_unverified: bool = False,
     read_timeout_seconds: float | None = None,
+    response_format: dict[str, Any] | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> str:
     if not provider.enabled and not allow_disabled:
@@ -255,6 +314,9 @@ async def generate_text(
         "max_tokens": max(1, min(max_tokens, 4096)),
         "temperature": max(0.0, min(temperature, 2.0)),
     }
+    normalized_response_format = _validated_response_format(response_format)
+    if normalized_response_format is not None:
+        payload["response_format"] = normalized_response_format
     try:
         async with httpx.AsyncClient(
             timeout=timeout,
@@ -286,7 +348,7 @@ async def generate_text(
                         "ИИ-провайдер запретил доступ; проверьте права API key, тариф и доступ к выбранной модели",
                         502,
                     )
-                if response.status_code == 400:
+                if response.status_code in {400, 422}:
                     raise AIProviderError(
                         "invalid_provider_request",
                         "Провайдер не принял параметры запроса; проверьте API URL и совместимость модели",

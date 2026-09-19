@@ -321,7 +321,15 @@ class MemorySession:
             source_unit_count=0, completed_batch_count=0, total_batch_count=0,
             safe_summary_json={}, external_ai_called=False,
         )
-        self.job = SimpleNamespace(id=uuid4(), run_id=run_id, status="running", lease_token="lease", pause_requested_at=None)
+        self.job = SimpleNamespace(
+            id=uuid4(),
+            kind="atomization",
+            run_id=run_id,
+            attempt_id=None,
+            status="running",
+            lease_token="lease",
+            pause_requested_at=None,
+        )
         self.provider = SimpleNamespace(
             id=uuid4(), display_name="Mock", model_name="mock", config_version=1,
             enabled=True, last_test_status="ok", last_verified_config_version=1,
@@ -333,10 +341,13 @@ class MemorySession:
             status="running", provider_config_id=self.provider.id, provider_config_version=1,
             model_name="mock", requested_by_id=actor_id, batch_results_json=[], config_version=1,
         )
+        self.job.attempt_id = self.attempt.id
+        self.persisted_job_attempt_id = self.job.attempt_id
         self.objects = {
             AuditTZRun: self.run, AuditTZRuntimeJob: self.job, AuditDocument: document,
             AuditAtomizationSkillVersion: version, AuditAtomizationSkill: SimpleNamespace(is_enabled=True),
             AuditCase: self.case, AIProviderConfig: self.provider,
+            AuditAIAtomizationAttempt: self.attempt,
         }
         self.added, self.locks, self.queries = [], [], []
         self.human_atoms = [SimpleNamespace(title="Human decision", state="approved")]
@@ -375,6 +386,7 @@ class MemorySession:
         return None
 
     async def commit(self):
+        self.persisted_job_attempt_id = self.job.attempt_id
         return None
 
     async def rollback(self):
@@ -386,6 +398,7 @@ class MemorySession:
 
     @asynccontextmanager
     async def factory(self):
+        self.job.attempt_id = self.persisted_job_attempt_id
         yield self
 
 
@@ -473,7 +486,7 @@ class NativeWorkerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(payload["methodology"]["rules"], ["UNIQUE selected rule."])
 
     async def _lifecycle(self, *, interrupted=False, late_stage=None, archived=False, revoked=False, rejected=False,
-                         source_kind="docx", declarative_json=False):
+                         source_kind="docx", declarative_json=False, legacy_unbound=False):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             texts = [f"Screen {index} has an independent status field." for index in range(33)]
@@ -484,6 +497,9 @@ class NativeWorkerTests(unittest.IsolatedAsyncioTestCase):
                                        original_filename=filename, stored_filename=filename)
             version = json_version("REFERENCE-ONLY: preserve distinct requirements.") if declarative_json else archive_version()
             db = MemorySession(document, version)
+            if legacy_unbound:
+                db.job.attempt_id = None
+                db.persisted_job_attempt_id = None
 
             async def model(_provider, messages, **_kwargs):
                 payload = json.loads(messages[1]["content"])
@@ -543,9 +559,14 @@ class NativeWorkerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(publish.await_count, 0 if late_stage or archived or revoked else 1)
                 self.assertEqual(db.run.safe_summary_json["atoms_appended"], 0 if blocker else 33)
                 self.assertEqual(db.case.workflow_stage, late_stage or "atomization")
+                if legacy_unbound:
+                    self.assertEqual(db.persisted_job_attempt_id, db.attempt.id)
 
     async def test_native_worker_creates_independent_registry_for_populated_case(self):
         await self._lifecycle()
+
+    async def test_legacy_unbound_job_persists_attempt_before_next_session(self):
+        await self._lifecycle(legacy_unbound=True)
 
     async def test_native_resume_reuses_completed_batches(self):
         await self._lifecycle(interrupted=True)

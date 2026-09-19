@@ -4,6 +4,7 @@ from hashlib import sha256
 import json
 from types import SimpleNamespace
 import unittest
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -14,12 +15,15 @@ from app.api.routes.audit_runtime import (
     _verify_atomization_consent_token,
 )
 from app.schemas.audit_runtime import AuditTZAtomizationStart
+from app.services.ai_provider import AIProviderError
 from app.services.audit_tz_atomization import (
     CanonicalAtomizationError,
     assemble_atomization_result,
     build_batch_messages,
+    build_batch_response_format,
     build_source_batches,
     discover_contract_requisites,
+    generate_batch_result,
     redact_contract_requisites,
     validate_batch_result,
 )
@@ -150,12 +154,121 @@ class CanonicalAuditAtomizationTests(unittest.TestCase):
             prompt_packet([source_unit(1, "Экран содержит реестр обращений.")])
         )[0]
 
-        messages = build_batch_messages(batch, 1, correction_code="coverage_gap")
+        messages = build_batch_messages(
+            batch,
+            1,
+            correction_code="coverage_gap",
+            correction_details=("coverage.0.disposition:literal_error",),
+        )
         payload = json.loads(messages[1]["content"])
 
         self.assertEqual(payload["correction"]["previous_response_rejected"], "coverage_gap")
         self.assertIn("каждого", payload["correction"]["required_fix"])
+        self.assertEqual(
+            payload["correction"]["invalid_fields"],
+            ["coverage.0.disposition:literal_error"],
+        )
         self.assertNotIn("previous_response", payload["correction"])
+
+    def test_response_format_is_strict_and_requires_verification_notes(self):
+        packet = prompt_packet([source_unit(1, "Экран содержит реестр обращений.")])
+        packet["methodology"] = {
+            "instructions": "Проверить наблюдаемый результат",
+            "rules": [],
+            "package_format": "declarative_json",
+        }
+        batch = build_source_batches(packet)[0]
+
+        response_format = build_batch_response_format(batch)
+        schema = response_format["json_schema"]["schema"]
+        atom_schema = schema["properties"]["atoms"]["items"]
+
+        self.assertEqual(response_format["type"], "json_schema")
+        self.assertTrue(response_format["json_schema"]["strict"])
+        self.assertIn("notes", atom_schema["required"])
+        self.assertEqual(atom_schema["properties"]["notes"]["type"], "string")
+        self.assertNotIn("$defs", schema)
+        self.assertEqual(
+            atom_schema["properties"]["source_unit_ids"]["items"]["enum"],
+            ["U000001"],
+        )
+        self.assertEqual(
+            schema["properties"]["coverage"]["items"]["properties"]["source_unit_id"]["enum"],
+            ["U000001"],
+        )
+        serialized_schema = json.dumps(schema, ensure_ascii=True)
+        for unsupported_keyword in (
+            "$defs",
+            "$ref",
+            "anyOf",
+            "pattern",
+            "minLength",
+            "maxLength",
+            "minItems",
+            "maxItems",
+            "minimum",
+            "maximum",
+            "default",
+        ):
+            with self.subTest(keyword=unsupported_keyword):
+                self.assertNotIn(f'"{unsupported_keyword}"', serialized_schema)
+
+    def test_invalid_schema_exposes_only_safe_field_paths_for_repair(self):
+        batch = build_source_batches(
+            prompt_packet([source_unit(1, "Экран содержит реестр обращений.")])
+        )[0]
+
+        with self.assertRaises(CanonicalAtomizationError) as raised:
+            validate_batch_result(
+                {
+                    "atoms": [{"local_id": "bad", "title": "x"}],
+                    "coverage": [{"source_unit_id": "U000001", "disposition": "UNKNOWN"}],
+                    "warnings": [],
+                },
+                batch,
+            )
+
+        self.assertEqual(raised.exception.code, "invalid_model_schema")
+        self.assertTrue(raised.exception.repair_details)
+        self.assertTrue(all(len(item) <= 160 for item in raised.exception.repair_details))
+        self.assertTrue(any(item.startswith("atoms.0") for item in raised.exception.repair_details))
+
+    def test_invalid_extra_field_is_sanitized_in_repair_path(self):
+        batch = build_source_batches(
+            prompt_packet([source_unit(1, "Экран содержит реестр обращений.")])
+        )[0]
+        payload = {
+            "atoms": [
+                {
+                    "local_id": "A1",
+                    "title": "Реестр обращений",
+                    "object_type": "Реестр",
+                    "work_type": None,
+                    "notes": None,
+                    "source_unit_ids": ["U000001"],
+                    "anchor_source_unit_id": "U000001",
+                    "confidence": 0.9,
+                    "unsafe\nfield": "model-controlled value",
+                }
+            ],
+            "coverage": [
+                {
+                    "source_unit_id": "U000001",
+                    "disposition": "ATOMIZED",
+                    "reason": "Опорное требование",
+                }
+            ],
+            "warnings": [],
+        }
+
+        with self.assertRaises(CanonicalAtomizationError) as raised:
+            validate_batch_result(payload, batch)
+
+        self.assertIn(
+            "atoms.0.unsafe_field:extra_forbidden",
+            raised.exception.repair_details,
+        )
+        self.assertNotIn("\n", " ".join(raised.exception.repair_details))
 
     def test_atom_can_reference_every_unit_in_full_batch(self):
         units = [
@@ -378,6 +491,60 @@ class CanonicalAuditAtomizationTests(unittest.TestCase):
             )
 
         self.assertEqual(raised.exception.code, "coverage_gap")
+
+
+class CanonicalAuditAtomizationAsyncTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unsupported_structured_output_falls_back_once_for_provider(self):
+        batch = build_source_batches(
+            prompt_packet([source_unit(1, "Экран содержит реестр обращений.")])
+        )[0]
+        provider = SimpleNamespace(model_name="synthetic-model")
+        valid_response = json.dumps(
+            {
+                "atoms": [
+                    {
+                        "local_id": "A1",
+                        "title": "Реестр обращений",
+                        "object_type": "Реестр",
+                        "work_type": None,
+                        "notes": None,
+                        "source_unit_ids": ["U000001"],
+                        "anchor_source_unit_id": "U000001",
+                        "confidence": 0.9,
+                    }
+                ],
+                "coverage": [
+                    {
+                        "source_unit_id": "U000001",
+                        "disposition": "ATOMIZED",
+                        "reason": "Опорное требование",
+                    }
+                ],
+                "warnings": [],
+            },
+            ensure_ascii=False,
+        )
+        generate = AsyncMock(
+            side_effect=[
+                AIProviderError("invalid_provider_request", "unsupported", 422),
+                valid_response,
+            ]
+        )
+        renew_lease = AsyncMock()
+
+        with patch("app.services.audit_tz_atomization.generate_text", generate):
+            result = await generate_batch_result(
+                provider,
+                batch,
+                1,
+                before_provider_retry=renew_lease,
+            )
+
+        self.assertEqual(result.batch_index, 1)
+        self.assertIsNotNone(generate.await_args_list[0].kwargs["response_format"])
+        self.assertNotIn("response_format", generate.await_args_list[1].kwargs)
+        self.assertTrue(provider._dpms_structured_output_disabled)
+        renew_lease.assert_awaited_once_with()
 
 
 if __name__ == "__main__":

@@ -259,14 +259,21 @@ async def _serialize_run(db: AsyncSession, run_id: UUID) -> AuditTZRunRead:
     if row is None:
         raise HTTPException(status_code=404, detail="Запуск canonical preflight не найден")
     run, skill, version = row
-    attempt = await db.scalar(
-        select(AuditAIAtomizationAttempt).where(AuditAIAtomizationAttempt.canonical_run_id == run.id)
-    )
     atomization_job = await db.scalar(
         select(AuditTZRuntimeJob).where(
             AuditTZRuntimeJob.run_id == run.id,
             AuditTZRuntimeJob.kind == "atomization",
         )
+    )
+    attempt = (
+        await db.scalar(
+            select(AuditAIAtomizationAttempt).where(
+                AuditAIAtomizationAttempt.id == atomization_job.attempt_id,
+                AuditAIAtomizationAttempt.canonical_run_id == run.id,
+            )
+        )
+        if atomization_job is not None and atomization_job.attempt_id is not None
+        else None
     )
     artifacts = list(
         (
@@ -616,48 +623,74 @@ async def start_canonical_atomization(
         provider=provider,
     )
 
-    existing_attempt = await db.scalar(
-        select(AuditAIAtomizationAttempt)
-        .where(AuditAIAtomizationAttempt.canonical_run_id == run.id)
+    job = await db.scalar(
+        select(AuditTZRuntimeJob)
+        .where(
+            AuditTZRuntimeJob.run_id == run.id,
+            AuditTZRuntimeJob.kind == "atomization",
+        )
         .with_for_update()
     )
-    if existing_attempt is not None:
-        same_lane = (
-            existing_attempt.provider_config_id == provider.id
-            and existing_attempt.provider_config_version == provider.config_version
-            and existing_attempt.model_name == provider.model_name
-        )
-        if existing_attempt.status == "running":
-            if same_lane:
-                return await _serialize_run(db, run.id)
-            raise HTTPException(
-                status_code=409,
-                detail="Дождитесь завершения текущей модели перед запуском следующей",
-            )
-        if existing_attempt.status == "draft_ready" and same_lane:
-            return await _serialize_run(db, run.id)
-        job = await db.scalar(
-            select(AuditTZRuntimeJob)
+    active_attempt = (
+        await db.scalar(
+            select(AuditAIAtomizationAttempt)
             .where(
-                AuditTZRuntimeJob.run_id == run.id,
-                AuditTZRuntimeJob.kind == "atomization",
+                AuditAIAtomizationAttempt.id == job.attempt_id,
+                AuditAIAtomizationAttempt.canonical_run_id == run.id,
             )
             .with_for_update()
         )
-        if job is None or job.status == "running":
-            raise HTTPException(status_code=409, detail="Не удалось безопасно повторить атомизацию")
-        resume_checkpoint = bool(
-            same_lane
-            and existing_attempt.status == "failed"
-            and existing_attempt.batch_results_json
+        if job is not None and job.attempt_id is not None
+        else None
+    )
+    selected_attempt = await db.scalar(
+        select(AuditAIAtomizationAttempt)
+        .where(
+            AuditAIAtomizationAttempt.canonical_run_id == run.id,
+            AuditAIAtomizationAttempt.provider_config_id == provider.id,
+            AuditAIAtomizationAttempt.provider_config_version == provider.config_version,
+            AuditAIAtomizationAttempt.model_name == provider.model_name,
         )
-        if existing_attempt.status in {"draft_ready", "committed"}:
+        .with_for_update()
+    )
+    if active_attempt is not None and active_attempt.status == "running":
+        if selected_attempt is not None and active_attempt.id == selected_attempt.id:
+            return await _serialize_run(db, run.id)
+        raise HTTPException(
+            status_code=409,
+            detail="Дождитесь завершения текущей модели перед запуском следующей",
+        )
+    if selected_attempt is not None and selected_attempt.status == "draft_ready":
+        return await _serialize_run(db, run.id)
+    if active_attempt is not None and active_attempt.status in {"draft_ready", "committed"}:
+        saved_registry = await db.scalar(
+            select(AuditAIModelRegistry.id).where(
+                AuditAIModelRegistry.canonical_run_id == run.id,
+                AuditAIModelRegistry.provider_config_id == active_attempt.provider_config_id,
+                AuditAIModelRegistry.provider_config_version == active_attempt.provider_config_version,
+                AuditAIModelRegistry.model_name == active_attempt.model_name,
+            )
+        )
+        if saved_registry is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Результат предыдущей модели еще не зафиксирован; обновите страницу",
+            )
+
+    if job is not None and job.status == "running":
+        raise HTTPException(status_code=409, detail="Не удалось безопасно повторить атомизацию")
+
+    if selected_attempt is not None:
+        resume_checkpoint = bool(
+            selected_attempt.status == "failed" and selected_attempt.batch_results_json
+        )
+        if selected_attempt.status == "committed":
             saved_registry = await db.scalar(
                 select(AuditAIModelRegistry.id).where(
                     AuditAIModelRegistry.canonical_run_id == run.id,
-                    AuditAIModelRegistry.provider_config_id == existing_attempt.provider_config_id,
-                    AuditAIModelRegistry.provider_config_version == existing_attempt.provider_config_version,
-                    AuditAIModelRegistry.model_name == existing_attempt.model_name,
+                    AuditAIModelRegistry.provider_config_id == selected_attempt.provider_config_id,
+                    AuditAIModelRegistry.provider_config_version == selected_attempt.provider_config_version,
+                    AuditAIModelRegistry.model_name == selected_attempt.model_name,
                 )
             )
             if saved_registry is None:
@@ -665,46 +698,89 @@ async def start_canonical_atomization(
                     status_code=409,
                     detail="Результат предыдущей модели еще не зафиксирован; обновите страницу",
                 )
-        await freeze_attempt_atom_origins(db, existing_attempt)
+            raise HTTPException(
+                status_code=409,
+                detail="Реестр этой версии модели уже сформирован; выберите другое ИИ-подключение",
+            )
+        await freeze_attempt_atom_origins(db, selected_attempt)
         await db.execute(
-            delete(AuditAIAtomDraft).where(AuditAIAtomDraft.attempt_id == existing_attempt.id)
+            delete(AuditAIAtomDraft).where(AuditAIAtomDraft.attempt_id == selected_attempt.id)
         )
-        existing_attempt.request_key_hash = build_run_key(
+        selected_attempt.request_key_hash = build_run_key(
             case_id=str(case_id),
             document_sha256=run.source_sha256,
             skill_sha256=run.skill_sha256,
             identifiers_digest=f"{body.request_id}:{provider.id}:{provider.config_version}",
             mode="canonical-atomization",
         )
-        existing_attempt.status = "running"
-        existing_attempt.error_code = None
-        existing_attempt.provider_config_id = provider.id
-        existing_attempt.provider_config_version = provider.config_version
-        existing_attempt.model_name = provider.model_name
-        existing_attempt.consent_confirmed_at = datetime.now(timezone.utc)
-        existing_attempt.requested_by_id = user.id
+        selected_attempt.status = "running"
+        selected_attempt.error_code = None
+        selected_attempt.consent_confirmed_at = datetime.now(timezone.utc)
+        selected_attempt.requested_by_id = user.id
         if not resume_checkpoint:
-            existing_attempt.batch_results_json = []
-        existing_attempt.source_manifest_json = []
-        existing_attempt.coverage_json = {}
-        existing_attempt.warnings_json = []
-        existing_attempt.response_sha256 = None
-        existing_attempt.commit_key_hash = None
-        existing_attempt.committed_by_id = None
-        existing_attempt.committed_at = None
-        run.atom_count = 0
-        run.completed_batch_count = (
-            len(existing_attempt.batch_results_json or []) if resume_checkpoint else 0
+            selected_attempt.batch_results_json = []
+        selected_attempt.source_manifest_json = []
+        selected_attempt.coverage_json = {}
+        selected_attempt.warnings_json = []
+        selected_attempt.response_sha256 = None
+        selected_attempt.commit_key_hash = None
+        selected_attempt.committed_by_id = None
+        selected_attempt.committed_at = None
+        selected_attempt.config_version += 1
+        attempt = selected_attempt
+    else:
+        resume_checkpoint = False
+        attempt = AuditAIAtomizationAttempt(
+            case_id=case_id,
+            canonical_run_id=run.id,
+            document_id=run.document_id,
+            skill_version_id=run.skill_version_id,
+            provider_config_id=provider.id,
+            provider_config_version=provider.config_version,
+            model_name=provider.model_name,
+            document_sha256=run.source_sha256,
+            skill_sha256=run.skill_sha256,
+            request_key_hash=build_run_key(
+                case_id=str(case_id),
+                document_sha256=run.source_sha256,
+                skill_sha256=run.skill_sha256,
+                identifiers_digest=f"{body.request_id}:{provider.id}:{provider.config_version}",
+                mode="canonical-atomization",
+            ),
+            status="running",
+            config_version=1,
+            source_manifest_json=[],
+            coverage_json={},
+            warnings_json=[],
+            batch_results_json=[],
+            prompt_sha256="0" * 64,
+            requested_by_id=user.id,
+            consent_confirmed_at=datetime.now(timezone.utc),
         )
-        if not resume_checkpoint:
-            run.total_batch_count = 0
-            run.external_ai_called = False
-        run_summary = dict(getattr(run, "safe_summary_json", {}) or {})
-        run_summary.pop("atomization_retry_at", None)
-        run_summary.pop("atomization_retry_count", None)
-        run_summary.pop("atomization_retry_error", None)
-        run.safe_summary_json = run_summary
-        existing_attempt.config_version += 1
+        db.add(attempt)
+        await db.flush()
+
+    run.atom_count = 0
+    run.completed_batch_count = len(attempt.batch_results_json or [])
+    run_summary = dict(getattr(run, "safe_summary_json", {}) or {})
+    run_summary.pop("atomization_retry_at", None)
+    run_summary.pop("atomization_retry_count", None)
+    run_summary.pop("atomization_retry_error", None)
+    run_summary["atomization_batches_completed"] = run.completed_batch_count
+    run.safe_summary_json = run_summary
+
+    if job is None:
+        job = AuditTZRuntimeJob(
+            kind="atomization",
+            skill_version_id=run.skill_version_id,
+            run_id=run.id,
+            attempt_id=attempt.id,
+            status="queued",
+            max_attempts=ATOMIZATION_MAX_JOB_ATTEMPTS,
+        )
+        db.add(job)
+    else:
+        job.attempt_id = attempt.id
         job.status = "queued"
         job.attempt_count = 0
         job.max_attempts = max(
@@ -721,46 +797,6 @@ async def start_canonical_atomization(
         job.priority = 0
         job.error_code = None
         job.finished_at = None
-    else:
-        request_key_hash = build_run_key(
-            case_id=str(case_id),
-            document_sha256=run.source_sha256,
-            skill_sha256=run.skill_sha256,
-            identifiers_digest=f"{body.request_id}:{provider.id}:{provider.config_version}",
-            mode="canonical-atomization",
-        )
-        attempt = AuditAIAtomizationAttempt(
-            case_id=case_id,
-            canonical_run_id=run.id,
-            document_id=run.document_id,
-            skill_version_id=run.skill_version_id,
-            provider_config_id=provider.id,
-            provider_config_version=provider.config_version,
-            model_name=provider.model_name,
-            document_sha256=run.source_sha256,
-            skill_sha256=run.skill_sha256,
-            request_key_hash=request_key_hash,
-            status="running",
-            config_version=1,
-            source_manifest_json=[],
-            coverage_json={},
-            warnings_json=[],
-            batch_results_json=[],
-            prompt_sha256="0" * 64,
-            requested_by_id=user.id,
-            consent_confirmed_at=datetime.now(timezone.utc),
-        )
-        db.add(attempt)
-        await db.flush()
-        db.add(
-            AuditTZRuntimeJob(
-                kind="atomization",
-                skill_version_id=run.skill_version_id,
-                run_id=run.id,
-                status="queued",
-                max_attempts=ATOMIZATION_MAX_JOB_ATTEMPTS,
-            )
-        )
 
     run.status = "atomization_queued"
     run.current_phase = "atomization_queued"
@@ -989,7 +1025,16 @@ async def get_canonical_atomization_attempt(
 ):
     await _get_case_or_404(db, case_id)
     attempt_id = await db.scalar(
-        select(AuditAIAtomizationAttempt.id).where(
+        select(AuditAIAtomizationAttempt.id)
+        .join(
+            AuditTZRuntimeJob,
+            AuditTZRuntimeJob.attempt_id == AuditAIAtomizationAttempt.id,
+        )
+        .join(AuditTZRun, AuditTZRun.id == AuditTZRuntimeJob.run_id)
+        .where(
+            AuditTZRuntimeJob.run_id == run_id,
+            AuditTZRuntimeJob.kind == "atomization",
+            AuditTZRun.case_id == case_id,
             AuditAIAtomizationAttempt.canonical_run_id == run_id,
             AuditAIAtomizationAttempt.case_id == case_id,
         )

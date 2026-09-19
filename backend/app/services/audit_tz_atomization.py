@@ -7,7 +7,7 @@ from difflib import SequenceMatcher
 from hashlib import sha256
 import json
 import re
-from typing import Literal
+from typing import Awaitable, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -49,11 +49,19 @@ _GENERIC_ATOM_WORDS = {
 
 
 class CanonicalAtomizationError(RuntimeError):
-    def __init__(self, code: str, message: str, *, status_code: int = 422):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status_code: int = 422,
+        repair_details: list[str] | tuple[str, ...] = (),
+    ):
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.repair_details = tuple(str(item)[:160] for item in repair_details[:12])
 
 
 class _BatchAtom(BaseModel):
@@ -176,6 +184,110 @@ class CanonicalAtomizationResult:
 
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _safe_validation_issues(error: ValidationError) -> list[str]:
+    issues: list[str] = []
+    for item in error.errors(include_url=False, include_context=False, include_input=False)[:12]:
+        location_parts = []
+        for part in item.get("loc", ()):
+            normalized = re.sub(r"[^A-Za-z0-9_-]", "_", str(part))[:40]
+            location_parts.append(normalized or "_")
+        location = ".".join(location_parts) or "root"
+        issue_type = re.sub(r"[^a-z0-9_.-]", "_", str(item.get("type") or "invalid"))[:60]
+        issues.append(f"{location}:{issue_type}"[:160])
+    return issues
+
+
+def build_batch_response_format(batch: CanonicalSourceBatch) -> dict:
+    source_unit_ids = sorted(
+        {str(item["source_unit_id"]) for item in batch.outbound_units}
+    )
+    notes_schema: dict = {
+        "type": "string" if batch.require_verification_notes else ["string", "null"],
+    }
+    atom_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "local_id": {
+                "type": "string",
+                "enum": [f"A{index}" for index in range(1, MAX_BATCH_ATOMS + 1)],
+            },
+            "title": {"type": "string"},
+            "object_type": {"type": "string"},
+            "work_type": {"type": ["string", "null"]},
+            "notes": notes_schema,
+            "source_unit_ids": {
+                "type": "array",
+                "items": {"type": "string", "enum": source_unit_ids},
+            },
+            "anchor_source_unit_id": {
+                "type": "string",
+                "enum": source_unit_ids,
+            },
+            "confidence": {
+                "type": ["number", "null"],
+            },
+        },
+        "required": [
+            "local_id",
+            "title",
+            "object_type",
+            "work_type",
+            "notes",
+            "source_unit_ids",
+            "anchor_source_unit_id",
+            "confidence",
+        ],
+    }
+    coverage_schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "source_unit_id": {"type": "string", "enum": source_unit_ids},
+            "disposition": {
+                "type": "string",
+                "enum": [
+                    "ATOMIZED",
+                    "NON_REQUIREMENT",
+                    "DUPLICATE",
+                    "OUT_OF_SCOPE",
+                    "QUESTION",
+                    "BLOCKED",
+                ],
+            },
+            "reason": {"type": "string"},
+        },
+        "required": ["source_unit_id", "disposition", "reason"],
+    }
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "atoms": {
+                "type": "array",
+                "items": atom_schema,
+            },
+            "coverage": {
+                "type": "array",
+                "items": coverage_schema,
+            },
+            "warnings": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+        },
+        "required": ["atoms", "coverage", "warnings"],
+    }
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "dpms_audit_batch",
+            "strict": True,
+            "schema": schema,
+        },
+    }
 
 
 def _model_json(raw: str) -> dict:
@@ -452,6 +564,7 @@ def build_batch_messages(
     total_batches: int,
     *,
     correction_code: str | None = None,
+    correction_details: tuple[str, ...] = (),
 ) -> list[dict[str, str]]:
     system = f"""Ты выполняешь техническую атомизацию ТЗ цифрового продукта.
 Атом — один самостоятельно демонстрируемый и проверяемый элемент продукта: экран, вкладка, форма, реестр, таблица, фильтр, показатель, отчет, действие пользователя, уведомление, интеграция или отдельное наблюдаемое поведение.
@@ -525,6 +638,8 @@ def build_batch_messages(
             "previous_response_rejected": correction_code,
             "required_fix": guidance,
         }
+        if correction_details:
+            payload["correction"]["invalid_fields"] = list(correction_details[:12])
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": _canonical_json(payload)},
@@ -548,6 +663,7 @@ def validate_batch_result(
             "invalid_model_schema",
             "ИИ вернул неполный или некорректный пакет атомов",
             status_code=502,
+            repair_details=_safe_validation_issues(error),
         ) from error
     known_units = {str(item["source_unit_id"]) for item in batch.units}
     coverage_by_unit: dict[str, _BatchCoverage] = {}
@@ -568,13 +684,16 @@ def validate_batch_result(
     anchored_units: set[str] = set()
     fingerprints: set[str] = set()
     atoms: list[dict] = []
-    for atom in parsed.atoms:
+    for atom_index, atom in enumerate(parsed.atoms):
         if batch.require_verification_notes and not re.search(
             r"Условия проверки:\s*\S.+?Ожидаемый результат:\s*\S",
             atom.notes or "", flags=re.I | re.S,
         ):
             raise CanonicalAtomizationError(
-                "invalid_model_schema", "ИИ не указал условия проверки и ожидаемый результат в notes", status_code=502,
+                "invalid_model_schema",
+                "ИИ не указал условия проверки и ожидаемый результат в notes",
+                status_code=502,
+                repair_details=[f"atoms.{atom_index}.notes:verification_notes_required"],
             )
         if atom.local_id in local_ids:
             raise CanonicalAtomizationError("duplicate_model_atom", "ИИ повторил идентификатор атома", status_code=502)
@@ -629,8 +748,18 @@ async def generate_batch_result(
     total_batches: int,
     *,
     correction_code: str | None = None,
+    correction_details: tuple[str, ...] = (),
+    before_provider_retry: Callable[[], Awaitable[None]] | None = None,
 ) -> CanonicalBatchResult:
-    messages = build_batch_messages(batch, total_batches, correction_code=correction_code)
+    messages = build_batch_messages(
+        batch,
+        total_batches,
+        correction_code=correction_code,
+        correction_details=correction_details,
+    )
+    response_format = None
+    if not getattr(provider, "_dpms_structured_output_disabled", False):
+        response_format = build_batch_response_format(batch)
     try:
         raw = await generate_text(
             provider,
@@ -638,9 +767,21 @@ async def generate_batch_result(
             max_tokens=4096,
             temperature=0,
             read_timeout_seconds=settings.AUDIT_TZ_AI_READ_TIMEOUT_SECONDS,
+            response_format=response_format,
         )
-    except AIProviderError:
-        raise
+    except AIProviderError as error:
+        if response_format is None or error.code != "invalid_provider_request":
+            raise
+        provider._dpms_structured_output_disabled = True
+        if before_provider_retry is not None:
+            await before_provider_retry()
+        raw = await generate_text(
+            provider,
+            messages,
+            max_tokens=4096,
+            temperature=0,
+            read_timeout_seconds=settings.AUDIT_TZ_AI_READ_TIMEOUT_SECONDS,
+        )
     return validate_batch_result(
         raw,
         batch,

@@ -809,6 +809,60 @@ class ProvenanceTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(retry.already_committed)
         self.assertEqual(await self.db.scalar(select(func.count(AuditAtom.id))), 2)
 
+    async def test_stale_canonical_attempt_cannot_commit_after_lane_switch(self):
+        from app.api.routes import audit as routes
+        from app.schemas.audit_ai import AuditAIAtomizationCommit, AuditAIAtomDraftCommitItem
+
+        stale_attempt = AuditAIAtomizationAttempt(
+            case_id=self.case.id, canonical_run_id=self.run_id,
+            document_id=self.document.id, skill_version_id=self.version_id,
+            provider_config_id=self.provider_id, provider_config_version=4,
+            model_name="stale-model", document_sha256=self.document.sha256,
+            skill_sha256="s" * 64, prompt_sha256="p" * 64,
+            request_key_hash="q" * 64, status="draft_ready",
+            consent_confirmed_at=datetime.now(timezone.utc),
+        )
+        active_attempt = AuditAIAtomizationAttempt(
+            case_id=self.case.id, canonical_run_id=self.run_id,
+            document_id=self.document.id, skill_version_id=self.version_id,
+            provider_config_id=self.provider_id, provider_config_version=5,
+            model_name="active-model", document_sha256=self.document.sha256,
+            skill_sha256="s" * 64, prompt_sha256="a" * 64,
+            request_key_hash="r" * 64, status="running",
+            consent_confirmed_at=datetime.now(timezone.utc),
+        )
+        self.db.add_all([stale_attempt, active_attempt])
+        await self.db.flush()
+        draft = AuditAIAtomDraft(
+            attempt_id=stale_attempt.id, case_id=self.case.id,
+            title="Stale proposal", digital_product="TEST",
+            source_clause="1", source_fingerprint="f" * 64,
+        )
+        self.db.add_all([
+            draft,
+            AuditTZRuntimeJob(
+                kind="atomization", skill_version_id=self.version_id,
+                run_id=self.run_id, attempt_id=active_attempt.id, status="running",
+            ),
+        ])
+        await self.db.flush()
+        body = AuditAIAtomizationCommit(
+            request_id=uuid4(), expected_config_version=stale_attempt.config_version,
+            drafts=[AuditAIAtomDraftCommitItem(
+                id=draft.id, title=draft.title, digital_product=draft.digital_product,
+            )],
+        )
+        user = SimpleNamespace(id=self.actor_id, role=UserRole.admin)
+
+        with self.assertRaises(HTTPException) as raised:
+            await routes.commit_ai_atomization_attempt(
+                self.case.id, stale_attempt.id, body, user=user, db=self.db,
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        self.assertEqual(await self.db.scalar(select(func.count(AuditAtom.id))), 0)
+        self.assertEqual(stale_attempt.status, "draft_ready")
+
     async def test_export_origins_are_typed_strings_and_exclude_private_extras(self):
         atom = await self.atom(provenance_json=[{
             **service.origin_snapshot("manual"), "filename": "DO-NOT-EXPORT", "provider_url": "DO-NOT-EXPORT",

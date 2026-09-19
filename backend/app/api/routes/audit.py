@@ -2822,6 +2822,19 @@ async def commit_ai_atomization_attempt(
     )
     if attempt is None:
         raise HTTPException(status_code=404, detail="Черновик ИИ-атомизации не найден")
+    if attempt.status != "committed" and attempt.canonical_run_id is not None:
+        active_job_id = await db.scalar(
+            select(AuditTZRuntimeJob.id).where(
+                AuditTZRuntimeJob.kind == "atomization",
+                AuditTZRuntimeJob.run_id == attempt.canonical_run_id,
+                AuditTZRuntimeJob.attempt_id == attempt.id,
+            )
+        )
+        if active_job_id is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Этот ИИ-черновик больше не является активным для запуска",
+            )
     drafts = list(
         (
             await db.scalars(

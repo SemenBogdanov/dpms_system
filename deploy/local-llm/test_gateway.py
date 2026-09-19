@@ -64,6 +64,92 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("authorization", self.calls[0].headers)
         self.assertIs(json.loads(self.calls[0].content)["stream"], False)
 
+    async def test_strict_json_schema_is_validated_and_forwarded(self):
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "audit_batch",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["items"],
+                    "properties": {"items": {"type": "array", "items": {"type": "string"}}},
+                },
+            },
+        }
+        async with self.client() as client:
+            result = await client.post(
+                "/v1/chat/completions",
+                json={**PAYLOAD, "response_format": response_format},
+                headers=HEADERS,
+            )
+
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(json.loads(self.calls[0].content)["response_format"], response_format)
+
+    async def test_invalid_json_schema_is_blocked_before_upstream(self):
+        candidates = [
+            {"type": "json_object"},
+            {"type": "json_schema", "json_schema": {"name": "bad", "strict": False, "schema": {"type": "object"}}},
+            {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "bad",
+                    "strict": True,
+                    "schema": {"type": "object", "$ref": "https://example.invalid/schema"},
+                },
+            },
+        ]
+        async with self.client() as client:
+            for response_format in candidates:
+                with self.subTest(response_format=response_format):
+                    result = await client.post(
+                        "/v1/chat/completions",
+                        json={**PAYLOAD, "response_format": response_format},
+                        headers=HEADERS,
+                    )
+                    self.assertEqual(result.status_code, 400)
+        self.assertEqual(self.calls, [])
+
+    async def test_upstream_schema_rejection_is_safe_client_error(self):
+        attempts = 0
+
+        async def upstream(_):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                return response({"error": "unsupported response format"}, status=400)
+            return completed()
+
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "audit_batch",
+                "strict": True,
+                "schema": {"type": "object", "properties": {}},
+            },
+        }
+        async with self.client(upstream) as client:
+            rejected = await client.post(
+                "/v1/chat/completions",
+                json={**PAYLOAD, "response_format": response_format},
+                headers=HEADERS,
+            )
+            subsequent = await client.post(
+                "/v1/chat/completions",
+                json=PAYLOAD,
+                headers=HEADERS,
+            )
+
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(
+            rejected.headers["x-dpms-local-gateway-error"],
+            "local_model_rejected_request",
+        )
+        self.assertEqual(subsequent.status_code, 200)
+        self.assertEqual(len(self.calls), 2)
+
     async def test_no_upstream_without_exact_bearer(self):
         async with self.client() as client:
             for value in (None, "", "Bearer wrong", "Basic " + BEARER, "Bearer " + BEARER + " "):
@@ -158,7 +244,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await client.get("/v1/models", headers=HEADERS)).status_code, 503)
 
     async def test_errors_redirects_do_not_leak_or_retry(self):
-        for upstream_status, expected in ((301, 502), (307, 502), (400, 502), (401, 502), (404, 502), (429, 429), (500, 503), (503, 503)):
+        for upstream_status, expected in ((301, 502), (307, 502), (400, 400), (401, 502), (404, 502), (422, 400), (429, 429), (500, 503), (503, 503)):
             async def upstream(request):
                 return response({"error": "private-marker"}, status=upstream_status,
                                 headers={"Location": "https://example.invalid", "Retry-After": "900"})
