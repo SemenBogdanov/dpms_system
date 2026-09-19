@@ -21,6 +21,7 @@ from bounded_transport import BoundedH11Protocol
 MAX_REQUEST_BYTES = 512 * 1024
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_PROMPT_CHARS = 60_000
+MAX_RESPONSE_FORMAT_BYTES = 64 * 1024
 MAX_INFERENCE_DEADLINE_SECONDS = 900.0
 
 
@@ -79,8 +80,61 @@ def strict_json(raw: bytes):
     return json.loads(raw, object_pairs_hook=pairs, parse_constant=invalid_constant)
 
 
+def validate_response_format(value) -> dict | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"type", "json_schema"}:
+        raise GatewayError(400, "invalid_response_format")
+    wrapper = value.get("json_schema")
+    if value.get("type") != "json_schema" or not isinstance(wrapper, dict):
+        raise GatewayError(400, "invalid_response_format")
+    if set(wrapper) != {"name", "strict", "schema"}:
+        raise GatewayError(400, "invalid_response_format")
+    name = wrapper.get("name")
+    schema = wrapper.get("schema")
+    if (
+        not isinstance(name, str)
+        or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", name)
+        or wrapper.get("strict") is not True
+        or not isinstance(schema, dict)
+        or schema.get("type") != "object"
+    ):
+        raise GatewayError(400, "invalid_response_format")
+
+    nodes = 0
+
+    def validate_node(node, depth=0):
+        nonlocal nodes
+        nodes += 1
+        if depth > 20 or nodes > 2_000:
+            raise GatewayError(400, "invalid_response_format")
+        if isinstance(node, dict):
+            for key, item in node.items():
+                if not isinstance(key, str) or len(key) > 100:
+                    raise GatewayError(400, "invalid_response_format")
+                if key == "$ref" and (not isinstance(item, str) or not item.startswith("#/")):
+                    raise GatewayError(400, "invalid_response_format")
+                validate_node(item, depth + 1)
+        elif isinstance(node, list):
+            for item in node:
+                validate_node(item, depth + 1)
+        elif isinstance(node, str):
+            if len(node) > 4_000:
+                raise GatewayError(400, "invalid_response_format")
+        elif isinstance(node, float) and not math.isfinite(node):
+            raise GatewayError(400, "invalid_response_format")
+        elif node is not None and type(node) not in {bool, int, float}:
+            raise GatewayError(400, "invalid_response_format")
+
+    validate_node(value)
+    encoded = json.dumps(value, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+    if len(encoded) > MAX_RESPONSE_FORMAT_BYTES:
+        raise GatewayError(400, "invalid_response_format")
+    return value
+
+
 def validate_payload(value, model: str) -> dict:
-    allowed = {"model", "messages", "max_tokens", "temperature", "stream"}
+    allowed = {"model", "messages", "max_tokens", "temperature", "stream", "response_format"}
     if not isinstance(value, dict) or set(value) - allowed:
         raise GatewayError(400, "unsupported_fields")
     if value.get("model") != model:
@@ -109,8 +163,12 @@ def validate_payload(value, model: str) -> dict:
         raise GatewayError(400, "invalid_max_tokens")
     if type(temperature) not in (int, float) or not 0 <= temperature <= 2:
         raise GatewayError(400, "invalid_temperature")
-    return {"model": model, "messages": messages, "max_tokens": limit,
-            "temperature": temperature, "stream": False}
+    result = {"model": model, "messages": messages, "max_tokens": limit,
+              "temperature": temperature, "stream": False}
+    response_format = validate_response_format(value.get("response_format"))
+    if response_format is not None:
+        result["response_format"] = response_format
+    return result
 
 
 async def read_payload(request: Request) -> bytes:
@@ -147,6 +205,15 @@ async def upstream_json(client: httpx.AsyncClient, method: str, path: str, paylo
                 if size > 32 * 1024:
                     raise GatewayError(502, "invalid_model_response", inference_uncertain=True)
             raise GatewayError(429, "local_model_busy")
+        if response.status_code in (400, 422):
+            # A complete 4xx response is proof that inference never started.
+            # Preserve that distinction so DPMS can retry once without JSON Schema.
+            size = 0
+            async for chunk in response.aiter_raw():
+                size += len(chunk)
+                if size > 32 * 1024:
+                    raise GatewayError(502, "invalid_model_response", inference_uncertain=True)
+            raise GatewayError(400, "local_model_rejected_request")
         if response.is_redirect:
             raise GatewayError(502, "upstream_redirect_blocked", inference_uncertain=True)
         if response.status_code >= 500:
@@ -260,7 +327,7 @@ def create_app(settings: Settings, *, transport: httpx.AsyncBaseTransport | None
                     raise GatewayError(502, "response_too_large")
                 return outgoing
         except GatewayError as exc:
-            if exc.code == "local_model_busy" and not exc.inference_uncertain:
+            if exc.code in {"local_model_busy", "local_model_rejected_request"} and not exc.inference_uncertain:
                 inference_finished_safely = True
             app.state.recovery_required |= inference_started and exc.inference_uncertain
             return error(exc.status, exc.code)
