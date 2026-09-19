@@ -20,6 +20,8 @@ class SyntheticVPSProbeTests(unittest.TestCase):
     def test_remote_probe_uses_the_application_client_without_database_operations(self):
         compile(REMOTE_CODE, '<synthetic-vps-probe>', 'exec')
         self.assertIn('await generate_text(', REMOTE_CODE)
+        self.assertIn('await generate_batch_result(', REMOTE_CODE)
+        self.assertIn("'structured_output':structured", REMOTE_CODE)
         self.assertIn('SYNTHETIC TEST, NOT A REAL DOCUMENT', REMOTE_CODE)
         for operation in ('db.commit', 'session.commit', 'create_engine', 'get_ready_ai_provider'):
             self.assertNotIn(operation, REMOTE_CODE)

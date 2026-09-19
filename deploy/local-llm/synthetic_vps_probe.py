@@ -11,12 +11,26 @@ REMOTE_CODE = r'''
 import asyncio,json,sys
 from types import SimpleNamespace
 from app.services.ai_provider import generate_text,encrypt_ai_api_key,AIProviderError
+from app.services.audit_tz_atomization import CanonicalSourceBatch,CanonicalAtomizationError,generate_batch_result
 
 async def main():
     request=json.load(sys.stdin)
     provider=SimpleNamespace(enabled=True,last_test_status='ok',config_version=1,
         last_verified_config_version=1,base_url=request['base_url'],model_name=request['model'],
         api_key_ciphertext=encrypt_ai_api_key(request.pop('bearer')))
+    if request.get('strict'):
+        units=[
+          {'source_unit_id':'U000001','text':'В тестовой панели должна быть кнопка «Сохранить».'},
+          {'source_unit_id':'U000002','text':'В тестовой панели должно быть текстовое поле «Имя».'}]
+        batch=CanonicalSourceBatch(index=1,units=units,outbound_units=units,
+            payload_hash='0'*64,redaction_count=0)
+        result=await generate_batch_result(provider,batch,1)
+        structured=not getattr(provider,'_dpms_structured_output_disabled',False)
+        valid=structured and len(result.atoms)==2 and len(result.coverage)==2
+        print(json.dumps({'status':'PASS' if valid else 'FAIL','atoms':len(result.atoms),
+            'coverage':len(result.coverage),'structured_output':structured,
+            'db_writes':0,'real_documents':0}))
+        return
     messages=[
       {'role':'system','content':'Return only JSON with an atoms array. Each atom has name and evidence strings. Extract exactly the two UI elements explicitly required below. Do not add anything.'},
       {'role':'user','content':'SYNTHETIC TEST, NOT A REAL DOCUMENT. Section 1: The Test panel has a Save button. Section 2: The Test panel has a Name text field.'}]
@@ -31,6 +45,9 @@ try:
     asyncio.run(main())
 except AIProviderError as exc:
     print(json.dumps({'status':'BLOCKED','code':exc.code if exc.code.isidentifier() else 'provider_error'}))
+    sys.exit(2)
+except CanonicalAtomizationError as exc:
+    print(json.dumps({'status':'FAIL','code':exc.code if exc.code.isidentifier() else 'canonical_error'}))
     sys.exit(2)
 except Exception:
     print(json.dumps({'status':'FAIL','code':'synthetic_validation_failed'}))
@@ -71,8 +88,20 @@ def run_probe(bearer):
         results.append(record)
         if result.returncode or document.get('status') != 'PASS':
             return {'status': 'BLOCKED', 'checks': results}
+    strict_result = subprocess.run(ssh_command('audit-worker'),
+                                   input=json.dumps({**payload, 'strict': True}),
+                                   capture_output=True, text=True, timeout=970, env=environment)
+    strict_document = json.loads(strict_result.stdout)
+    results.append({'service': 'audit-worker', 'probe': 'canonical_batch',
+                    'status': strict_document.get('status'),
+                    'atoms': strict_document.get('atoms'),
+                    'coverage': strict_document.get('coverage'),
+                    'structured_output': strict_document.get('structured_output')})
+    if strict_result.returncode or strict_document.get('status') != 'PASS':
+        return {'status': 'BLOCKED', 'checks': results}
     return {'status': 'PASS', 'checks': results, 'scope': 'real_container_provider_client_to_local_model',
-            'audit_job_tested': False, 'db_writes': 0, 'real_documents': 0}
+            'canonical_batch_tested': True, 'audit_job_tested': False,
+            'db_writes': 0, 'real_documents': 0}
 
 
 if __name__ == '__main__':
