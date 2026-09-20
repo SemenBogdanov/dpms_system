@@ -1,0 +1,13 @@
+{
+  "id": "/",
+  "name": "Простосделал.рф",
+  "short_name": "Простосделал",
+  "start_url": "/messages",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#f5f5f7",
+  "icons": [
+    { "src": "/push-icon.png", "sizes": "687x687", "type": "image/png", "purpose": "any" }
+  ]
+}

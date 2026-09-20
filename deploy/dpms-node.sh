@@ -265,6 +265,19 @@ healthcheck() {
   else
     email_worker=missing
   fi
+  web_push_worker=not_configured
+  if [[ -f "$DPMS_COMPOSE_FILE" ]] && \
+    docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
+      config --services 2>/dev/null | grep -Fx 'web-push-worker' >/dev/null; then
+    if docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
+      ps --status running --services 2>/dev/null | grep -Fx 'web-push-worker' >/dev/null && \
+      docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
+      exec -T web-push-worker python -c 'from app.services.web_push import public_key, vapid_subject; assert public_key(); vapid_subject()' >/dev/null 2>&1; then
+      web_push_worker=healthy
+    else
+      web_push_worker=missing
+    fi
+  fi
   if [[ -f "$DPMS_COMPOSE_FILE" ]] && \
     docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
       config --services 2>/dev/null | grep -Fx 'audit-worker' >/dev/null; then
@@ -298,11 +311,13 @@ healthcheck() {
   log "https_root=$https_root"
   log "frontend_assets=$frontend_assets"
   log "email_worker=$email_worker"
+  log "web_push_worker=$web_push_worker"
   log "audit_worker=$audit_worker"
   log "deadline_worker=$deadline_worker"
   if [[ "$backend" == 200 && "$https_health" == 200 && "$https_root" == 200 && \
     "$frontend_assets" == ok && "$email_worker" == running && \
-    "$audit_worker" != missing && "$deadline_worker" != missing ]]; then
+    "$audit_worker" != missing && "$deadline_worker" != missing && \
+    "$web_push_worker" != missing ]]; then
     log "healthcheck_ok=1"
     return 0
   fi
@@ -766,7 +781,7 @@ promote_release() {
     esac
   done
   local release_dir manifest expected_approval sha image_tag audit_worker_image_tag migrations_count backup_dir network_args=() net_args runtime_migration_delta
-  local runtime_services=(backend email-worker audit-worker)
+  local runtime_services=(backend email-worker audit-worker web-push-worker)
   release_dir="$(release_dir_for_id "$release_id")"
   manifest="$(manifest_path "$release_dir")"
   [[ -f "$manifest" ]] || die "manifest missing for release: $release_id"
@@ -781,6 +796,9 @@ promote_release() {
   docker image inspect "$image_tag" >/dev/null || die "prepared image is missing: $image_tag"
   docker image inspect "$audit_worker_image_tag" >/dev/null || die "prepared audit worker image is missing: $audit_worker_image_tag"
   validate_env_file
+  docker run --rm --env-file "$DPMS_ENV_FILE" "$image_tag" \
+    python -c 'from app.services.web_push import public_key, vapid_subject; assert public_key(), "web_push_key_missing"; vapid_subject()' \
+    >/dev/null || die "Web Push VAPID configuration is missing or invalid"
   runtime_migration_delta="$(migration_delta "$image_tag")"
   if [[ -n "$runtime_migration_delta" ]]; then
     migrations_count=1
@@ -892,6 +910,12 @@ rollback_release() {
   else
     docker ps -q --filter "label=com.docker.compose.project=$DPMS_COMPOSE_PROJECT" \
       --filter "label=com.docker.compose.service=deadline-worker" | xargs -r docker stop >/dev/null
+  fi
+  if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fx web-push-worker >/dev/null; then
+    runtime_services+=(web-push-worker)
+  else
+    docker ps -q --filter "label=com.docker.compose.project=$DPMS_COMPOSE_PROJECT" \
+      --filter "label=com.docker.compose.service=web-push-worker" | xargs -r docker stop >/dev/null
   fi
   local -a connector_files=()
   if [[ -f "$DPMS_CONNECTOR_DIR/compose-activated" ]]; then

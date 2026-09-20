@@ -32,6 +32,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useAttention } from '@/contexts/attentionState'
 import { preventBackdropDismiss, useProtectedModal } from '@/hooks/useProtectedModal'
 import { cn } from '@/lib/utils'
+import { WebPushControl } from '@/components/WebPushControl'
 
 
 type MessagesTab = 'direct' | 'important'
@@ -563,6 +564,7 @@ export function MessagesPage() {
           Новое письмо
         </button>
       </div>
+      <WebPushControl />
 
       <div
         className="flex w-full gap-1 overflow-x-auto rounded-lg border border-slate-200 bg-white p-1 sm:w-fit"

@@ -27,6 +27,8 @@ services:
       INTEGRATION_SECRET_KEY: ${INTEGRATION_SECRET_KEY:-local-dev-integration-key-not-for-production-2026}
       AUDIT_TZ_WORKER_ENABLED: "true"
       AUDIT_TZ_EXTERNAL_AI_ENABLED: "true"
+      DPMS_WEB_PUSH_PRIVATE_KEY: ${DPMS_WEB_PUSH_PRIVATE_KEY:-}
+      DPMS_WEB_PUSH_SUBJECT: ${DPMS_WEB_PUSH_SUBJECT:-mailto:push@example.com}
     depends_on:
       db:
         condition: service_healthy
@@ -40,6 +42,20 @@ services:
       DATABASE_URL: postgresql+asyncpg://dpms_user:dpms_pass@db:5432/dpms
       EMAIL_DELIVERY_MODE: console
       PUBLIC_APP_URL: http://localhost:${DPMS_FRONTEND_PORT:-5177}
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
+  web-push-worker:
+    build: ./backend
+    command: ["python", "-m", "app.workers.web_push"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dpms_user:dpms_pass@db:5432/dpms
+      DPMS_WEB_PUSH_PRIVATE_KEY: ${DPMS_WEB_PUSH_PRIVATE_KEY:-}
+      DPMS_WEB_PUSH_SUBJECT: ${DPMS_WEB_PUSH_SUBJECT:-mailto:push@example.com}
     depends_on:
       db:
         condition: service_healthy

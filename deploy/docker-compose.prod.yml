@@ -32,6 +32,18 @@ services:
       backend:
         condition: service_healthy
 
+  web-push-worker:
+    image: deploy-backend:latest
+    command: ["python", "-m", "app.workers.web_push"]
+    restart: always
+    healthcheck:
+      disable: true
+    env_file:
+      - ${DPMS_ENV_FILE:-/opt/dpms/deploy/.env.prod}
+    depends_on:
+      backend:
+        condition: service_healthy
+
   deadline-worker:
     image: deploy-backend:latest
     command: ["python", "-m", "app.workers.deadline_reminders"]

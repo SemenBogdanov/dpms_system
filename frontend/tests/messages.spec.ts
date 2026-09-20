@@ -138,6 +138,8 @@ const note = {
 }
 
 type MockState = {
+  webPushAvailable?: boolean
+  pushWrites?: number
   importantTitle?: string
   directUnread: boolean
   importantUnread: boolean
@@ -197,6 +199,11 @@ async function installApiMock(page: Page, state: MockState) {
     }
 
     if (path === '/api/auth/me') return respond(testUser)
+    if (path === '/api/web-push/config') return respond({ available: Boolean(state.webPushAvailable), public_key: state.webPushAvailable ? 'AQID' : null })
+    if (path === '/api/web-push/subscriptions' && method === 'POST') {
+      state.pushWrites = (state.pushWrites || 0) + 1
+      return respond({ ok: true }, 201)
+    }
     if (path === '/api/users') return respond([])
     if (path === '/api/messages/summary') {
       return respond({
@@ -257,6 +264,43 @@ async function installApiMock(page: Page, state: MockState) {
     return respond(method === 'GET' ? [] : {})
   })
 }
+
+test('installed app enables notifications only after a button press', async ({ page }, testInfo) => {
+  const state: MockState = {
+    directUnread: false, importantUnread: false, threadUnread: 0,
+    createCalls: 0, createdPayload: null, remoteReplyBody: null,
+    webPushAvailable: true, pushWrites: 0,
+  }
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)' })
+    const original = window.matchMedia.bind(window)
+    window.matchMedia = (query) => query === '(display-mode: standalone)'
+      ? { matches: true, media: query, onchange: null, addListener() {}, removeListener() {}, addEventListener() {}, removeEventListener() {}, dispatchEvent() { return false } }
+      : original(query)
+    const subscription = {
+      options: { applicationServerKey: new Uint8Array([1, 2, 3]) },
+      toJSON: () => ({ endpoint: 'https://web.push.apple.com/push/test', keys: { p256dh: 'test', auth: 'test' } }),
+      unsubscribe: async () => true,
+    }
+    Object.defineProperty(window, 'PushManager', { value: class {} })
+    Object.defineProperty(window, 'Notification', { value: { permission: 'default', requestPermission: async () => 'granted' } })
+    Object.defineProperty(navigator, 'serviceWorker', { value: {
+      getRegistration: async () => null,
+      register: async () => ({ pushManager: { getSubscription: async () => null, subscribe: async () => subscription } }),
+    } })
+  })
+  await installApiMock(page, state)
+  await page.goto('/messages')
+  await expect(page.getByRole('button', { name: 'Включить уведомления' })).toBeVisible()
+  expect(state.pushWrites).toBe(0)
+  await page.getByRole('button', { name: 'Включить уведомления' }).click()
+  await expect(page.getByText('Уведомления включены')).toBeVisible()
+  expect(state.pushWrites).toBe(1)
+  await noHorizontalOverflow(page)
+  if (testInfo.project.name.startsWith('iphone-')) {
+    await page.screenshot({ path: testInfo.outputPath('web-push-enabled.png') })
+  }
+})
 
 async function noHorizontalOverflow(page: Page) {
   const size = await page.evaluate(() => ({

@@ -49,6 +49,7 @@ from app.models.transaction import QTransaction
 from app.models.shop import ShopItem, Purchase, PeriodSnapshot, PeriodClosure
 from app.models.notification import Notification
 from app.models.email_outbox import EmailOutbox
+from app.models.web_push import WebPushDelivery, WebPushSubscription
 from app.models.messages import (
     CommunicationEvent,
     MessagePost,

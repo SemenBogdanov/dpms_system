@@ -138,6 +138,8 @@ async def emit_attention_event(
         event_id = event.id
 
     now = datetime.now(timezone.utc)
+    from app.services.web_push import enqueue_push
+
     for user_id in targets:
         await db.execute(
             insert(UserAttentionItem)
@@ -162,6 +164,10 @@ async def emit_attention_event(
                     "updated_at": now,
                 },
             )
+        )
+        await enqueue_push(
+            db, user_id=user_id, event_key=f"attention:{event_id}",
+            kind=kind, path="/messages" if kind == "direct" else "/messages?tab=important",
         )
 
     return (

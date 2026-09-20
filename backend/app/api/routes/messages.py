@@ -33,6 +33,7 @@ from app.schemas.messages import (
 )
 from app.services.attention_realtime import AttentionConnection, attention_hub
 from app.services.email_outbox import enqueue_message_notification
+from app.services.web_push import enqueue_push
 from app.services.messages import (
     get_attention_snapshot,
     list_attention_items,
@@ -589,6 +590,7 @@ async def create_thread(
         recipient=recipient,
         sender_name=current_user.full_name,
     )
+    await enqueue_push(db, user_id=recipient.id, event_key=f"post:{first_post.id}", kind="direct", path=f"/messages/{thread.id}")
     await db.commit()
     await attention_hub.send_to_users(
         [current_user.id, recipient.id],
@@ -716,6 +718,7 @@ async def create_post(
             recipient=recipient,
             sender_name=current_user.full_name,
         )
+        await enqueue_push(db, user_id=recipient.id, event_key=f"post:{post.id}", kind="direct", path=f"/messages/{thread_id}")
     await db.commit()
     await attention_hub.send_to_users(
         [user.id for _, user in participant_rows],
