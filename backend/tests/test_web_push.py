@@ -20,7 +20,14 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from app.database import AsyncSessionLocal, engine
 from app.models.user import User
 from app.models.web_push import WebPushDelivery, WebPushSubscription
-from app.services.web_push import enqueue_push, public_key, save_subscription, validate_subscription
+from app.services.web_push import (
+    enqueue_push,
+    public_key,
+    save_subscription,
+    validate_subscription,
+    validate_vapid_configuration,
+    vapid_subject,
+)
 from app.workers.web_push import NoRedirectSession, send_one
 
 
@@ -57,6 +64,14 @@ class WebPushTests(unittest.TestCase):
                 curl=True,
             )
         self.assertIsInstance(request, str)
+
+    def test_https_vapid_subject_is_canonicalized_and_signs(self):
+        with patch.dict(os.environ, {
+            "DPMS_WEB_PUSH_PRIVATE_KEY": encoded(self.raw_private),
+            "DPMS_WEB_PUSH_SUBJECT": "https://xn--80ahdybnagjlbk.xn--p1ai/",
+        }):
+            self.assertEqual(vapid_subject(), "https://xn--80ahdybnagjlbk.xn--p1ai")
+            validate_vapid_configuration()
 
     def test_only_apple_https_endpoints_are_accepted(self):
         key = encoded(self.browser_public)

@@ -272,7 +272,7 @@ healthcheck() {
     if docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
       ps --status running --services 2>/dev/null | grep -Fx 'web-push-worker' >/dev/null && \
       docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
-      exec -T web-push-worker python -c 'from app.services.web_push import public_key, vapid_subject; assert public_key(); vapid_subject()' >/dev/null 2>&1; then
+      exec -T web-push-worker python -c 'from app.services.web_push import validate_vapid_configuration; validate_vapid_configuration()' >/dev/null 2>&1; then
       web_push_worker=healthy
     else
       web_push_worker=missing
@@ -797,7 +797,7 @@ promote_release() {
   docker image inspect "$audit_worker_image_tag" >/dev/null || die "prepared audit worker image is missing: $audit_worker_image_tag"
   validate_env_file
   docker run --rm --env-file "$DPMS_ENV_FILE" "$image_tag" \
-    python -c 'from app.services.web_push import public_key, vapid_subject; assert public_key(), "web_push_key_missing"; vapid_subject()' \
+    python -c 'from app.services.web_push import validate_vapid_configuration; validate_vapid_configuration()' \
     >/dev/null || die "Web Push VAPID configuration is missing or invalid"
   runtime_migration_delta="$(migration_delta "$image_tag")"
   if [[ -n "$runtime_migration_delta" ]]; then

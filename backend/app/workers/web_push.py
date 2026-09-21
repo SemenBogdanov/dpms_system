@@ -15,7 +15,7 @@ from app.database import AsyncSessionLocal
 from app.models.user import User
 from app.models.messages import MessagePost, MessageThreadParticipant, UserAttentionItem
 from app.models.web_push import WebPushDelivery, WebPushSubscription
-from app.services.web_push import public_key, validate_subscription, vapid_subject
+from app.services.web_push import public_key, validate_subscription, validate_vapid_configuration, vapid_subject
 
 logger = logging.getLogger("dpms.web_push_worker")
 
@@ -125,9 +125,9 @@ async def run_once() -> bool:
         status = getattr(response, "status_code", None)
         await finish_one(delivery, invalid=status in (404, 410), retry=status not in (400, 401, 403, 404, 410))
         logger.warning("web_push_delivery=failed status=%s", status)
-    except Exception:
+    except Exception as error:
         await finish_one(delivery, retry=True)
-        logger.warning("web_push_delivery=retry")
+        logger.warning("web_push_delivery=retry error_type=%s", type(error).__name__)
     else:
         await finish_one(delivery)
         logger.info("web_push_delivery=sent")
@@ -147,7 +147,7 @@ async def run() -> None:
         logger.info("web_push_worker=disabled")
         await stop.wait()
         return
-    vapid_subject()
+    validate_vapid_configuration()
     while not stop.is_set():
         try:
             found = await run_once()

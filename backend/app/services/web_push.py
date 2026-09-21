@@ -9,6 +9,7 @@ from uuid import UUID
 
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from py_vapid import Vapid
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,11 +39,19 @@ def public_key() -> str | None:
 def vapid_subject() -> str:
     subject = os.getenv("DPMS_WEB_PUSH_SUBJECT", settings.PUBLIC_APP_URL).strip()
     parsed = urlsplit(subject)
-    if parsed.scheme == "mailto" and "@" in parsed.path:
+    if parsed.scheme == "mailto" and "@" in parsed.path and not parsed.query and not parsed.fragment:
         return subject
-    if parsed.scheme == "https" and parsed.hostname:
-        return subject
+    if (parsed.scheme == "https" and parsed.hostname and not parsed.username and not parsed.password
+            and parsed.path in ("", "/") and not parsed.query and not parsed.fragment):
+        return f"https://{parsed.netloc}"
     raise ValueError("DPMS_WEB_PUSH_SUBJECT must be an HTTPS URL or mailto address")
+
+
+def validate_vapid_configuration() -> None:
+    raw = os.getenv("DPMS_WEB_PUSH_PRIVATE_KEY", "")
+    if public_key() is None:
+        raise ValueError("DPMS_WEB_PUSH_PRIVATE_KEY is missing")
+    Vapid.from_string(raw).sign({"sub": vapid_subject(), "aud": "https://web.push.apple.com"})
 
 
 def validate_subscription(endpoint: str, p256dh: str, auth_value: str) -> None:
