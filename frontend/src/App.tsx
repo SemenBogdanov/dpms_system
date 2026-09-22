@@ -89,6 +89,7 @@ const MessagesPage = lazyPage(() => import('@/pages/MessagesPage'), 'MessagesPag
 const QuickNotesPage = lazyPage(() => import('@/pages/QuickNotesPage'), 'QuickNotesPage')
 const PersonalTasksPage = lazyPage(() => import('@/pages/PersonalTasksPage'), 'PersonalTasksPage')
 const DeadlineTrackersPage = lazyPage(() => import('@/pages/DeadlineTrackersPage'), 'DeadlineTrackersPage')
+const GraphsPage = lazyPage(() => import('@/pages/GraphsPage'), 'GraphsPage')
 
 function DashboardRoute() {
   const { user } = useAuth()
@@ -215,6 +216,7 @@ function App() {
         <Route path="quick-notes/:noteId" element={<QuickNotesPage />} />
         <Route path="personal-tasks" element={<PersonalTasksPage />} />
         <Route path="deadline-trackers" element={<DeadlineTrackersPage />} />
+        <Route path="graphs" element={<GraphsPage />} />
         <Route path="work-entities" element={<TaskWorkspaceRoute><WorkEntitiesPage /></TaskWorkspaceRoute>} />
         <Route path="audit" element={<AuditAccessRoute><AuditPage /></AuditAccessRoute>} />
         <Route path="audit-calendar" element={<AuditCalendarAccessRoute><AuditCalendarPage /></AuditCalendarAccessRoute>} />

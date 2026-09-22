@@ -25,8 +25,8 @@ import {
 import type { User } from '@/api/types'
 import { hasAuditAccess, hasAuditCalendarAccess, hasDevelopmentAccess, hasFeedbackAccess, hasTaskWorkspaceAccess } from '@/lib/access'
 
-export type SidebarGroupKey = 'tasks' | 'management' | 'audit' | 'development' | 'feedback' | 'settings' | 'admin'
-export type SidebarSection = 'task' | 'feedback' | 'audit' | 'audit-calendar' | 'development' | 'personal' | 'settings' | 'admin'
+export type SidebarGroupKey = 'tasks' | 'management' | 'audit' | 'graphs' | 'development' | 'feedback' | 'settings' | 'admin'
+export type SidebarSection = 'task' | 'feedback' | 'audit' | 'audit-calendar' | 'graphs' | 'development' | 'personal' | 'settings' | 'admin'
 export type SidebarRole = 'executor' | 'teamlead' | 'admin'
 
 export type SidebarNavItem = {
@@ -82,13 +82,14 @@ export const sidebarGroups: SidebarGroupDefinition[] = [
   { key: 'tasks', label: 'Задачи', icon: ListChecks, placement: 'main', expandable: true },
   { key: 'management', label: 'Управление', icon: LayoutDashboard, placement: 'main', expandable: true },
   { key: 'audit', label: 'Аудит', icon: ClipboardCheck, placement: 'main' },
+  { key: 'graphs', label: 'Графы', icon: Network, placement: 'main' },
   { key: 'development', label: 'Развитие', icon: BookOpenCheck, placement: 'main' },
   { key: 'feedback', label: 'Обратная связь', icon: MessageSquare, placement: 'main' },
   { key: 'settings', label: 'Настройки', icon: Settings, placement: 'bottom' },
   { key: 'admin', label: 'Админ', icon: Users, placement: 'bottom' },
 ]
 
-export const SIDEBAR_MENU_SCHEMA_VERSION = 9
+export const SIDEBAR_MENU_SCHEMA_VERSION = 10
 
 export const sidebarNav: SidebarNavItem[] = [
   { id: 'personal-tasks', to: '/personal-tasks', label: 'Личные задачи', icon: ListChecks, section: 'personal', group: 'tasks' },
@@ -109,6 +110,7 @@ export const sidebarNav: SidebarNavItem[] = [
   { id: 'work-entities', to: '/work-entities', label: 'Проекты и цели', icon: Network, section: 'task', group: 'management' },
   { id: 'audit', to: '/audit', label: 'Аудит', icon: ClipboardCheck, section: 'audit', group: 'audit' },
   { id: 'audit-calendar', to: '/audit-calendar', label: 'Календарь аудита', icon: CalendarDays, section: 'audit-calendar', group: 'audit' },
+  { id: 'graphs', to: '/graphs', label: 'Графы', icon: Network, section: 'graphs', group: 'graphs' },
   { id: 'competencies', to: '/competencies', label: 'Развитие', icon: BookOpenCheck, section: 'development', group: 'development' },
   { id: 'feedback', to: '/feedback', label: 'Обратная связь', icon: MessageSquare, section: 'feedback', group: 'feedback' },
   { id: 'settings', to: '/settings', label: 'Настройки', icon: Settings, section: 'settings', group: 'settings' },
@@ -128,6 +130,7 @@ export const defaultSidebarOrder: SidebarOrder = {
     tasks: sidebarNav.filter((item) => item.group === 'tasks').map((item) => item.id),
     management: sidebarNav.filter((item) => item.group === 'management').map((item) => item.id),
     audit: sidebarNav.filter((item) => item.group === 'audit').map((item) => item.id),
+    graphs: sidebarNav.filter((item) => item.group === 'graphs').map((item) => item.id),
     development: sidebarNav.filter((item) => item.group === 'development').map((item) => item.id),
     feedback: sidebarNav.filter((item) => item.group === 'feedback').map((item) => item.id),
   },
@@ -214,6 +217,17 @@ export function normalizeSidebarOrder(order?: SidebarOrderInput): SidebarOrder {
   if (rawGroups.length > 0 && version < 7 && !uniqueGroups.some((group) => group.id === 'audit')) {
     const auditGroup = defaultSidebarOrder.groups.find((group) => group.id === 'audit')
     if (auditGroup) uniqueGroups = [...uniqueGroups, auditGroup]
+  }
+  if (rawGroups.length > 0 && version < 10 && !uniqueGroups.some((group) => group.itemIds.includes('graphs'))) {
+    const existingGraphsGroup = uniqueGroups.findIndex((group) => group.id === 'graphs')
+    if (existingGraphsGroup >= 0) {
+      uniqueGroups = uniqueGroups.map((group, index) => (
+        index === existingGraphsGroup ? { ...group, itemIds: [...group.itemIds, 'graphs'] } : group
+      ))
+    } else {
+      const graphsGroup = defaultSidebarOrder.groups.find((group) => group.id === 'graphs')
+      if (graphsGroup) uniqueGroups = [...uniqueGroups, graphsGroup]
+    }
   }
   const shouldBackfillMissingDefaults = rawGroups.length > 0 && version < 7
   const assignedItemIds = new Set(uniqueGroups.flatMap((group) => group.itemIds))
@@ -328,6 +342,7 @@ export function visibleSidebarNav(user: User | null) {
     if (item.section === 'feedback' && !hasFeedbackAccess(user)) return false
     if (item.section === 'audit' && !hasAuditAccess(user)) return false
     if (item.section === 'audit-calendar' && !hasAuditCalendarAccess(user)) return false
+    if (item.section === 'graphs') return true
     if (item.section === 'development' && !hasDevelopmentAccess(user)) return false
     if (item.section === 'personal') return true
     if (item.section === 'settings') return true

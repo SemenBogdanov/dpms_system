@@ -20,6 +20,7 @@ PERSONAL_ITEM_IDS = frozenset(
         "messages",
     }
 )
+GLOBAL_ITEM_IDS = frozenset({"graphs"})
 TASK_WORKSPACE_ITEM_IDS = frozenset(
     {
         "my-tasks",
@@ -36,6 +37,7 @@ FEATURE_ITEM_IDS = frozenset({"audit", "audit-calendar", "competencies", "feedba
 
 CUSTOMIZABLE_SIDEBAR_ITEM_IDS = frozenset(
     PERSONAL_ITEM_IDS
+    | GLOBAL_ITEM_IDS
     | TASK_WORKSPACE_ITEM_IDS
     | TASK_MANAGER_ITEM_IDS
     | TASK_ADMIN_ITEM_IDS
@@ -83,7 +85,7 @@ def _role_value(user: User) -> str:
 def accessible_sidebar_item_ids(user: User) -> frozenset[str]:
     """Mirror the frontend visibility rules for customizable menu entries."""
     role = _role_value(user)
-    allowed = set(PERSONAL_ITEM_IDS)
+    allowed = set(PERSONAL_ITEM_IDS | GLOBAL_ITEM_IDS)
 
     has_task_workspace = role == UserRole.admin.value or bool(user.task_workspace_enabled)
     if has_task_workspace:

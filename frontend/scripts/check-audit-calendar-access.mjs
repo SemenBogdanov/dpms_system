@@ -41,8 +41,10 @@ for (const role of ['executor', 'teamlead', 'admin']) {
               assert.equal(visible.some((item) => item.id === 'audit'), role === 'admin' || audit)
               assert.equal(access.hasTaskWorkspaceAccess(user), role === 'admin' || task)
               assert.equal(access.firstAvailablePath(user), '/messages')
+              assert.equal(visible.some((item) => item.id === 'graphs'), true)
               const menuItems = nav.defaultSidebarOrder.groups.flatMap((group) => nav.visibleItemsForButton(group, visible))
               assert.equal(menuItems.some((item) => item.id === 'audit-calendar'), enabled)
+              assert.equal(menuItems.some((item) => item.id === 'graphs'), true)
               combinations += 1
             }
           }
@@ -58,8 +60,9 @@ for (let version = 1; version <= 8; version += 1) {
     version,
     groups: [{ id: 'mine', label: 'Мое меню', item_ids: ['messages', 'quick-notes'] }],
   })
-  assert.equal(layout.version, 9)
+  assert.equal(layout.version, 10)
   assert.equal(layout.groups.flatMap((g) => g.itemIds).filter((id) => id === 'audit-calendar').length, 1)
+  assert.equal(layout.groups.flatMap((g) => g.itemIds).filter((id) => id === 'graphs').length, 1)
   assert.equal(layout.groups[0].label, 'Мое меню')
   assert.ok(layout.groups[0].itemIds.includes('quick-notes'))
   assert.deepEqual(nav.normalizeSidebarOrder(nav.sidebarOrderPayload(layout)), layout)
@@ -68,6 +71,21 @@ const deliberatelyHidden = nav.normalizeSidebarOrder({
   version: 9, groups: [{ id: 'mine', item_ids: ['messages'] }],
 })
 assert.equal(deliberatelyHidden.groups.flatMap((g) => g.itemIds).includes('audit-calendar'), false)
+assert.equal(deliberatelyHidden.groups.flatMap((g) => g.itemIds).includes('graphs'), true)
+const legacyNamedGraphsGroup = nav.normalizeSidebarOrder({
+  version: 9, groups: [{ id: 'graphs', label: 'Моя группа', item_ids: ['messages'] }],
+})
+assert.equal(legacyNamedGraphsGroup.groups.flatMap((g) => g.itemIds).filter((id) => id === 'graphs').length, 1)
+assert.equal(legacyNamedGraphsGroup.groups.find((g) => g.id === 'graphs')?.itemIds.includes('graphs'), true)
+const legacyGraphsInCustomGroup = nav.normalizeSidebarOrder({
+  version: 9, groups: [{ id: 'mine', label: 'Моя группа', item_ids: ['messages', 'graphs'] }],
+})
+assert.equal(legacyGraphsInCustomGroup.groups.length, 1)
+assert.equal(legacyGraphsInCustomGroup.groups.flatMap((g) => g.itemIds).filter((id) => id === 'graphs').length, 1)
+const currentHidden = nav.normalizeSidebarOrder({
+  version: 10, groups: [{ id: 'mine', item_ids: ['messages'] }],
+})
+assert.equal(currentHidden.groups.flatMap((g) => g.itemIds).includes('graphs'), false)
 assert.equal(nav.visibleSidebarNav({ role: 'executor', audit_calendar_enabled: true })
   .some((item) => item.id === 'audit-calendar'), true)
 const regressions = spawnSync(process.execPath, ['--test',

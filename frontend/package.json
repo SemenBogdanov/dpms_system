@@ -24,6 +24,7 @@
     "test:trackers": "playwright test --config playwright.trackers.config.ts",
     "test:note-groups": "playwright test --config playwright.note-groups.config.ts",
     "test:personal-task-form": "npm run build && playwright test --config tests/personal-task-form.config.ts",
+    "test:graphs": "npm run build && playwright test --config playwright.graphs.config.ts",
     "test:regression": "../scripts/dpms-local-regression.sh full",
     "test:regression:quick": "../scripts/dpms-local-regression.sh quick"
   },
