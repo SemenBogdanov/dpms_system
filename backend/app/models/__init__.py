@@ -50,6 +50,7 @@ from app.models.shop import ShopItem, Purchase, PeriodSnapshot, PeriodClosure
 from app.models.notification import Notification
 from app.models.email_outbox import EmailOutbox
 from app.models.web_push import WebPushDelivery, WebPushSubscription
+from app.models.graph_document import GraphDocument
 from app.models.messages import (
     CommunicationEvent,
     MessagePost,
@@ -176,6 +177,7 @@ __all__ = [
     "PeriodClosure",
     "Notification",
     "EmailOutbox",
+    "GraphDocument",
     "CommunicationEvent",
     "UserAttentionItem",
     "MessageThread",

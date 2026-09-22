@@ -208,6 +208,36 @@
       flex: 1 1 auto;
     }
 
+    .storage-button {
+      display: inline-flex;
+      height: 38px;
+      align-items: center;
+      gap: 7px;
+      padding: 0 10px;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 680;
+      white-space: nowrap;
+    }
+
+    .storage-button:hover {
+      border-color: var(--border-strong);
+      background: var(--app-bg);
+      color: var(--text);
+    }
+
+    .storage-button.system { color: var(--success); }
+    .storage-button.saving { color: var(--accent); }
+    .storage-button.offline { color: var(--warning); }
+
+    .storage-state-icon {
+      width: 16px;
+      height: 16px;
+      flex: 0 0 auto;
+      stroke: currentColor;
+    }
+
     .action-group {
       display: flex;
       align-items: center;
@@ -269,6 +299,18 @@
     .text-button.danger {
       color: var(--danger);
     }
+
+    .text-button.loading::before {
+      width: 14px;
+      height: 14px;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      content: "";
+      animation: storage-spin 700ms linear infinite;
+    }
+
+    @keyframes storage-spin { to { transform: rotate(360deg); } }
 
     .workspace {
       position: relative;
@@ -1313,6 +1355,7 @@
       max-height: calc(100vh - 130px);
       padding: 18px;
       overflow: auto;
+      overscroll-behavior: contain;
     }
 
     .dialog-actions {
@@ -1406,6 +1449,67 @@
       font-weight: 720;
       text-transform: uppercase;
     }
+
+    .graph-storage-label {
+      flex: 0 0 auto;
+      padding: 2px 6px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .graph-storage-label.system {
+      border-color: color-mix(in srgb, var(--success) 35%, var(--border));
+      background: var(--success-soft);
+      color: var(--success);
+    }
+
+    #storageDialog { width: min(590px, calc(100vw - 32px)); }
+
+    .storage-options {
+      display: grid;
+      gap: 10px;
+    }
+
+    .storage-option {
+      position: relative;
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      gap: 11px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      cursor: pointer;
+    }
+
+    .storage-option:hover { border-color: var(--border-strong); }
+    .storage-option:has(input:checked) {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+    }
+
+    .storage-option input {
+      width: 18px;
+      height: 18px;
+      margin: 2px 0 0;
+      accent-color: var(--accent);
+    }
+
+    .storage-option strong { display: block; margin-bottom: 3px; }
+    .storage-option span { color: var(--muted); font-size: 12px; line-height: 1.45; }
+
+    .storage-dialog-status {
+      min-height: 20px;
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .storage-dialog-status.error { color: var(--danger); }
 
     .graph-list-meta {
       color: var(--muted);
@@ -1582,6 +1686,8 @@
       .graph-title { width: 90px; min-width: 70px; height: 44px; padding: 0 7px; font-size: 16px; }
       .topbar .action-group { gap: 3px; }
       .topbar .icon-button { width: 44px; height: 44px; }
+      .storage-button { width: 44px; height: 44px; flex: 0 0 44px; justify-content: center; padding: 0; }
+      .storage-button-label { display: none; }
       .hide-mobile { display: none; }
       .tool-rail { top: 10px; left: 10px; }
       .tool-button { width: 44px; height: 44px; }
@@ -1675,6 +1781,7 @@
       <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
       <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2-7 4 14 2-7h6"/></symbol>
       <symbol id="i-focus" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/><circle cx="12" cy="12" r="3"/></symbol>
+      <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M17.5 19H7a5 5 0 0 1-.8-9.9A7 7 0 0 1 19.7 11 4 4 0 0 1 17.5 19z"/></symbol>
     </defs>
   </svg>
 
@@ -1688,6 +1795,10 @@
       <input id="graphTitle" class="graph-title" maxlength="80" value="Карта работы" aria-label="Название графа">
       <button id="graphManagerButton" class="icon-button" type="button" aria-label="Открыть список графов" title="Все графы">
         <svg class="icon" aria-hidden="true"><use href="#i-layers"></use></svg>
+      </button>
+      <button id="storageButton" class="storage-button" type="button" aria-label="Настроить хранение графа" title="Хранение графа">
+        <svg class="icon storage-state-icon" aria-hidden="true"><use id="storageIconUse" href="#i-folder"></use></svg>
+        <span id="storageButtonLabel" class="storage-button-label">На устройстве</span>
       </button>
       <div class="topbar-spacer"></div>
       <div class="action-group">
@@ -1909,6 +2020,32 @@
     </div>
   </dialog>
 
+  <dialog id="storageDialog" aria-labelledby="storageDialogTitle">
+    <div class="dialog-header">
+      <h2 id="storageDialogTitle">Хранение графа</h2>
+      <button class="icon-button" type="button" data-close-dialog="storageDialog" aria-label="Закрыть настройки хранения">
+        <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+      </button>
+    </div>
+    <div class="dialog-body">
+      <div class="storage-options" role="radiogroup" aria-label="Место хранения">
+        <label class="storage-option">
+          <input type="radio" name="storageMode" value="local">
+          <span><strong>На этом устройстве</strong>Граф остаётся только в текущем браузере. Экспорт JSON доступен в любой момент.</span>
+        </label>
+        <label class="storage-option">
+          <input type="radio" name="storageMode" value="system">
+          <span><strong>В системе DPMS</strong>Граф доступен после входа с других устройств. При недоступности сети локальная копия сохраняется.</span>
+        </label>
+      </div>
+      <p id="storageDialogStatus" class="storage-dialog-status" role="status" aria-live="polite"></p>
+    </div>
+    <div class="dialog-actions">
+      <button class="text-button" type="button" data-close-dialog="storageDialog">Отмена</button>
+      <button id="applyStorageButton" class="text-button primary" type="button">Применить</button>
+    </div>
+  </dialog>
+
   <dialog id="nodeEditDialog" aria-labelledby="nodeEditTitle">
     <form id="nodeEditForm" autocomplete="off">
       <div class="dialog-header">
@@ -1971,6 +2108,11 @@
       const WORKSPACE_KEY = `dpms-graphs-workspace-v2${storageSuffix}`;
       const LEGACY_STORAGE_KEY = `dpms-graphs-prototype-v1${storageSuffix}`;
       const THEME_KEY = 'dpms-graphs-theme';
+      const HOST_READY_MESSAGE = 'dpms-graphs-host-ready';
+      const WORKSPACE_READY_MESSAGE = 'dpms-graphs-workspace-ready';
+      const STORAGE_REQUEST_MESSAGE = 'dpms-graphs-storage-request';
+      const STORAGE_RESPONSE_MESSAGE = 'dpms-graphs-storage-response';
+      const MAX_CACHED_GRAPHS = 100;
       const MIN_SCALE = 0.24;
       const MAX_SCALE = 2.6;
       const SEMANTIC_ZOOM = 0.58;
@@ -2006,6 +2148,10 @@
         emptyState: document.getElementById('emptyState'),
         connectionLens: document.getElementById('connectionLens'),
         graphTitle: document.getElementById('graphTitle'),
+        storageButton: document.getElementById('storageButton'),
+        storageButtonLabel: document.getElementById('storageButtonLabel'),
+        storageIconUse: document.getElementById('storageIconUse'),
+        storageDialogStatus: document.getElementById('storageDialogStatus'),
         undoButton: document.getElementById('undoButton'),
         redoButton: document.getElementById('redoButton'),
         zoomValue: document.getElementById('zoomValue'),
@@ -2052,6 +2198,11 @@
       let edgeRenderFrame = 0;
       let pendingEdit = null;
       let storageWriteBlocked = storedWorkspaceResult.status === 'invalid';
+      let hostBridgeReady = false;
+      let serverGraphSummaries = new Map();
+      const bridgeRequests = new Map();
+      const serverSaveTimers = new Map();
+      const serverSavesInFlight = new Map();
       const corruptStorageRaw = storedWorkspaceResult.raw || '';
       syncUiFromActiveView();
 
@@ -2330,7 +2481,39 @@
       }
 
       function createWorkspace(firstGraph) {
-        return { version: 2, activeGraphId: firstGraph.id, graphs: [firstGraph] };
+        return {
+          version: 2,
+          activeGraphId: firstGraph.id,
+          graphs: [firstGraph],
+          storage: { [firstGraph.id]: localStorageMetadata() }
+        };
+      }
+
+      function localStorageMetadata() {
+        return { mode: 'local', revision: null, serverUpdatedAt: null, syncState: 'local', error: '' };
+      }
+
+      function normalizeStorageMetadata(value) {
+        if (value?.mode !== 'system') return localStorageMetadata();
+        return {
+          mode: 'system',
+          revision: Number.isInteger(value.revision) && value.revision > 0 ? value.revision : null,
+          serverUpdatedAt: typeof value.serverUpdatedAt === 'string' ? value.serverUpdatedAt : null,
+          syncState: value.syncState === 'synced' ? 'synced' : 'offline',
+          error: typeof value.error === 'string' ? value.error.slice(0, 300) : ''
+        };
+      }
+
+      function graphStorage(graphId = graph.id) {
+        workspace.storage ||= {};
+        if (!workspace.storage[graphId]) workspace.storage[graphId] = localStorageMetadata();
+        return workspace.storage[graphId];
+      }
+
+      function setGraphStorage(graphId, metadata) {
+        workspace.storage ||= {};
+        workspace.storage[graphId] = normalizeStorageMetadata(metadata);
+        return workspace.storage[graphId];
       }
 
       function loadTheme() {
@@ -2363,7 +2546,7 @@
         if (!input || typeof input !== 'object' || !Array.isArray(input.graphs) || input.graphs.length === 0) {
           throw new Error('Хранилище не содержит графы');
         }
-        if (input.graphs.length > 100) throw new Error('Количество графов превышает лимит прототипа');
+        if (input.graphs.length > MAX_CACHED_GRAPHS) throw new Error('Количество графов превышает лимит прототипа');
         const graphIds = new Set();
         const graphs = input.graphs.map((item) => {
           const normalized = normalizeGraph(item);
@@ -2372,7 +2555,12 @@
           return normalized;
         });
         const activeGraphId = graphIds.has(String(input.activeGraphId)) ? String(input.activeGraphId) : graphs[0].id;
-        return { version: 2, activeGraphId, graphs };
+        const rawStorage = input.storage && typeof input.storage === 'object' ? input.storage : {};
+        const storage = Object.fromEntries(graphs.map((item) => [
+          item.id,
+          normalizeStorageMetadata(rawStorage[item.id])
+        ]));
+        return { version: 2, activeGraphId, graphs, storage };
       }
 
       function normalizeGraph(input) {
@@ -2494,7 +2682,9 @@
         });
         return {
           version: 2,
-          id: String(input.id || uid('graph')).slice(0, 100),
+          id: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(String(input.id || ''))
+            ? String(input.id)
+            : uid('graph'),
           title: String(input.title || 'Новый граф').slice(0, 80),
           createdAt: String(input.createdAt || now),
           updatedAt: String(input.updatedAt || input.createdAt || now),
@@ -2590,21 +2780,236 @@
         return JSON.stringify(a) === JSON.stringify(b);
       }
 
-      function saveGraph() {
+      function persistWorkspace() {
         if (storageWriteBlocked) return false;
         try {
-          captureActiveViewState();
-          graph.updatedAt = new Date().toISOString();
-          const index = workspace.graphs.findIndex((item) => item.id === graph.id);
-          if (index >= 0) workspace.graphs[index] = graph;
-          else workspace.graphs.push(graph);
-          workspace.activeGraphId = graph.id;
           localStorage.setItem(WORKSPACE_KEY, JSON.stringify(workspace));
           return true;
         } catch (error) {
           toast('Не удалось сохранить граф в браузере', 'error');
           return false;
         }
+      }
+
+      function storageStateLabel(metadata) {
+        if (metadata.mode !== 'system') return 'На устройстве';
+        if (metadata.syncState === 'saving') return 'Сохраняем…';
+        if (metadata.syncState === 'offline') return 'Локальные изменения';
+        return 'В системе';
+      }
+
+      function renderStorageControl() {
+        const metadata = graphStorage();
+        refs.storageButton.classList.toggle('system', metadata.mode === 'system' && metadata.syncState === 'synced');
+        refs.storageButton.classList.toggle('saving', metadata.mode === 'system' && metadata.syncState === 'saving');
+        refs.storageButton.classList.toggle('offline', metadata.mode === 'system' && metadata.syncState === 'offline');
+        refs.storageButtonLabel.textContent = storageStateLabel(metadata);
+        refs.storageIconUse.setAttribute('href', metadata.mode === 'system' ? '#i-cloud' : '#i-folder');
+        refs.storageButton.setAttribute('aria-label', `Хранение графа: ${storageStateLabel(metadata)}`);
+      }
+
+      function requestHost(operation, details = {}) {
+        if (window.parent === window || !hostBridgeReady) {
+          return Promise.reject({ code: 'host_unavailable', message: 'Серверное хранение доступно внутри DPMS' });
+        }
+        const requestId = uid('storage-request');
+        return new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            bridgeRequests.delete(requestId);
+            reject({ code: 'network_unavailable', message: 'Сервер не ответил вовремя' });
+          }, 32000);
+          bridgeRequests.set(requestId, { resolve, reject, timeout });
+          window.parent.postMessage({
+            type: STORAGE_REQUEST_MESSAGE,
+            version: 1,
+            requestId,
+            operation,
+            ...details
+          }, window.location.origin);
+        });
+      }
+
+      async function refreshServerGraphs({ quiet = true } = {}) {
+        if (!hostBridgeReady) return;
+        try {
+          const summaries = await requestHost('list');
+          serverGraphSummaries = new Map((Array.isArray(summaries) ? summaries : []).map((item) => [item.client_id, item]));
+          for (const local of [...workspace.graphs]) {
+            const metadata = graphStorage(local.id);
+            const summary = serverGraphSummaries.get(local.id);
+            if (metadata.mode !== 'system') continue;
+            if (metadata.syncState === 'offline') {
+              scheduleSystemSave(local.id, 120);
+              continue;
+            }
+            if (metadata.syncState !== 'synced') continue;
+            if (!summary || !metadata.revision || summary.revision <= metadata.revision) continue;
+            const expectedRevision = metadata.revision;
+            const document = await requestHost('get', { clientId: local.id });
+            const currentMetadata = graphStorage(local.id);
+            if (currentMetadata.syncState !== 'synced' || currentMetadata.revision !== expectedRevision) continue;
+            const serverGraph = normalizeGraph(document.payload);
+            const index = workspace.graphs.findIndex((item) => item.id === local.id);
+            if (index < 0) continue;
+            workspace.graphs[index] = serverGraph;
+            setGraphStorage(serverGraph.id, {
+              mode: 'system', revision: document.revision, serverUpdatedAt: document.updated_at,
+              syncState: 'synced', error: ''
+            });
+            rememberServerDocument(document);
+            if (workspace.activeGraphId === serverGraph.id) {
+              graph = serverGraph;
+              resetGraphSession();
+              render();
+            }
+          }
+          persistWorkspace();
+          if (document.getElementById('graphsDialog').open) renderGraphManager();
+        } catch (error) {
+          if (!quiet) toast(error?.message || 'Не удалось получить графы из системы', 'error');
+        }
+      }
+
+      function rememberServerDocument(document) {
+        if (!document?.client_id) return;
+        serverGraphSummaries.set(document.client_id, {
+          client_id: document.client_id,
+          title: document.title,
+          revision: document.revision,
+          payload_bytes: document.payload_bytes,
+          node_count: document.node_count,
+          edge_count: document.edge_count,
+          created_at: document.created_at,
+          updated_at: document.updated_at
+        });
+      }
+
+      function preserveConflictCopy(graphId, serverDocument) {
+        const index = workspace.graphs.findIndex((item) => item.id === graphId);
+        if (index < 0 || !serverDocument?.payload) return;
+        const local = workspace.graphs[index];
+        const localCopy = deepClone(local);
+        localCopy.id = uid('graph');
+        localCopy.title = `${local.title} — локальная версия`.slice(0, 80);
+        localCopy.updatedAt = new Date().toISOString();
+        localCopy.audit = [...localCopy.audit, {
+          id: uid('audit'),
+          at: localCopy.updatedAt,
+          action: 'Сохранена локальная версия после конфликта'
+        }].slice(-200);
+        workspace.graphs[index] = localCopy;
+        delete workspace.storage[graphId];
+        setGraphStorage(localCopy.id, localStorageMetadata());
+
+        const serverGraph = normalizeGraph(serverDocument.payload);
+        const canCacheServerGraph = workspace.graphs.length < MAX_CACHED_GRAPHS;
+        if (canCacheServerGraph) {
+          workspace.graphs.push(serverGraph);
+          setGraphStorage(serverGraph.id, {
+            mode: 'system',
+            revision: serverDocument.revision,
+            serverUpdatedAt: serverDocument.updated_at,
+            syncState: 'synced',
+            error: ''
+          });
+        }
+        rememberServerDocument(serverDocument);
+        if (workspace.activeGraphId === graphId) {
+          graph = localCopy;
+          workspace.activeGraphId = localCopy.id;
+        }
+        persistWorkspace();
+        render();
+        toast(canCacheServerGraph
+          ? 'Версия в системе изменилась. Ваши правки сохранены отдельным локальным графом.'
+          : 'Версия в системе изменилась. Ваши правки сохранены локально; серверную версию можно открыть после освобождения места.', 'error');
+      }
+
+      async function syncSystemGraph(graphId) {
+        const source = workspace.graphs.find((item) => item.id === graphId);
+        const metadata = graphStorage(graphId);
+        if (!source || metadata.mode !== 'system') return null;
+        clearTimeout(serverSaveTimers.get(graphId));
+        serverSaveTimers.delete(graphId);
+        const activeRequest = serverSavesInFlight.get(graphId);
+        if (activeRequest) {
+          activeRequest.pending = true;
+          return null;
+        }
+
+        const payload = deepClone(source);
+        const serialized = JSON.stringify(payload);
+        const inFlight = { serialized, pending: false };
+        const previousSyncState = metadata.syncState;
+        serverSavesInFlight.set(graphId, inFlight);
+        metadata.syncState = 'saving';
+        metadata.error = '';
+        persistWorkspace();
+        if (graph.id === graphId) renderStorageControl();
+
+        try {
+          const document = await requestHost('put', {
+            clientId: graphId,
+            baseRevision: metadata.revision,
+            payload
+          });
+          setGraphStorage(graphId, {
+            mode: 'system',
+            revision: document.revision,
+            serverUpdatedAt: document.updated_at,
+            syncState: 'synced',
+            error: ''
+          });
+          rememberServerDocument(document);
+          persistWorkspace();
+          return document;
+        } catch (error) {
+          if (error?.status === 409 && error.serverDocument) {
+            preserveConflictCopy(graphId, error.serverDocument);
+            return null;
+          }
+          const wasOffline = previousSyncState === 'offline';
+          metadata.syncState = 'offline';
+          metadata.error = String(error?.message || 'Синхронизация недоступна').slice(0, 300);
+          persistWorkspace();
+          if (!wasOffline) toast('Граф сохранён локально. Синхронизация с DPMS не выполнена.', 'error');
+          return null;
+        } finally {
+          const requestState = serverSavesInFlight.get(graphId);
+          serverSavesInFlight.delete(graphId);
+          if (graph.id === graphId) renderStorageControl();
+          const current = workspace.graphs.find((item) => item.id === graphId);
+          if (current && graphStorage(graphId).mode === 'system' && (requestState?.pending || JSON.stringify(current) !== serialized)) {
+            scheduleSystemSave(graphId, 80);
+          }
+        }
+      }
+
+      function scheduleSystemSave(graphId, delay = 850) {
+        if (graphStorage(graphId).mode !== 'system') return;
+        clearTimeout(serverSaveTimers.get(graphId));
+        serverSaveTimers.set(graphId, setTimeout(() => {
+          serverSaveTimers.delete(graphId);
+          syncSystemGraph(graphId);
+        }, delay));
+      }
+
+      function saveGraph() {
+        if (storageWriteBlocked) return false;
+        captureActiveViewState();
+        graph.updatedAt = new Date().toISOString();
+        const index = workspace.graphs.findIndex((item) => item.id === graph.id);
+        if (index >= 0) workspace.graphs[index] = graph;
+        else workspace.graphs.push(graph);
+        workspace.activeGraphId = graph.id;
+        const saved = persistWorkspace();
+        if (saved && graphStorage().mode === 'system') {
+          graphStorage().syncState = 'saving';
+          persistWorkspace();
+          scheduleSystemSave(graph.id);
+        }
+        renderStorageControl();
+        return saved;
       }
 
       function scheduleViewportSave() {
@@ -3866,6 +4271,7 @@
         const diagnosticsButton = document.getElementById('diagnosticsButton');
         diagnosticsButton.classList.toggle('active', Boolean(ui.diagnosticNodeIds));
         diagnosticsButton.setAttribute('aria-pressed', String(Boolean(ui.diagnosticNodeIds)));
+        renderStorageControl();
       }
 
       function render() {
@@ -4229,14 +4635,15 @@
       }
 
       function renderGraphManager() {
-        refs.graphsDialogBody.innerHTML = `<ul class="graph-list">${workspace.graphs.map((item) => {
+        const localRows = workspace.graphs.map((item) => {
           const active = item.id === graph.id;
+          const metadata = graphStorage(item.id);
           const updated = new Date(item.updatedAt);
           const updatedLabel = Number.isNaN(updated.getTime()) ? 'дата не указана' : new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(updated);
           return `<li class="graph-list-row ${active ? 'active' : ''}" data-graph-id="${escapeHtml(item.id)}">
             <div class="graph-list-main">
-              <div class="graph-list-title"><span>${escapeHtml(item.title)}</span>${active ? '<span class="graph-current-label">Открыт</span>' : ''}</div>
-              <div class="graph-list-meta">${item.nodes.length} элементов · ${item.edges.length} связей · ${escapeHtml(updatedLabel)}</div>
+              <div class="graph-list-title"><span>${escapeHtml(item.title)}</span>${active ? '<span class="graph-current-label">Открыт</span>' : ''}<span class="graph-storage-label ${metadata.mode === 'system' ? 'system' : ''}">${metadata.mode === 'system' ? 'DPMS' : 'Локально'}</span></div>
+              <div class="graph-list-meta">${item.nodes.length} элементов · ${item.edges.length} связей · ${escapeHtml(updatedLabel)}${metadata.syncState === 'offline' ? ' · ожидает синхронизации' : ''}</div>
             </div>
             <div class="graph-list-actions">
               <button class="text-button" type="button" data-graph-open="${escapeHtml(item.id)}" ${active ? 'disabled' : ''}>Открыть</button>
@@ -4244,7 +4651,24 @@
               <button class="icon-button danger" type="button" data-graph-delete="${escapeHtml(item.id)}" aria-label="Удалить граф ${escapeHtml(item.title)}" title="Удалить" ${workspace.graphs.length === 1 ? 'disabled' : ''}><svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg></button>
             </div>
           </li>`;
-        }).join('')}</ul>`;
+        });
+        const serverRows = [...serverGraphSummaries.values()].filter((summary) => {
+          const local = workspace.graphs.find((item) => item.id === summary.client_id);
+          return !local || graphStorage(local.id).mode !== 'system';
+        }).map((summary) => {
+          const updated = new Date(summary.updated_at);
+          const updatedLabel = Number.isNaN(updated.getTime()) ? 'дата не указана' : new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(updated);
+          return `<li class="graph-list-row" data-server-graph-id="${escapeHtml(summary.client_id)}">
+            <div class="graph-list-main">
+              <div class="graph-list-title"><span>${escapeHtml(summary.title)}</span><span class="graph-storage-label system">DPMS</span></div>
+              <div class="graph-list-meta">${summary.node_count} элементов · ${summary.edge_count} связей · ${escapeHtml(updatedLabel)}</div>
+            </div>
+            <div class="graph-list-actions">
+              <button class="text-button" type="button" data-server-graph-open="${escapeHtml(summary.client_id)}">Открыть</button>
+            </div>
+          </li>`;
+        });
+        refs.graphsDialogBody.innerHTML = `<ul class="graph-list">${[...localRows, ...serverRows].join('')}</ul>`;
       }
 
       function openGraphManager() {
@@ -4252,6 +4676,129 @@
         saveGraph();
         renderGraphManager();
         document.getElementById('graphsDialog').showModal();
+        refreshServerGraphs();
+      }
+
+      function openStorageDialog() {
+        const metadata = graphStorage();
+        const radio = document.querySelector(`input[name="storageMode"][value="${metadata.mode}"]`);
+        if (radio) radio.checked = true;
+        refs.storageDialogStatus.classList.remove('error');
+        refs.storageDialogStatus.textContent = metadata.mode === 'system'
+          ? metadata.syncState === 'offline'
+            ? metadata.error || 'Граф сохранён локально и ожидает синхронизации.'
+            : 'Граф хранится в системе и доступен после входа с других устройств.'
+          : 'Граф хранится только в этом браузере и не отправляется на сервер.';
+        document.getElementById('storageDialog').showModal();
+      }
+
+      async function applyStorageChoice() {
+        const selected = document.querySelector('input[name="storageMode"]:checked')?.value;
+        if (!['local', 'system'].includes(selected)) return;
+        const graphId = graph.id;
+        const metadata = graphStorage(graphId);
+        const button = document.getElementById('applyStorageButton');
+        button.disabled = true;
+        button.classList.add('loading');
+        button.setAttribute('aria-busy', 'true');
+        button.textContent = selected === 'system' ? 'Сохраняем…' : 'Переключаем…';
+        refs.storageDialogStatus.classList.remove('error');
+
+        try {
+          if (selected === 'system') {
+            if (!saveGraph()) return;
+            metadata.mode = 'system';
+            metadata.syncState = 'saving';
+            metadata.error = '';
+            persistWorkspace();
+            renderStorageControl();
+            const savedDocument = await syncSystemGraph(graphId);
+            if (!savedDocument) {
+              const currentMetadata = workspace.storage[graphId];
+              if (currentMetadata?.mode === 'system' && currentMetadata.syncState === 'offline') {
+                refs.storageDialogStatus.classList.add('error');
+                refs.storageDialogStatus.textContent = currentMetadata.error || 'Синхронизация не выполнена. Локальная копия сохранена.';
+                return;
+              }
+              window.document.getElementById('storageDialog').close();
+              return;
+            }
+            window.document.getElementById('storageDialog').close();
+            toast('Граф сохранён в системе DPMS', 'success');
+            return;
+          }
+
+          if (serverSavesInFlight.has(graphId)) {
+            refs.storageDialogStatus.classList.add('error');
+            refs.storageDialogStatus.textContent = 'Дождитесь завершения текущего сохранения и повторите переключение.';
+            return;
+          }
+          clearTimeout(serverSaveTimers.get(graphId));
+          serverSaveTimers.delete(graphId);
+          if (metadata.mode === 'system' && metadata.revision) {
+            try {
+              await requestHost('delete', { clientId: graphId, baseRevision: metadata.revision });
+            } catch (error) {
+              if (error?.status !== 404) throw error;
+            }
+          }
+          serverGraphSummaries.delete(graphId);
+          setGraphStorage(graphId, localStorageMetadata());
+          persistWorkspace();
+          renderStorageControl();
+          document.getElementById('storageDialog').close();
+          toast('Граф оставлен только на этом устройстве', 'success');
+        } catch (error) {
+          refs.storageDialogStatus.classList.add('error');
+          refs.storageDialogStatus.textContent = error?.message || 'Не удалось изменить место хранения';
+        } finally {
+          button.disabled = false;
+          button.classList.remove('loading');
+          button.removeAttribute('aria-busy');
+          button.textContent = 'Применить';
+        }
+      }
+
+      async function openServerGraph(id) {
+        try {
+          flushPendingEdit();
+          if (!saveGraph()) return;
+          const cached = workspace.graphs.find((item) => item.id === id);
+          const needsAdditionalCacheEntry = !cached || graphStorage(id).mode !== 'system';
+          if (needsAdditionalCacheEntry && workspace.graphs.length >= MAX_CACHED_GRAPHS) {
+            toast('Локальный кэш содержит 100 графов. Удалите один из них, чтобы открыть граф из системы.', 'error');
+            return;
+          }
+          const document = await requestHost('get', { clientId: id });
+          const existingIndex = workspace.graphs.findIndex((item) => item.id === id);
+          if (existingIndex >= 0 && graphStorage(id).mode !== 'system') {
+            const local = workspace.graphs[existingIndex];
+            const previousId = local.id;
+            local.id = uid('graph');
+            local.title = `${local.title} — локальная версия`.slice(0, 80);
+            setGraphStorage(local.id, localStorageMetadata());
+            delete workspace.storage[previousId];
+            if (workspace.activeGraphId === previousId) workspace.activeGraphId = local.id;
+          }
+          const serverGraph = normalizeGraph(document.payload);
+          const targetIndex = workspace.graphs.findIndex((item) => item.id === serverGraph.id);
+          if (targetIndex >= 0) workspace.graphs[targetIndex] = serverGraph;
+          else workspace.graphs.push(serverGraph);
+          setGraphStorage(serverGraph.id, {
+            mode: 'system', revision: document.revision, serverUpdatedAt: document.updated_at,
+            syncState: 'synced', error: ''
+          });
+          rememberServerDocument(document);
+          graph = serverGraph;
+          workspace.activeGraphId = serverGraph.id;
+          resetGraphSession();
+          persistWorkspace();
+          render();
+          document.getElementById('graphsDialog').close();
+          refs.canvas.focus({ preventScroll: true });
+        } catch (error) {
+          toast(error?.message || 'Не удалось открыть граф из системы', 'error');
+        }
       }
 
       function switchGraph(id) {
@@ -4269,7 +4816,7 @@
       }
 
       function createNewGraph() {
-        if (workspace.graphs.length >= 100) {
+        if (workspace.graphs.length >= MAX_CACHED_GRAPHS) {
           toast('Достигнут лимит прототипа: 100 графов', 'error');
           return;
         }
@@ -4278,11 +4825,13 @@
         const previous = graph;
         const next = blankGraph(`Новый граф ${workspace.graphs.length + 1}`);
         workspace.graphs.push(next);
+        setGraphStorage(next.id, localStorageMetadata());
         workspace.activeGraphId = next.id;
         graph = next;
         resetGraphSession();
         if (!saveGraph()) {
           workspace.graphs = workspace.graphs.filter((item) => item.id !== next.id);
+          delete workspace.storage[next.id];
           graph = previous;
           workspace.activeGraphId = graph.id;
           return;
@@ -4296,7 +4845,7 @@
       }
 
       function duplicateGraph(id) {
-        if (workspace.graphs.length >= 100) {
+        if (workspace.graphs.length >= MAX_CACHED_GRAPHS) {
           toast('Достигнут лимит прототипа: 100 графов', 'error');
           return;
         }
@@ -4310,21 +4859,43 @@
         copy.updatedAt = now;
         copy.audit = [...copy.audit, { id: uid('audit'), at: now, action: `Создана копия графа «${source.title}»` }].slice(-200);
         workspace.graphs.push(copy);
+        setGraphStorage(copy.id, localStorageMetadata());
         if (!saveGraph()) {
           workspace.graphs = workspace.graphs.filter((item) => item.id !== copy.id);
+          delete workspace.storage[copy.id];
           return;
         }
         renderGraphManager();
         toast('Копия графа создана', 'success');
       }
 
-      function deleteGraph(id) {
+      async function deleteGraph(id) {
         const target = workspace.graphs.find((item) => item.id === id);
         if (!target || workspace.graphs.length === 1) return;
+        if (serverSavesInFlight.has(id)) {
+          toast('Дождитесь завершения текущего сохранения и повторите удаление.', 'error');
+          return;
+        }
         if (!confirm(`Удалить граф «${target.title}»? Это действие нельзя отменить.`)) return;
+        const metadata = graphStorage(id);
+        clearTimeout(serverSaveTimers.get(id));
+        serverSaveTimers.delete(id);
+        if (metadata.mode === 'system' && metadata.revision) {
+          try {
+            await requestHost('delete', { clientId: id, baseRevision: metadata.revision });
+            serverGraphSummaries.delete(id);
+          } catch (error) {
+            if (error?.status !== 404) {
+              toast(error?.message || 'Не удалось удалить граф из системы', 'error');
+              return;
+            }
+          }
+        }
         const previousGraphs = workspace.graphs;
         const previousGraph = graph;
+        const previousStorage = deepClone(workspace.storage);
         workspace.graphs = workspace.graphs.filter((item) => item.id !== id);
+        delete workspace.storage[id];
         if (graph.id === id) {
           graph = workspace.graphs[0];
           workspace.activeGraphId = graph.id;
@@ -4333,6 +4904,7 @@
         }
         if (!saveGraph()) {
           workspace.graphs = previousGraphs;
+          workspace.storage = previousStorage;
           graph = previousGraph;
           workspace.activeGraphId = graph.id;
           render();
@@ -4574,29 +5146,33 @@
         if (!file) return;
         try {
           if (file.size > 5 * 1024 * 1024) throw new Error('Файл превышает лимит 5 МБ');
+          if (workspace.graphs.length >= MAX_CACHED_GRAPHS) {
+            throw new Error('Достигнут лимит прототипа: 100 графов');
+          }
           const parsed = JSON.parse(await file.text());
           const adapted = adaptImportedGraph(parsed, file.name);
           const imported = normalizeGraph(adapted.graph);
           flushPendingEdit();
-          const before = fullGraphSnapshot();
-          const previousSelection = ui.selection;
-          const previousSelectedNodeIds = new Set(ui.selectedNodeIds);
-          imported.id = graph.id;
-          imported.createdAt = graph.createdAt;
+          const previous = graph;
+          const now = new Date().toISOString();
+          imported.id = uid('graph');
+          imported.createdAt = now;
+          imported.updatedAt = now;
           graph = imported;
-          clearSelection();
-          syncUiFromActiveView();
+          workspace.graphs.push(imported);
+          workspace.activeGraphId = imported.id;
+          setGraphStorage(imported.id, localStorageMetadata());
+          resetGraphSession();
           audit(`Импортирован файл «${file.name}»`);
           if (!saveGraph()) {
-            restoreFullSnapshot(before);
-            ui.selection = previousSelection;
-            ui.selectedNodeIds = previousSelectedNodeIds;
+            workspace.graphs = workspace.graphs.filter((item) => item.id !== imported.id);
+            delete workspace.storage[imported.id];
+            graph = previous;
+            workspace.activeGraphId = previous.id;
+            resetGraphSession();
             render();
             return;
           }
-          ui.undoStack.push({ label: 'Импортирован граф', snapshot: before, full: true });
-          ui.undoStack = ui.undoStack.slice(-80);
-          ui.redoStack = [];
           render();
           fitGraph();
           toast(adapted.format === 'cubes'
@@ -5072,6 +5648,8 @@
         document.getElementById('themeButton').addEventListener('click', toggleTheme);
         document.getElementById('togglePanelsButton').addEventListener('click', togglePanels);
         document.getElementById('graphManagerButton').addEventListener('click', openGraphManager);
+        refs.storageButton.addEventListener('click', openStorageDialog);
+        document.getElementById('applyStorageButton').addEventListener('click', applyStorageChoice);
         document.getElementById('helpButton').addEventListener('click', () => document.getElementById('helpDialog').showModal());
         document.getElementById('historyButton').addEventListener('click', () => {
           renderHistory();
@@ -5110,9 +5688,11 @@
         });
         refs.graphsDialogBody.addEventListener('click', (event) => {
           const openButton = event.target.closest('[data-graph-open]');
+          const serverOpenButton = event.target.closest('[data-server-graph-open]');
           const duplicateButton = event.target.closest('[data-graph-duplicate]');
           const deleteButton = event.target.closest('[data-graph-delete]');
           if (openButton) switchGraph(openButton.dataset.graphOpen);
+          if (serverOpenButton) openServerGraph(serverOpenButton.dataset.serverGraphOpen);
           if (duplicateButton) duplicateGraph(duplicateButton.dataset.graphDuplicate);
           if (deleteButton) deleteGraph(deleteButton.dataset.graphDelete);
         });
@@ -5172,12 +5752,24 @@
       syncResponsivePanels();
       const notifyHostReady = () => {
         if (window.parent === window) return;
-        window.parent.postMessage({ type: 'dpms-graphs-workspace-ready', version: 1 }, '*');
+        window.parent.postMessage({ type: WORKSPACE_READY_MESSAGE, version: 1 }, window.location.origin);
       };
       window.addEventListener('message', (event) => {
+        if (event.origin !== window.location.origin) return;
         if (event.source !== window.parent) return;
-        if (event.data?.type !== 'dpms-graphs-host-ready' || event.data?.version !== 1) return;
+        if (event.data?.type === STORAGE_RESPONSE_MESSAGE && event.data?.version === 1) {
+          const request = bridgeRequests.get(event.data.requestId);
+          if (!request) return;
+          clearTimeout(request.timeout);
+          bridgeRequests.delete(event.data.requestId);
+          if (event.data.ok) request.resolve(event.data.data);
+          else request.reject(event.data.error || { code: 'storage_error', message: 'Ошибка серверного хранилища' });
+          return;
+        }
+        if (event.data?.type !== HOST_READY_MESSAGE || event.data?.version !== 1) return;
+        hostBridgeReady = true;
         notifyHostReady();
+        refreshServerGraphs();
       });
       requestAnimationFrame(() => {
         if (storedWorkspaceResult.status === 'missing') {

@@ -1,12 +1,37 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { ApiError, ApiUnavailableError } from '@/api/client'
+import { graphsApi, type GraphDocument, type GraphPayload } from '@/api/graphs'
 
 type FrameState = 'loading' | 'ready' | 'error'
 
 const LOAD_TIMEOUT_MS = 12_000
 const HOST_READY_MESSAGE = 'dpms-graphs-host-ready'
 const WORKSPACE_READY_MESSAGE = 'dpms-graphs-workspace-ready'
+const STORAGE_REQUEST_MESSAGE = 'dpms-graphs-storage-request'
+const STORAGE_RESPONSE_MESSAGE = 'dpms-graphs-storage-response'
+
+type StorageOperation = 'list' | 'get' | 'put' | 'delete'
+
+type StorageRequest = {
+  type: typeof STORAGE_REQUEST_MESSAGE
+  version: 1
+  requestId: string
+  operation: StorageOperation
+  clientId?: string
+  baseRevision?: number | null
+  payload?: GraphPayload
+}
+
+function isStorageRequest(value: unknown): value is StorageRequest {
+  if (!value || typeof value !== 'object') return false
+  const request = value as Partial<StorageRequest>
+  return request.type === STORAGE_REQUEST_MESSAGE
+    && request.version === 1
+    && typeof request.requestId === 'string'
+    && ['list', 'get', 'put', 'delete'].includes(request.operation || '')
+}
 
 export function GraphsPage() {
   const { user } = useAuth()
@@ -21,10 +46,70 @@ export function GraphsPage() {
   }, [frameState, revision])
 
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
+    const sendToWorkspace = (message: object) => {
+      frameRef.current?.contentWindow?.postMessage(message, window.location.origin)
+    }
+
+    const handleMessage = async (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return
       if (event.source !== frameRef.current?.contentWindow) return
-      if (event.data?.type !== WORKSPACE_READY_MESSAGE || event.data?.version !== 1) return
-      setFrameState('ready')
+      if (event.data?.type === WORKSPACE_READY_MESSAGE && event.data?.version === 1) {
+        setFrameState('ready')
+        return
+      }
+      if (!isStorageRequest(event.data)) return
+
+      const request = event.data
+      try {
+        let data: unknown
+        if (request.operation === 'list') {
+          data = await graphsApi.list()
+        } else if (request.operation === 'get' && request.clientId) {
+          data = await graphsApi.get(request.clientId)
+        } else if (request.operation === 'put' && request.clientId && request.payload) {
+          data = await graphsApi.put(
+            request.clientId,
+            typeof request.baseRevision === 'number' ? request.baseRevision : null,
+            request.payload
+          )
+        } else if (
+          request.operation === 'delete'
+          && request.clientId
+          && typeof request.baseRevision === 'number'
+        ) {
+          data = await graphsApi.delete(request.clientId, request.baseRevision)
+        } else {
+          throw new Error('Некорректный запрос хранилища графов')
+        }
+        sendToWorkspace({
+          type: STORAGE_RESPONSE_MESSAGE,
+          version: 1,
+          requestId: request.requestId,
+          ok: true,
+          data,
+        })
+      } catch (error) {
+        let serverDocument: GraphDocument | null = null
+        if (error instanceof ApiError && error.status === 409 && request.clientId) {
+          serverDocument = await graphsApi.get(request.clientId).catch(() => null)
+        }
+        sendToWorkspace({
+          type: STORAGE_RESPONSE_MESSAGE,
+          version: 1,
+          requestId: request.requestId,
+          ok: false,
+          error: {
+            status: error instanceof ApiError ? error.status : 0,
+            code: error instanceof ApiError
+              ? error.code || 'api_error'
+              : error instanceof ApiUnavailableError
+                ? 'network_unavailable'
+                : 'storage_error',
+            message: error instanceof Error ? error.message : 'Не удалось выполнить операцию',
+            serverDocument,
+          },
+        })
+      }
     }
 
     window.addEventListener('message', handleMessage)
@@ -32,7 +117,10 @@ export function GraphsPage() {
   }, [revision])
 
   const handleLoad = () => {
-    frameRef.current?.contentWindow?.postMessage({ type: HOST_READY_MESSAGE, version: 1 }, '*')
+    frameRef.current?.contentWindow?.postMessage(
+      { type: HOST_READY_MESSAGE, version: 1 },
+      window.location.origin
+    )
   }
 
   const reload = () => {
