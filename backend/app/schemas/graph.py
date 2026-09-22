@@ -28,7 +28,18 @@ class GraphPosition(StrictInput):
 
 class GraphNode(StrictInput):
     id: str = Field(min_length=1, max_length=100)
-    type: Literal["message", "personal", "queue", "note", "reminder", "tracker", "custom"]
+    type: Literal[
+        "sticker",
+        "list",
+        "atom",
+        "message",
+        "personal",
+        "queue",
+        "note",
+        "reminder",
+        "tracker",
+        "custom",
+    ]
     title: str = Field(min_length=1, max_length=180)
     customTypeLabel: str = Field(default="", max_length=60)
     sourceRef: str = Field(default="", max_length=300)
@@ -36,10 +47,21 @@ class GraphNode(StrictInput):
     shape: Literal["square", "rounded", "circle"]
     radius: float = Field(ge=0, le=36, allow_inf_nan=False)
     scale: float = Field(ge=0.5, le=2, allow_inf_nan=False)
+    autoSize: bool = True
+    width: float = Field(default=224, ge=96, le=1200, allow_inf_nan=False)
+    height: float = Field(default=108, ge=64, le=900, allow_inf_nan=False)
+    items: list[str] = Field(default_factory=list, max_length=200)
     pinned: bool = False
     color: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
     x: float = Field(ge=-100000, le=100000, allow_inf_nan=False)
     y: float = Field(ge=-100000, le=100000, allow_inf_nan=False)
+
+    @field_validator("items")
+    @classmethod
+    def valid_items(cls, value: list[str]) -> list[str]:
+        if any(not item or len(item) > 180 for item in value):
+            raise ValueError("Элементы списка должны содержать от 1 до 180 символов")
+        return value
 
 
 class GraphEdge(StrictInput):
@@ -47,6 +69,8 @@ class GraphEdge(StrictInput):
     source: str = Field(min_length=1, max_length=100)
     target: str = Field(min_length=1, max_length=100)
     label: str = Field(min_length=1, max_length=80)
+    routing: Literal["curve", "orthogonal", "straight"] = "curve"
+    points: list[GraphPosition] = Field(default_factory=list, max_length=20)
 
 
 class GraphGroup(StrictInput):
@@ -81,7 +105,7 @@ class GraphAuditEntry(StrictInput):
 
 
 class GraphPayload(StrictInput):
-    version: Literal[2]
+    version: Literal[2, 3]
     id: str = Field(pattern=CLIENT_ID_PATTERN)
     title: str = Field(min_length=1, max_length=80)
     createdAt: datetime

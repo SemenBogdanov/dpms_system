@@ -144,6 +144,52 @@ class GraphStorageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(deleted.json(), {"deleted": True, "client_id": payload["id"]})
         self.assertEqual((await self.client.get("/api/graphs")).json(), [])
 
+    async def test_version_3_interaction_fields_round_trip(self):
+        payload = graph_payload(client_id="graph-v3", title="Интерактивный граф")
+        payload["version"] = 3
+        payload["nodes"] = [
+            {
+                **payload["nodes"][0],
+                "type": "list",
+                "autoSize": False,
+                "width": 320,
+                "height": 180,
+                "items": ["Первый атом", "Второй атом"],
+            },
+            {
+                **payload["nodes"][0],
+                "id": "node-2",
+                "type": "atom",
+                "title": "Первый атом",
+                "x": 420,
+                "autoSize": True,
+                "width": 190,
+                "height": 96,
+                "items": [],
+            },
+        ]
+        payload["edges"] = [
+            {
+                "id": "edge-1",
+                "source": "node-1",
+                "target": "node-2",
+                "label": "атом",
+                "routing": "orthogonal",
+                "points": [{"x": 300, "y": 80}, {"x": 360, "y": 80}],
+            }
+        ]
+        payload["views"][0]["positions"]["node-2"] = {"x": 420, "y": 20}
+
+        created = await self.put(payload)
+
+        self.assertEqual(created.status_code, 200, created.text)
+        saved = created.json()["payload"]
+        self.assertEqual(saved["version"], 3)
+        self.assertEqual(saved["nodes"][0]["items"], ["Первый атом", "Второй атом"])
+        self.assertEqual(saved["nodes"][0]["width"], 320)
+        self.assertEqual(saved["edges"][0]["routing"], "orthogonal")
+        self.assertEqual(saved["edges"][0]["points"][1], {"x": 360.0, "y": 80.0})
+
     async def test_identical_retry_is_idempotent_but_stale_change_conflicts(self):
         payload = graph_payload()
         first = await self.put(payload)

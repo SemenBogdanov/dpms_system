@@ -541,6 +541,10 @@
       cursor: crosshair;
     }
 
+    .canvas.mode-sticker {
+      cursor: cell;
+    }
+
     .world {
       position: absolute;
       left: 0;
@@ -804,6 +808,123 @@
       transition: opacity 140ms ease-out, filter 140ms ease-out, border-color 140ms ease-out, box-shadow 140ms ease-out;
     }
 
+    .graph-node.manual-size {
+      min-height: 0;
+    }
+
+    .graph-node.sticker {
+      grid-template-rows: minmax(0, 1fr);
+      min-height: 76px;
+      padding: 14px;
+      border: 1px solid color-mix(in srgb, var(--node-color) 62%, var(--border));
+      border-radius: var(--node-radius, 4px);
+      background: color-mix(in srgb, var(--node-color) 30%, var(--panel));
+      box-shadow: 0 5px 14px rgb(23 31 45 / 12%);
+    }
+
+    html[data-theme="dark"] .graph-node.sticker {
+      background: color-mix(in srgb, var(--node-color) 24%, var(--panel));
+    }
+
+    .graph-node.sticker .node-topline,
+    .graph-node.sticker .node-ref {
+      display: none;
+    }
+
+    .graph-node.sticker .node-title {
+      display: block;
+      align-self: start;
+      font-size: 16px;
+      line-height: 1.35;
+      -webkit-line-clamp: initial;
+    }
+
+    .node-list-items {
+      display: grid;
+      gap: 4px;
+      margin: 8px 0 0;
+      padding: 0 0 0 17px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .node-list-more {
+      list-style: none;
+      color: var(--subtle);
+    }
+
+    .resize-handle {
+      position: absolute;
+      z-index: 6;
+      display: block;
+      width: 24px;
+      height: 24px;
+      border: 0;
+      background: transparent;
+      pointer-events: auto;
+    }
+
+    .resize-handle::after {
+      position: absolute;
+      top: 7px;
+      left: 7px;
+      width: 10px;
+      height: 10px;
+      border: 2px solid var(--panel);
+      border-radius: 3px;
+      background: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent);
+      content: '';
+    }
+
+    .resize-handle.e { top: calc(50% - 12px); right: -8px; cursor: ew-resize; }
+    .resize-handle.s { bottom: -8px; left: calc(50% - 12px); cursor: ns-resize; }
+    .resize-handle.se { right: -8px; bottom: -8px; cursor: nwse-resize; }
+
+    .inline-node-editor {
+      position: absolute;
+      z-index: 12;
+      min-width: 150px;
+      min-height: 42px;
+      padding: 10px 11px;
+      border: 2px solid var(--accent);
+      border-radius: 5px;
+      outline: none;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      color: var(--text);
+      font: 700 15px/1.35 inherit;
+      resize: none;
+      transform-origin: 0 0;
+    }
+
+    .selection-marquee {
+      position: absolute;
+      z-index: 10;
+      border: 1px solid var(--accent);
+      background: color-mix(in srgb, var(--accent) 11%, transparent);
+      pointer-events: none;
+    }
+
+    .graph-node.magnet-target {
+      box-shadow: 0 0 0 5px color-mix(in srgb, var(--success) 30%, transparent), 0 8px 22px rgb(23 31 45 / 18%);
+    }
+
+    .edge-control-point {
+      fill: var(--panel);
+      stroke: var(--accent);
+      stroke-width: 2;
+      vector-effect: non-scaling-stroke;
+      cursor: move;
+      pointer-events: all;
+    }
+
+    .canvas.semantic-compact .resize-handle,
+    .canvas.semantic-compact .node-list-items {
+      display: none;
+    }
+
     html[data-theme="dark"] .graph-node {
       background: color-mix(in srgb, var(--node-color) 7%, var(--panel));
       box-shadow: 0 5px 16px rgb(0 0 0 / 24%);
@@ -1020,76 +1141,6 @@
       margin-bottom: 7px;
       color: var(--text);
       font-size: 18px;
-    }
-
-    .connection-lens {
-      position: absolute;
-      z-index: 7;
-      top: 16px;
-      right: 16px;
-      display: grid;
-      width: min(330px, calc(100% - 92px));
-      gap: 9px;
-      padding: 12px 14px;
-      overflow: hidden;
-      border: 1px solid color-mix(in srgb, var(--lens-color, var(--accent)) 52%, var(--border));
-      border-left: 4px solid var(--lens-color, var(--accent));
-      border-radius: 8px;
-      background: color-mix(in srgb, var(--panel-strong) 94%, transparent);
-      box-shadow: var(--shadow);
-      color: var(--text);
-      pointer-events: none;
-      transition: opacity 140ms ease-out, transform 140ms ease-out;
-    }
-
-    .connection-lens-heading {
-      display: grid;
-      min-width: 0;
-      gap: 3px;
-    }
-
-    .connection-lens-type {
-      overflow: hidden;
-      color: var(--muted);
-      font-size: 10px;
-      font-weight: 760;
-      text-overflow: ellipsis;
-      text-transform: uppercase;
-      white-space: nowrap;
-    }
-
-    .connection-lens-title {
-      overflow: hidden;
-      font-size: 14px;
-      font-weight: 760;
-      line-height: 1.3;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .connection-lens-counts {
-      display: flex;
-      min-width: 0;
-      align-items: center;
-      gap: 12px;
-      color: var(--muted);
-      font-size: 11px;
-      font-variant-numeric: tabular-nums;
-    }
-
-    .connection-lens-counts strong {
-      margin-right: 3px;
-      color: var(--text);
-      font-size: 13px;
-    }
-
-    .connection-lens-relations {
-      overflow: hidden;
-      color: var(--subtle);
-      font-size: 10px;
-      line-height: 1.35;
-      text-overflow: ellipsis;
-      white-space: nowrap;
     }
 
     .canvas-status {
@@ -1524,6 +1575,72 @@
 
     #graphsDialog { width: min(720px, calc(100vw - 32px)); }
 
+    #hierarchyDialog { width: min(700px, calc(100vw - 32px)); }
+    #shortcutDialog { width: min(680px, calc(100vw - 32px)); }
+
+    .hierarchy-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 180px;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .hierarchy-preview {
+      display: grid;
+      gap: 7px;
+      min-height: 120px;
+      padding: 11px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--app-bg);
+      color: var(--muted);
+      font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .hierarchy-preview.error { border-color: var(--danger); color: var(--danger); }
+
+    .shortcut-settings {
+      display: grid;
+      gap: 0;
+    }
+
+    .shortcut-setting-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 150px;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .shortcut-setting-row:last-child { border-bottom: 0; }
+
+    .shortcut-capture {
+      width: 100%;
+      min-height: 36px;
+      font: 600 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .shortcut-capture.recording {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .graph-list-section-title {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 8px 0 4px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 760;
+      text-transform: uppercase;
+    }
+
+    .graph-list-section-title:not(:first-child) { margin-top: 22px; }
+
     #diagnosticsDialog { width: min(820px, calc(100vw - 32px)); }
 
     .diagnostics-summary {
@@ -1717,10 +1834,12 @@
       .connection-lens-relations { display: none; }
       .toast-region { right: 12px; bottom: calc(48px + env(safe-area-inset-bottom)); left: 12px; width: auto; }
       .graph-list-row { grid-template-columns: minmax(0, 1fr); gap: 9px; }
-      .graph-list-actions { display: grid; grid-template-columns: 1fr 44px 44px; }
+      .graph-list-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; }
       .graph-list-actions .text-button { width: 100%; }
       .diagnostics-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .diagnostic-list { grid-template-columns: minmax(0, 1fr); }
+      .hierarchy-grid { grid-template-columns: minmax(0, 1fr); }
+      .shortcut-setting-row { grid-template-columns: minmax(0, 1fr); }
     }
 
     @media (max-width: 360px) {
@@ -1782,6 +1901,11 @@
       <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2-7 4 14 2-7h6"/></symbol>
       <symbol id="i-focus" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/><circle cx="12" cy="12" r="3"/></symbol>
       <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M17.5 19H7a5 5 0 0 1-.8-9.9A7 7 0 0 1 19.7 11 4 4 0 0 1 17.5 19z"/></symbol>
+      <symbol id="i-sticker" viewBox="0 0 24 24"><path d="M4 3h16v12l-6 6H4z"/><path d="M14 21v-6h6"/></symbol>
+      <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></symbol>
+      <symbol id="i-atom" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><ellipse cx="12" cy="12" rx="9" ry="4"/><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="9" ry="4" transform="rotate(120 12 12)"/></symbol>
+      <symbol id="i-tree" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="17" width="6" height="5" rx="1"/><rect x="16" y="17" width="6" height="5" rx="1"/><path d="M12 7v5M5 17v-5h14v5"/></symbol>
+      <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M7 16h10"/></symbol>
     </defs>
   </svg>
 
@@ -1796,7 +1920,7 @@
       <button id="graphManagerButton" class="icon-button" type="button" aria-label="Открыть список графов" title="Все графы">
         <svg class="icon" aria-hidden="true"><use href="#i-layers"></use></svg>
       </button>
-      <button id="storageButton" class="storage-button" type="button" aria-label="Настроить хранение графа" title="Хранение графа">
+      <button id="storageButton" class="storage-button" type="button" aria-label="Открыть список локальных графов и облачных снимков" title="Локальные графы и снимки DPMS">
         <svg class="icon storage-state-icon" aria-hidden="true"><use id="storageIconUse" href="#i-folder"></use></svg>
         <span id="storageButtonLabel" class="storage-button-label">На устройстве</span>
       </button>
@@ -1882,12 +2006,18 @@
           <button class="tool-button" type="button" data-mode="connect" aria-label="Создать связь" title="Создать связь (L)">
             <svg class="icon" aria-hidden="true"><use href="#i-link"></use></svg>
           </button>
+          <button class="tool-button" type="button" data-mode="sticker" aria-label="Создать стикер" title="Стикер (S)">
+            <svg class="icon" aria-hidden="true"><use href="#i-sticker"></use></svg>
+          </button>
           <div class="tool-separator" aria-hidden="true"></div>
           <button id="railAddButton" class="tool-button" type="button" aria-label="Добавить элемент в центр" title="Добавить элемент">
             <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
           </button>
           <button id="railArrangeButton" class="tool-button" type="button" aria-label="Упорядочить и показать весь граф" title="Упорядочить и показать весь граф (Shift + 0)">
             <svg class="icon" aria-hidden="true"><use href="#i-layout"></use></svg>
+          </button>
+          <button id="hierarchyButton" class="tool-button" type="button" aria-label="Мастер иерархий" title="Мастер иерархий">
+            <svg class="icon" aria-hidden="true"><use href="#i-tree"></use></svg>
           </button>
           <button id="diagnosticsButton" class="tool-button" type="button" aria-label="Диагностика графа" title="Диагностика графа">
             <svg class="icon" aria-hidden="true"><use href="#i-activity"></use></svg>
@@ -1920,7 +2050,8 @@
           <div id="emptyState" class="canvas-empty" hidden>
             <strong>Пустой граф</strong>
           </div>
-          <aside id="connectionLens" class="connection-lens" role="status" aria-live="polite" aria-atomic="true" hidden></aside>
+          <div id="selectionMarquee" class="selection-marquee" hidden aria-hidden="true"></div>
+          <textarea id="inlineNodeEditor" class="inline-node-editor" maxlength="180" hidden aria-label="Название стикера"></textarea>
         </div>
 
         <footer class="canvas-status">
@@ -1955,23 +2086,11 @@
     </div>
     <div class="dialog-body">
       <p class="help-intro">Жесты ускоряют работу, но все основные действия также доступны через панели и кнопки.</p>
-      <div class="shortcut-list">
-        <div class="shortcut-row"><span>Создать элемент</span><kbd>двойной клик</kbd></div>
-        <div class="shortcut-row"><span>Редактировать элемент</span><kbd>двойной клик / Enter</kbd></div>
-        <div class="shortcut-row"><span>Создать связь</span><kbd>Shift + drag</kbd></div>
-        <div class="shortcut-row"><span>Создать дочерний элемент</span><kbd>Shift + Tab</kbd></div>
-        <div class="shortcut-row"><span>Добавить к выделению</span><kbd>Ctrl/⌘ + клик</kbd></div>
-        <div class="shortcut-row"><span>Выбрать все элементы</span><kbd>Ctrl/⌘ A</kbd></div>
-        <div class="shortcut-row"><span>Масштаб</span><kbd>Shift + колесо</kbd></div>
-        <div class="shortcut-row"><span>Переместить холст</span><kbd>пробел + drag</kbd></div>
-        <div class="shortcut-row"><span>Отменить</span><kbd>Ctrl/⌘ Z</kbd></div>
-        <div class="shortcut-row"><span>Повторить</span><kbd>Ctrl/⌘ ⇧ Z</kbd></div>
-        <div class="shortcut-row"><span>Удалить выбранное</span><kbd>Delete</kbd></div>
-        <div class="shortcut-row"><span>Показать весь граф</span><kbd>0</kbd></div>
-        <div class="shortcut-row"><span>Упорядочить и показать граф</span><kbd>Shift + 0</kbd></div>
-        <div class="shortcut-row"><span>Скрыть боковые панели</span><kbd>Ctrl/⌘ \</kbd></div>
-        <div class="shortcut-row"><span>Закрыть / отменить режим</span><kbd>Esc</kbd></div>
-      </div>
+      <div id="shortcutHelpList" class="shortcut-list"></div>
+    </div>
+    <div class="dialog-actions">
+      <button id="openShortcutSettingsButton" class="text-button" type="button"><svg class="icon" aria-hidden="true"><use href="#i-keyboard"></use></svg>Настроить сочетания</button>
+      <button class="text-button primary" type="button" data-close-dialog="helpDialog">Готово</button>
     </div>
   </dialog>
 
@@ -2020,30 +2139,37 @@
     </div>
   </dialog>
 
-  <dialog id="storageDialog" aria-labelledby="storageDialogTitle">
+  <dialog id="hierarchyDialog" aria-labelledby="hierarchyDialogTitle">
+    <form id="hierarchyForm" autocomplete="off">
+      <div class="dialog-header">
+        <h2 id="hierarchyDialogTitle">Мастер иерархий</h2>
+        <button class="icon-button" type="button" data-close-dialog="hierarchyDialog" aria-label="Закрыть мастер"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
+      </div>
+      <div class="dialog-body hierarchy-grid">
+        <div>
+          <div class="field"><label for="hierarchySource">Структура</label><textarea id="hierarchySource" rows="12" placeholder="Проект&#10;\tИсследование&#10;\t\tИнтервью&#10;\tРеализация"></textarea></div>
+          <p class="field-hint">Enter создаёт строку. Tab в начале строки меняет уровень, после текста — переходит к параметрам. Ctrl/⌘ + Enter строит граф.</p>
+        </div>
+        <div>
+          <div class="field"><label for="hierarchyNodeType">Тип элементов</label><select id="hierarchyNodeType"><option value="atom">Атомы</option><option value="sticker">Стикеры</option><option value="custom">Свои сущности</option></select></div>
+          <div id="hierarchyPreview" class="hierarchy-preview" aria-live="polite">Введите структуру слева.</div>
+        </div>
+      </div>
+      <div class="dialog-actions"><button class="text-button" type="button" data-close-dialog="hierarchyDialog">Отмена</button><button class="text-button primary" type="submit">Построить граф</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="shortcutDialog" aria-labelledby="shortcutDialogTitle">
     <div class="dialog-header">
-      <h2 id="storageDialogTitle">Хранение графа</h2>
-      <button class="icon-button" type="button" data-close-dialog="storageDialog" aria-label="Закрыть настройки хранения">
-        <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
-      </button>
+      <h2 id="shortcutDialogTitle">Горячие клавиши</h2>
+      <button class="icon-button" type="button" data-close-dialog="shortcutDialog" aria-label="Закрыть настройки"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
     </div>
     <div class="dialog-body">
-      <div class="storage-options" role="radiogroup" aria-label="Место хранения">
-        <label class="storage-option">
-          <input type="radio" name="storageMode" value="local">
-          <span><strong>На этом устройстве</strong>Граф остаётся только в текущем браузере. Экспорт JSON доступен в любой момент.</span>
-        </label>
-        <label class="storage-option">
-          <input type="radio" name="storageMode" value="system">
-          <span><strong>В системе DPMS</strong>Граф доступен после входа с других устройств. При недоступности сети локальная копия сохраняется.</span>
-        </label>
-      </div>
-      <p id="storageDialogStatus" class="storage-dialog-status" role="status" aria-live="polite"></p>
+      <p class="help-intro">Нажмите на сочетание, затем введите новое. Системные сочетания браузера использовать нельзя.</p>
+      <div id="shortcutSettings" class="shortcut-settings"></div>
+      <p id="shortcutSettingsMessage" class="field-message" aria-live="polite"></p>
     </div>
-    <div class="dialog-actions">
-      <button class="text-button" type="button" data-close-dialog="storageDialog">Отмена</button>
-      <button id="applyStorageButton" class="text-button primary" type="button">Применить</button>
-    </div>
+    <div class="dialog-actions"><button id="resetShortcutsButton" class="text-button" type="button">Сбросить</button><button class="text-button primary" type="button" data-close-dialog="shortcutDialog">Готово</button></div>
   </dialog>
 
   <dialog id="nodeEditDialog" aria-labelledby="nodeEditTitle">
@@ -2105,18 +2231,26 @@
 
       const storageOwner = (new URLSearchParams(window.location.search).get('owner') || '').trim().slice(0, 128);
       const storageSuffix = storageOwner ? `:${storageOwner}` : '';
-      const WORKSPACE_KEY = `dpms-graphs-workspace-v2${storageSuffix}`;
+      const WORKSPACE_KEY = `dpms-graphs-workspace-v3${storageSuffix}`;
+      const LEGACY_WORKSPACE_KEY = `dpms-graphs-workspace-v2${storageSuffix}`;
       const LEGACY_STORAGE_KEY = `dpms-graphs-prototype-v1${storageSuffix}`;
       const THEME_KEY = 'dpms-graphs-theme';
+      const SHORTCUTS_KEY = `dpms-graphs-shortcuts-v1${storageSuffix}`;
       const HOST_READY_MESSAGE = 'dpms-graphs-host-ready';
       const WORKSPACE_READY_MESSAGE = 'dpms-graphs-workspace-ready';
       const STORAGE_REQUEST_MESSAGE = 'dpms-graphs-storage-request';
       const STORAGE_RESPONSE_MESSAGE = 'dpms-graphs-storage-response';
       const MAX_CACHED_GRAPHS = 100;
+      const MAX_GRAPH_NODES = 1500;
+      const MAX_GRAPH_EDGES = 3000;
+      const MAX_LOCAL_GRAPH_BYTES = 5 * 1024 * 1024;
       const MIN_SCALE = 0.24;
       const MAX_SCALE = 2.6;
       const SEMANTIC_ZOOM = 0.58;
       const TYPE_CONFIG = {
+        sticker: { label: 'Стикер', icon: 'sticker', color: '#F3C969' },
+        list: { label: 'Список', icon: 'list', color: '#3A7D80' },
+        atom: { label: 'Атом', icon: 'atom', color: '#2F6BFF' },
         message: { label: 'Сообщение', icon: 'message', color: '#0F8B8D' },
         personal: { label: 'Личная задача', icon: 'task', color: '#16845B' },
         queue: { label: 'Q-задача', icon: 'queue', color: '#C96812' },
@@ -2131,6 +2265,21 @@
         circle: { label: 'Круг', radius: 50 }
       };
       const COLORS = ['#2F6BFF', '#0F8B8D', '#16845B', '#C96812', '#7C55C7', '#D13F63', '#C2410C', '#667085'];
+      const SHORTCUT_DEFAULTS = {
+        hierarchy: { label: 'Мастер иерархий', value: 'mod+shift+h' },
+        child: { label: 'Дочерний элемент', value: 'shift+tab' },
+        sibling: { label: 'Соседний элемент', value: 'shift+s+tab' },
+        sticker: { label: 'Режим стикеров', value: 's' },
+        fit: { label: 'Показать весь граф', value: '0' },
+        arrange: { label: 'Упорядочить граф', value: 'shift+0' },
+        panels: { label: 'Скрыть боковые панели', value: 'mod+backslash' }
+      };
+      const RESERVED_SHORTCUTS = new Set([
+        'mod+w', 'mod+q', 'mod+r', 'mod+l', 'mod+t', 'mod+n',
+        'mod+z', 'mod+shift+z', 'mod+y', 'mod+a',
+        'v', 'h', 'l', 'space', 'tab', 'enter', 'delete', 'backspace',
+        'arrowup', 'arrowdown', 'arrowleft', 'arrowright', '+', '=', '-', 'shift+?'
+      ]);
 
       const refs = {
         canvas: document.getElementById('canvas'),
@@ -2146,12 +2295,12 @@
         shapePicker: document.getElementById('shapePicker'),
         viewControls: document.getElementById('viewControls'),
         emptyState: document.getElementById('emptyState'),
-        connectionLens: document.getElementById('connectionLens'),
+        selectionMarquee: document.getElementById('selectionMarquee'),
+        inlineNodeEditor: document.getElementById('inlineNodeEditor'),
         graphTitle: document.getElementById('graphTitle'),
         storageButton: document.getElementById('storageButton'),
         storageButtonLabel: document.getElementById('storageButtonLabel'),
         storageIconUse: document.getElementById('storageIconUse'),
-        storageDialogStatus: document.getElementById('storageDialogStatus'),
         undoButton: document.getElementById('undoButton'),
         redoButton: document.getElementById('redoButton'),
         zoomValue: document.getElementById('zoomValue'),
@@ -2162,7 +2311,9 @@
         toastRegion: document.getElementById('toastRegion'),
         historyBody: document.getElementById('historyBody'),
         graphsDialogBody: document.getElementById('graphsDialogBody'),
-        diagnosticsBody: document.getElementById('diagnosticsBody')
+        diagnosticsBody: document.getElementById('diagnosticsBody'),
+        shortcutHelpList: document.getElementById('shortcutHelpList'),
+        shortcutSettings: document.getElementById('shortcutSettings')
       };
 
       const ui = {
@@ -2174,6 +2325,7 @@
         connectSourceId: null,
         pointerAction: null,
         spacePressed: false,
+        pressedCodes: new Set(),
         suppressNodeClick: false,
         suppressGroupClick: false,
         panelsHidden: false,
@@ -2187,7 +2339,9 @@
         diagnosticKey: '',
         diagnosticLabel: '',
         undoStack: [],
-        redoStack: []
+        redoStack: [],
+        inlineEdit: null,
+        shortcutCapture: null
       };
 
       const storedWorkspaceResult = loadWorkspace();
@@ -2197,12 +2351,13 @@
       let viewportSaveTimer = 0;
       let edgeRenderFrame = 0;
       let pendingEdit = null;
+      let shortcuts = loadShortcuts();
       let storageWriteBlocked = storedWorkspaceResult.status === 'invalid';
       let hostBridgeReady = false;
       let serverGraphSummaries = new Map();
       const bridgeRequests = new Map();
-      const serverSaveTimers = new Map();
-      const serverSavesInFlight = new Map();
+      const publishingGraphIds = new Set();
+      const serverDownloadsInFlight = new Set();
       const corruptStorageRaw = storedWorkspaceResult.raw || '';
       syncUiFromActiveView();
 
@@ -2397,7 +2552,7 @@
         const cleanFileName = cleanImportedText(fileName).replace(/\.json$/i, '');
         const now = new Date().toISOString();
         return {
-          version: 2,
+          version: 3,
           id: uid('graph'),
           title: cleanFileName || 'Импорт «Кубики»',
           createdAt: now,
@@ -2482,7 +2637,7 @@
 
       function createWorkspace(firstGraph) {
         return {
-          version: 2,
+          version: 3,
           activeGraphId: firstGraph.id,
           graphs: [firstGraph],
           storage: { [firstGraph.id]: localStorageMetadata() }
@@ -2490,18 +2645,55 @@
       }
 
       function localStorageMetadata() {
-        return { mode: 'local', revision: null, serverUpdatedAt: null, syncState: 'local', error: '' };
+        return { mode: 'local', revision: null, serverUpdatedAt: null, publishState: 'local', error: '' };
       }
 
       function normalizeStorageMetadata(value) {
-        if (value?.mode !== 'system') return localStorageMetadata();
+        if (!value || typeof value !== 'object') return localStorageMetadata();
+        const revision = Number.isInteger(value.revision) && value.revision > 0 ? value.revision : null;
+        const legacyPublished = value.mode === 'system' && value.syncState === 'synced';
+        const interrupted = value.publishState === 'publishing';
+        const publishState = interrupted
+          ? (revision ? 'changed' : 'error')
+          : ['published', 'changed', 'error', 'conflict'].includes(value.publishState)
+          ? value.publishState
+          : revision ? (legacyPublished ? 'published' : 'changed') : 'local';
         return {
-          mode: 'system',
-          revision: Number.isInteger(value.revision) && value.revision > 0 ? value.revision : null,
+          mode: 'local',
+          revision,
           serverUpdatedAt: typeof value.serverUpdatedAt === 'string' ? value.serverUpdatedAt : null,
-          syncState: value.syncState === 'synced' ? 'synced' : 'offline',
-          error: typeof value.error === 'string' ? value.error.slice(0, 300) : ''
+          publishState,
+          error: interrupted
+            ? 'Предыдущая публикация была прервана. Проверьте снимок в DPMS и повторите действие.'
+            : typeof value.error === 'string' ? value.error.slice(0, 300) : ''
         };
+      }
+
+      function loadShortcuts() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(SHORTCUTS_KEY) || '{}');
+          const candidates = Object.fromEntries(Object.entries(SHORTCUT_DEFAULTS).map(([key, config]) => {
+            const candidate = typeof saved[key] === 'string' ? saved[key].toLowerCase() : '';
+            const belongsToAnotherDefault = Object.entries(SHORTCUT_DEFAULTS)
+              .some(([otherKey, otherConfig]) => otherKey !== key && otherConfig.value === candidate);
+            const valid = candidate.length <= 60
+              && /^(?:(?:mod|alt|shift|s)\+)*(?:[a-z0-9]|tab|backslash)$/.test(candidate)
+              && !RESERVED_SHORTCUTS.has(candidate)
+              && !belongsToAnotherDefault;
+            return [key, valid ? candidate : config.value];
+          }));
+          const counts = Object.values(candidates).reduce((result, value) => result.set(value, (result.get(value) || 0) + 1), new Map());
+          return Object.fromEntries(Object.entries(SHORTCUT_DEFAULTS).map(([key, config]) => [
+            key,
+            counts.get(candidates[key]) === 1 ? candidates[key] : config.value
+          ]));
+        } catch {
+          return Object.fromEntries(Object.entries(SHORTCUT_DEFAULTS).map(([key, config]) => [key, config.value]));
+        }
+      }
+
+      function saveShortcuts() {
+        localStorage.setItem(SHORTCUTS_KEY, JSON.stringify(shortcuts));
       }
 
       function graphStorage(graphId = graph.id) {
@@ -2528,14 +2720,22 @@
           raw = localStorage.getItem(WORKSPACE_KEY);
           if (raw) {
             const parsed = JSON.parse(raw);
-            const migrated = parsed?.graphs?.some((item) => item?.version !== 2 || !Array.isArray(item?.views) || !Array.isArray(item?.groups) || item?.nodes?.some((node) => typeof node?.pinned !== 'boolean'));
+            const migrated = parsed?.version !== 3 || parsed?.graphs?.some((item) => item?.version !== 3 || !Array.isArray(item?.views) || !Array.isArray(item?.groups) || item?.nodes?.some((node) => typeof node?.pinned !== 'boolean' || typeof node?.autoSize !== 'boolean'));
             return { status: 'valid', workspace: normalizeWorkspace(parsed), raw: '', migrated: Boolean(migrated) };
+          }
+          const legacyWorkspaceRaw = localStorage.getItem(LEGACY_WORKSPACE_KEY);
+          if (legacyWorkspaceRaw) {
+            raw = legacyWorkspaceRaw;
+            return { status: 'valid', workspace: normalizeWorkspace(JSON.parse(legacyWorkspaceRaw)), raw: '', migrated: true };
           }
           const legacyRaw = localStorage.getItem(LEGACY_STORAGE_KEY);
           if (!legacyRaw) return { status: 'missing', workspace: null, raw: '', migrated: false };
           raw = legacyRaw;
           const legacyGraph = normalizeGraph(JSON.parse(legacyRaw));
-          return { status: 'valid', workspace: createWorkspace(legacyGraph), raw: '', migrated: true };
+          const legacyWorkspace = createWorkspace(legacyGraph);
+          const capacityError = localCapacityError(legacyWorkspace);
+          if (capacityError) throw new Error(capacityError);
+          return { status: 'valid', workspace: legacyWorkspace, raw: '', migrated: true };
         } catch (error) {
           console.warn('Не удалось прочитать сохранённые графы', error);
           return { status: 'invalid', workspace: null, raw: raw || '', migrated: false };
@@ -2560,14 +2760,17 @@
           item.id,
           normalizeStorageMetadata(rawStorage[item.id])
         ]));
-        return { version: 2, activeGraphId, graphs, storage };
+        const normalized = { version: 3, activeGraphId, graphs, storage };
+        const capacityError = localCapacityError(normalized);
+        if (capacityError) throw new Error(capacityError);
+        return normalized;
       }
 
       function normalizeGraph(input) {
         if (!input || typeof input !== 'object' || !Array.isArray(input.nodes) || !Array.isArray(input.edges)) {
           throw new Error('Файл не содержит корректный граф');
         }
-        if (input.nodes.length > 1500 || input.edges.length > 3000) {
+        if (input.nodes.length > MAX_GRAPH_NODES || input.edges.length > MAX_GRAPH_EDGES) {
           throw new Error('Граф превышает лимит прототипа');
         }
         const ids = new Set();
@@ -2579,6 +2782,8 @@
           const shape = SHAPES[node.shape] ? node.shape : 'rounded';
           const fallback = TYPE_CONFIG[type];
           const color = /^#[0-9a-f]{6}$/i.test(String(node.color || '')) ? String(node.color) : fallback.color;
+          const defaultWidth = shape === 'circle' ? 154 : type === 'sticker' ? 176 : type === 'list' ? 240 : type === 'atom' ? 190 : 224;
+          const defaultHeight = shape === 'circle' ? 154 : type === 'sticker' ? 94 : type === 'list' ? 138 : type === 'atom' ? 96 : 108;
           return {
             id,
             type,
@@ -2589,6 +2794,10 @@
             shape,
             radius: clamp(Number(node.radius ?? SHAPES[shape].radius), 0, 36),
             scale: clamp(Number(node.scale) || 1, 0.5, 2),
+            autoSize: typeof node.autoSize === 'boolean' ? node.autoSize : !['sticker', 'list'].includes(type),
+            width: clamp(Number(node.width) || defaultWidth, 96, 1200),
+            height: clamp(Number(node.height) || defaultHeight, 64, 900),
+            items: Array.isArray(node.items) ? node.items.map((item) => String(item).trim().slice(0, 180)).filter(Boolean).slice(0, 200) : [],
             pinned: Boolean(node.pinned),
             color,
             x: clamp(Number(node.x) || 0, -100000, 100000),
@@ -2609,7 +2818,13 @@
             id,
             source,
             target,
-            label: String(edge.label || 'связано с').slice(0, 80)
+            label: String(edge.label || 'связано с').slice(0, 80),
+            routing: ['curve', 'orthogonal', 'straight'].includes(edge.routing) ? edge.routing : 'curve',
+            points: Array.isArray(edge.points) ? edge.points.slice(0, 20).flatMap((point) => (
+              Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.y))
+                ? [{ x: clamp(Number(point.x), -100000, 100000), y: clamp(Number(point.y), -100000, 100000) }]
+                : []
+            )) : []
           }];
         });
         const viewport = input.viewport || {};
@@ -2681,7 +2896,7 @@
           }
         });
         return {
-          version: 2,
+          version: 3,
           id: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(String(input.id || ''))
             ? String(input.id)
             : uid('graph'),
@@ -2780,32 +2995,49 @@
         return JSON.stringify(a) === JSON.stringify(b);
       }
 
+      function jsonByteLength(value) {
+        return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+      }
+
+      function localCapacityError(candidate = workspace) {
+        const oversized = candidate.graphs.find((item) => jsonByteLength(item) > MAX_LOCAL_GRAPH_BYTES);
+        return oversized ? `Граф «${oversized.title}» превышает локальный лимит 5 МБ` : '';
+      }
+
       function persistWorkspace() {
         if (storageWriteBlocked) return false;
+        const capacityError = localCapacityError();
+        if (capacityError) {
+          toast(`${capacityError}. Сократите данные или разделите граф.`, 'error');
+          return false;
+        }
         try {
           localStorage.setItem(WORKSPACE_KEY, JSON.stringify(workspace));
           return true;
         } catch (error) {
-          toast('Не удалось сохранить граф в браузере', 'error');
+          toast('Не удалось сохранить граф в браузере. Локальное хранилище заполнено.', 'error');
           return false;
         }
       }
 
-      function storageStateLabel(metadata) {
-        if (metadata.mode !== 'system') return 'На устройстве';
-        if (metadata.syncState === 'saving') return 'Сохраняем…';
-        if (metadata.syncState === 'offline') return 'Локальные изменения';
-        return 'В системе';
+      function storageStateLabel(metadata, graphId = graph.id) {
+        if (publishingGraphIds.has(graphId)) return 'Публикуем…';
+        if (metadata.publishState === 'published') return 'Локально · опубликован';
+        if (metadata.publishState === 'changed') return 'Локально · есть изменения';
+        if (metadata.publishState === 'conflict') return 'Локально · конфликт';
+        if (metadata.publishState === 'error') return 'Локально · ошибка облака';
+        return 'Локально';
       }
 
       function renderStorageControl() {
         const metadata = graphStorage();
-        refs.storageButton.classList.toggle('system', metadata.mode === 'system' && metadata.syncState === 'synced');
-        refs.storageButton.classList.toggle('saving', metadata.mode === 'system' && metadata.syncState === 'saving');
-        refs.storageButton.classList.toggle('offline', metadata.mode === 'system' && metadata.syncState === 'offline');
-        refs.storageButtonLabel.textContent = storageStateLabel(metadata);
-        refs.storageIconUse.setAttribute('href', metadata.mode === 'system' ? '#i-cloud' : '#i-folder');
-        refs.storageButton.setAttribute('aria-label', `Хранение графа: ${storageStateLabel(metadata)}`);
+        const publishing = publishingGraphIds.has(graph.id);
+        refs.storageButton.classList.toggle('system', metadata.publishState === 'published');
+        refs.storageButton.classList.toggle('saving', publishing);
+        refs.storageButton.classList.toggle('offline', ['changed', 'error', 'conflict'].includes(metadata.publishState));
+        refs.storageButtonLabel.textContent = storageStateLabel(metadata, graph.id);
+        refs.storageIconUse.setAttribute('href', metadata.revision ? '#i-cloud' : '#i-folder');
+        refs.storageButton.setAttribute('aria-label', `Локальное хранение: ${storageStateLabel(metadata, graph.id)}. Открыть список графов`);
       }
 
       function requestHost(operation, details = {}) {
@@ -2834,36 +3066,6 @@
         try {
           const summaries = await requestHost('list');
           serverGraphSummaries = new Map((Array.isArray(summaries) ? summaries : []).map((item) => [item.client_id, item]));
-          for (const local of [...workspace.graphs]) {
-            const metadata = graphStorage(local.id);
-            const summary = serverGraphSummaries.get(local.id);
-            if (metadata.mode !== 'system') continue;
-            if (metadata.syncState === 'offline') {
-              scheduleSystemSave(local.id, 120);
-              continue;
-            }
-            if (metadata.syncState !== 'synced') continue;
-            if (!summary || !metadata.revision || summary.revision <= metadata.revision) continue;
-            const expectedRevision = metadata.revision;
-            const document = await requestHost('get', { clientId: local.id });
-            const currentMetadata = graphStorage(local.id);
-            if (currentMetadata.syncState !== 'synced' || currentMetadata.revision !== expectedRevision) continue;
-            const serverGraph = normalizeGraph(document.payload);
-            const index = workspace.graphs.findIndex((item) => item.id === local.id);
-            if (index < 0) continue;
-            workspace.graphs[index] = serverGraph;
-            setGraphStorage(serverGraph.id, {
-              mode: 'system', revision: document.revision, serverUpdatedAt: document.updated_at,
-              syncState: 'synced', error: ''
-            });
-            rememberServerDocument(document);
-            if (workspace.activeGraphId === serverGraph.id) {
-              graph = serverGraph;
-              resetGraphSession();
-              render();
-            }
-          }
-          persistWorkspace();
           if (document.getElementById('graphsDialog').open) renderGraphManager();
         } catch (error) {
           if (!quiet) toast(error?.message || 'Не удалось получить графы из системы', 'error');
@@ -2884,129 +3086,30 @@
         });
       }
 
-      function preserveConflictCopy(graphId, serverDocument) {
-        const index = workspace.graphs.findIndex((item) => item.id === graphId);
-        if (index < 0 || !serverDocument?.payload) return;
-        const local = workspace.graphs[index];
-        const localCopy = deepClone(local);
-        localCopy.id = uid('graph');
-        localCopy.title = `${local.title} — локальная версия`.slice(0, 80);
-        localCopy.updatedAt = new Date().toISOString();
-        localCopy.audit = [...localCopy.audit, {
-          id: uid('audit'),
-          at: localCopy.updatedAt,
-          action: 'Сохранена локальная версия после конфликта'
-        }].slice(-200);
-        workspace.graphs[index] = localCopy;
-        delete workspace.storage[graphId];
-        setGraphStorage(localCopy.id, localStorageMetadata());
-
-        const serverGraph = normalizeGraph(serverDocument.payload);
-        const canCacheServerGraph = workspace.graphs.length < MAX_CACHED_GRAPHS;
-        if (canCacheServerGraph) {
-          workspace.graphs.push(serverGraph);
-          setGraphStorage(serverGraph.id, {
-            mode: 'system',
-            revision: serverDocument.revision,
-            serverUpdatedAt: serverDocument.updated_at,
-            syncState: 'synced',
-            error: ''
-          });
-        }
-        rememberServerDocument(serverDocument);
-        if (workspace.activeGraphId === graphId) {
-          graph = localCopy;
-          workspace.activeGraphId = localCopy.id;
-        }
-        persistWorkspace();
-        render();
-        toast(canCacheServerGraph
-          ? 'Версия в системе изменилась. Ваши правки сохранены отдельным локальным графом.'
-          : 'Версия в системе изменилась. Ваши правки сохранены локально; серверную версию можно открыть после освобождения места.', 'error');
-      }
-
-      async function syncSystemGraph(graphId) {
-        const source = workspace.graphs.find((item) => item.id === graphId);
-        const metadata = graphStorage(graphId);
-        if (!source || metadata.mode !== 'system') return null;
-        clearTimeout(serverSaveTimers.get(graphId));
-        serverSaveTimers.delete(graphId);
-        const activeRequest = serverSavesInFlight.get(graphId);
-        if (activeRequest) {
-          activeRequest.pending = true;
-          return null;
-        }
-
-        const payload = deepClone(source);
-        const serialized = JSON.stringify(payload);
-        const inFlight = { serialized, pending: false };
-        const previousSyncState = metadata.syncState;
-        serverSavesInFlight.set(graphId, inFlight);
-        metadata.syncState = 'saving';
-        metadata.error = '';
-        persistWorkspace();
-        if (graph.id === graphId) renderStorageControl();
-
-        try {
-          const document = await requestHost('put', {
-            clientId: graphId,
-            baseRevision: metadata.revision,
-            payload
-          });
-          setGraphStorage(graphId, {
-            mode: 'system',
-            revision: document.revision,
-            serverUpdatedAt: document.updated_at,
-            syncState: 'synced',
-            error: ''
-          });
-          rememberServerDocument(document);
-          persistWorkspace();
-          return document;
-        } catch (error) {
-          if (error?.status === 409 && error.serverDocument) {
-            preserveConflictCopy(graphId, error.serverDocument);
-            return null;
-          }
-          const wasOffline = previousSyncState === 'offline';
-          metadata.syncState = 'offline';
-          metadata.error = String(error?.message || 'Синхронизация недоступна').slice(0, 300);
-          persistWorkspace();
-          if (!wasOffline) toast('Граф сохранён локально. Синхронизация с DPMS не выполнена.', 'error');
-          return null;
-        } finally {
-          const requestState = serverSavesInFlight.get(graphId);
-          serverSavesInFlight.delete(graphId);
-          if (graph.id === graphId) renderStorageControl();
-          const current = workspace.graphs.find((item) => item.id === graphId);
-          if (current && graphStorage(graphId).mode === 'system' && (requestState?.pending || JSON.stringify(current) !== serialized)) {
-            scheduleSystemSave(graphId, 80);
-          }
-        }
-      }
-
-      function scheduleSystemSave(graphId, delay = 850) {
-        if (graphStorage(graphId).mode !== 'system') return;
-        clearTimeout(serverSaveTimers.get(graphId));
-        serverSaveTimers.set(graphId, setTimeout(() => {
-          serverSaveTimers.delete(graphId);
-          syncSystemGraph(graphId);
-        }, delay));
-      }
-
-      function saveGraph() {
+      function saveGraph({ markChanged = true } = {}) {
         if (storageWriteBlocked) return false;
         captureActiveViewState();
-        graph.updatedAt = new Date().toISOString();
+        const previousUpdatedAt = graph.updatedAt;
+        if (markChanged) graph.updatedAt = new Date().toISOString();
         const index = workspace.graphs.findIndex((item) => item.id === graph.id);
         if (index >= 0) workspace.graphs[index] = graph;
-        else workspace.graphs.push(graph);
+        else {
+          if (workspace.graphs.length >= MAX_CACHED_GRAPHS) {
+            toast('Локальный кэш содержит 100 графов. Удалите один из них.', 'error');
+            return false;
+          }
+          workspace.graphs.push(graph);
+        }
         workspace.activeGraphId = graph.id;
+        const hadMetadata = Object.prototype.hasOwnProperty.call(workspace.storage || {}, graph.id);
+        const metadata = graphStorage();
+        const previousMetadata = deepClone(metadata);
+        if (markChanged && metadata.revision && metadata.publishState === 'published') metadata.publishState = 'changed';
         const saved = persistWorkspace();
-        if (saved && graphStorage().mode === 'system') {
-          graphStorage().syncState = 'saving';
-          persistWorkspace();
-          scheduleSystemSave(graph.id);
+        if (!saved) {
+          graph.updatedAt = previousUpdatedAt;
+          if (hadMetadata) workspace.storage[graph.id] = previousMetadata;
+          else delete workspace.storage[graph.id];
         }
         renderStorageControl();
         return saved;
@@ -3022,17 +3125,41 @@
         graph.audit = graph.audit.slice(-200);
       }
 
+      function rollbackRejectedMutation(before, auditEntries, updatedAt) {
+        restoreSnapshot(before);
+        graph.audit = auditEntries;
+        graph.updatedAt = updatedAt;
+        const index = workspace.graphs.findIndex((item) => item.id === graph.id);
+        if (index >= 0) workspace.graphs[index] = graph;
+        render();
+      }
+
+      function restoreFullGraphInWorkspace(snapshot) {
+        restoreFullSnapshot(snapshot);
+        const index = workspace.graphs.findIndex((item) => item.id === graph.id);
+        if (index >= 0) workspace.graphs[index] = graph;
+      }
+
       function flushPendingEdit() {
         if (!pendingEdit) return false;
         const edit = pendingEdit;
         pendingEdit = null;
         const after = graphSnapshot();
         if (snapshotEqual(edit.before, after)) return false;
+        const undoStack = ui.undoStack.slice();
+        const redoStack = ui.redoStack.slice();
         ui.undoStack.push({ label: edit.label, snapshot: edit.before, full: false });
         ui.undoStack = ui.undoStack.slice(-80);
         ui.redoStack = [];
+        const auditEntries = deepClone(graph.audit);
+        const updatedAt = graph.updatedAt;
         audit(edit.label);
-        saveGraph();
+        if (!saveGraph()) {
+          ui.undoStack = undoStack;
+          ui.redoStack = redoStack;
+          rollbackRejectedMutation(edit.before, auditEntries, updatedAt);
+          return false;
+        }
         return true;
       }
 
@@ -3045,51 +3172,89 @@
       function mutate(label, action) {
         flushPendingEdit();
         const before = graphSnapshot();
+        const auditEntries = deepClone(graph.audit);
+        const updatedAt = graph.updatedAt;
         action();
         const after = graphSnapshot();
         if (snapshotEqual(before, after)) return false;
+        const undoStack = ui.undoStack.slice();
+        const redoStack = ui.redoStack.slice();
         ui.undoStack.push({ label, snapshot: before, full: false });
         ui.undoStack = ui.undoStack.slice(-80);
         ui.redoStack = [];
         audit(label);
-        saveGraph();
+        if (!saveGraph()) {
+          ui.undoStack = undoStack;
+          ui.redoStack = redoStack;
+          rollbackRejectedMutation(before, auditEntries, updatedAt);
+          return false;
+        }
         render();
         return true;
       }
 
       function commitInteractiveMutation(label, before) {
         flushPendingEdit();
+        const auditEntries = deepClone(graph.audit);
+        const updatedAt = graph.updatedAt;
         const after = graphSnapshot();
         if (snapshotEqual(before, after)) return false;
+        const undoStack = ui.undoStack.slice();
+        const redoStack = ui.redoStack.slice();
         ui.undoStack.push({ label, snapshot: before, full: false });
         ui.undoStack = ui.undoStack.slice(-80);
         ui.redoStack = [];
         audit(label);
-        saveGraph();
+        if (!saveGraph()) {
+          ui.undoStack = undoStack;
+          ui.redoStack = redoStack;
+          rollbackRejectedMutation(before, auditEntries, updatedAt);
+          return false;
+        }
         render();
         return true;
       }
 
       function undo() {
         flushPendingEdit();
+        const undoStack = ui.undoStack.slice();
+        const redoStack = ui.redoStack.slice();
         const entry = ui.undoStack.pop();
         if (!entry) return;
-        ui.redoStack.push({ label: entry.label, snapshot: entry.full ? fullGraphSnapshot() : graphSnapshot(), full: Boolean(entry.full) });
+        const currentFull = fullGraphSnapshot();
+        const current = entry.full ? currentFull : graphSnapshot();
+        ui.redoStack.push({ label: entry.label, snapshot: current, full: Boolean(entry.full) });
         entry.full ? restoreFullSnapshot(entry.snapshot) : restoreSnapshot(entry.snapshot);
         audit(`Отменено: ${entry.label}`);
-        saveGraph();
+        if (!saveGraph()) {
+          ui.undoStack = undoStack;
+          ui.redoStack = redoStack;
+          restoreFullGraphInWorkspace(currentFull);
+          render();
+          return;
+        }
         render();
         toast(`Отменено: ${entry.label}`);
       }
 
       function redo() {
         flushPendingEdit();
+        const undoStack = ui.undoStack.slice();
+        const redoStack = ui.redoStack.slice();
         const entry = ui.redoStack.pop();
         if (!entry) return;
-        ui.undoStack.push({ label: entry.label, snapshot: entry.full ? fullGraphSnapshot() : graphSnapshot(), full: Boolean(entry.full) });
+        const currentFull = fullGraphSnapshot();
+        const current = entry.full ? currentFull : graphSnapshot();
+        ui.undoStack.push({ label: entry.label, snapshot: current, full: Boolean(entry.full) });
         entry.full ? restoreFullSnapshot(entry.snapshot) : restoreSnapshot(entry.snapshot);
         audit(`Повторено: ${entry.label}`);
-        saveGraph();
+        if (!saveGraph()) {
+          ui.undoStack = undoStack;
+          ui.redoStack = redoStack;
+          restoreFullGraphInWorkspace(currentFull);
+          render();
+          return;
+        }
         render();
         toast(`Повторено: ${entry.label}`);
       }
@@ -3157,6 +3322,7 @@
       }
 
       function effectiveNodeScale(node, metrics = degreeMetrics()) {
+        if (node.autoSize === false) return 1;
         return clamp((Number(node.scale) || 1) * importanceScale(node, metrics), 0.5, 2.9);
       }
 
@@ -3168,9 +3334,11 @@
         const scale = effectiveNodeScale(node, metrics);
         const base = compact
           ? { width: 88, height: 88 }
-          : node.shape === 'circle'
-            ? { width: 154, height: 154 }
-            : { width: 224, height: 108 };
+          : node.autoSize === false
+            ? { width: node.width, height: node.shape === 'circle' ? node.width : node.height }
+            : node.shape === 'circle'
+              ? { width: 154, height: 154 }
+              : { width: 224, height: 108 };
         return { width: base.width * scale, height: base.height * scale };
       }
 
@@ -3206,17 +3374,60 @@
         return { x: center.x + dx * scale, y: center.y + dy * scale };
       }
 
-      function edgeGeometry(source, target, reverseOffset = 0, metrics = degreeMetrics()) {
+      function edgeGeometry(source, target, edge, reverseOffset = 0, metrics = degreeMetrics()) {
         const compact = isSemanticCompact();
         const sourceCenter = nodeCenter(source, compact, metrics);
         const targetCenter = nodeCenter(target, compact, metrics);
-        const start = boundaryPoint(source, targetCenter, compact, metrics);
-        const end = boundaryPoint(target, sourceCenter, compact, metrics);
+        const configuredPoints = Array.isArray(edge?.points) ? edge.points : [];
+        const routing = edge?.routing || 'curve';
+        const start = boundaryPoint(source, configuredPoints[0] || targetCenter, compact, metrics);
+        const end = boundaryPoint(target, configuredPoints.at(-1) || sourceCenter, compact, metrics);
         const dx = end.x - start.x;
         const dy = end.y - start.y;
         const distance = Math.max(1, Math.hypot(dx, dy));
         const normalX = -dy / distance * reverseOffset;
         const normalY = dx / distance * reverseOffset;
+        const offsetPoint = (point) => ({ x: point.x + normalX, y: point.y + normalY });
+
+        if (routing === 'orthogonal') {
+          const points = configuredPoints.length
+            ? configuredPoints.map(offsetPoint)
+            : [{ x: start.x + dx / 2 + normalX, y: start.y + normalY }, { x: start.x + dx / 2 + normalX, y: end.y + normalY }];
+          const waypoints = [...points, end];
+          let previous = start;
+          let path = `M ${start.x} ${start.y}`;
+          waypoints.forEach((point) => {
+            if (point.x !== previous.x) path += ` L ${point.x} ${previous.y}`;
+            if (point.y !== previous.y) path += ` L ${point.x} ${point.y}`;
+            previous = point;
+          });
+          return {
+            path,
+            mid: points[Math.floor((points.length - 1) / 2)] || { x: start.x + dx / 2, y: start.y + dy / 2 },
+            points
+          };
+        }
+
+        if (routing === 'straight' || configuredPoints.length) {
+          const points = configuredPoints.map(offsetPoint);
+          const all = [start, ...points, end];
+          if (routing === 'curve' && points.length) {
+            let path = `M ${start.x} ${start.y}`;
+            points.forEach((point, index) => {
+              const next = all[index + 2];
+              const midpoint = { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 };
+              path += ` Q ${point.x} ${point.y}, ${midpoint.x} ${midpoint.y}`;
+            });
+            path += ` T ${end.x} ${end.y}`;
+            return { path, mid: points[Math.floor(points.length / 2)], points };
+          }
+          return {
+            path: all.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' '),
+            mid: points[Math.floor(points.length / 2)] || { x: start.x + dx / 2, y: start.y + dy / 2 },
+            points
+          };
+        }
+
         const bend = Math.min(90, Math.max(36, Math.abs(dx) * 0.32));
         const c1 = { x: start.x + Math.sign(dx || 1) * bend + normalX, y: start.y + normalY };
         const c2 = { x: end.x - Math.sign(dx || 1) * bend + normalX, y: end.y + normalY };
@@ -3225,7 +3436,7 @@
           x: (start.x + 3 * c1.x + 3 * c2.x + end.x) / 8,
           y: (start.y + 3 * c1.y + 3 * c2.y + end.y) / 8
         };
-        return { path, mid };
+        return { path, mid, points: [] };
       }
 
       function screenToWorld(clientX, clientY) {
@@ -3251,6 +3462,7 @@
         refs.canvas.style.setProperty('--grid-y', `${graph.viewport.y}px`);
         refs.zoomValue.textContent = `${Math.round(graph.viewport.scale * 100)}%`;
         refs.zoomValue.title = compact ? 'Обзор графа: элементы показаны кругами' : 'Рабочий масштаб';
+        if (ui.inlineEdit) positionInlineNodeEditor(nodeById(ui.inlineEdit.nodeId));
         return wasCompact !== compact;
       }
 
@@ -3551,11 +3763,30 @@
         commitAutoLayout(arranged);
       }
 
+      function ensureGraphCapacity(nodesToAdd = 0, edgesToAdd = 0) {
+        if (graph.nodes.length + nodesToAdd > MAX_GRAPH_NODES) {
+          toast(`В одном графе может быть не более ${MAX_GRAPH_NODES} элементов.`, 'error');
+          return false;
+        }
+        if (graph.edges.length + edgesToAdd > MAX_GRAPH_EDGES) {
+          toast(`В одном графе может быть не более ${MAX_GRAPH_EDGES} связей.`, 'error');
+          return false;
+        }
+        return true;
+      }
+
       function addNodeAt(point) {
+        if (!ensureGraphCapacity(1, 0)) return null;
         const type = TYPE_CONFIG[ui.createType] ? ui.createType : 'custom';
         const config = TYPE_CONFIG[type];
         const shape = SHAPES[ui.createShape] ? ui.createShape : 'rounded';
-        const size = shape === 'circle' ? { width: 154, height: 154 } : { width: 224, height: 108 };
+        const manualType = ['sticker', 'list'].includes(type);
+        const size = shape === 'circle'
+          ? { width: 154, height: 154 }
+          : type === 'sticker' ? { width: 176, height: 94 }
+            : type === 'list' ? { width: 240, height: 138 }
+              : type === 'atom' ? { width: 190, height: 96 }
+                : { width: 224, height: 108 };
         const count = graph.nodes.filter((node) => node.type === type).length + 1;
         const node = {
           id: uid('node'),
@@ -3567,6 +3798,10 @@
           shape,
           radius: SHAPES[shape].radius,
           scale: 1,
+          autoSize: !manualType,
+          width: size.width,
+          height: size.height,
+          items: [],
           pinned: false,
           color: config.color,
           x: Math.round(point.x - size.width / 2),
@@ -3584,33 +3819,268 @@
         return node;
       }
 
-      function createChildNode() {
+      function createRelativeNode(kind = 'child') {
         const parents = selectedNodes();
         if (parents.length !== 1 || ui.selection?.kind !== 'node') return;
+        if (!ensureGraphCapacity(1, 1)) return;
         const parent = parents[0];
         const parentSize = nodeSize(parent, false, degreeMetrics());
         const child = {
           id: uid('node'),
           type: parent.type,
-          title: 'Новый дочерний элемент',
+          title: kind === 'sibling' ? 'Новый соседний элемент' : 'Новый дочерний элемент',
           customTypeLabel: parent.customTypeLabel,
           sourceRef: '',
           description: '',
           shape: parent.shape,
           radius: parent.radius,
           scale: parent.scale,
+          autoSize: parent.autoSize,
+          width: parent.width,
+          height: parent.height,
+          items: [],
           pinned: false,
           color: parent.color,
-          x: Math.round(parent.x + Math.min(96, parentSize.width * 0.32)),
-          y: Math.round(parent.y + parentSize.height + 28)
+          x: Math.round(kind === 'sibling' ? parent.x + parentSize.width + 34 : parent.x + Math.min(96, parentSize.width * 0.32)),
+          y: Math.round(kind === 'sibling' ? parent.y : parent.y + parentSize.height + 28)
         };
-        const edge = { id: uid('edge'), source: parent.id, target: child.id, label: 'дочерний' };
-        mutate('Создан дочерний элемент', () => {
+        const edge = { id: uid('edge'), source: parent.id, target: child.id, label: kind === 'sibling' ? 'следующий' : 'дочерний', routing: 'curve', points: [] };
+        mutate(kind === 'sibling' ? 'Создан соседний элемент' : 'Создан дочерний элемент', () => {
           graph.nodes.push(child);
           graph.edges.push(edge);
           setSingleNodeSelection(child.id);
         });
-        openNodeEditor(child.id);
+        openInlineNodeEditor(child.id, { selectAll: true });
+      }
+
+      function createChildNode() {
+        createRelativeNode('child');
+      }
+
+      function createSiblingNode() {
+        createRelativeNode('sibling');
+      }
+
+      function addQuickSticker(point, title = 'Новый стикер') {
+        if (!ensureGraphCapacity(1, 0)) return null;
+        const node = {
+          id: uid('node'), type: 'sticker', title, customTypeLabel: '', sourceRef: '', description: '',
+          shape: 'rounded', radius: 4, scale: 1, autoSize: false, width: 176, height: 94, items: [],
+          pinned: false, color: TYPE_CONFIG.sticker.color,
+          x: Math.round(point.x), y: Math.round(point.y)
+        };
+        mutate('Создан стикер', () => {
+          graph.nodes.push(node);
+          setSingleNodeSelection(node.id);
+        });
+        requestAnimationFrame(() => openInlineNodeEditor(node.id, { selectAll: true }));
+        return node;
+      }
+
+      function positionInlineNodeEditor(node) {
+        if (!node || refs.inlineNodeEditor.hidden) return;
+        const rect = refs.canvas.getBoundingClientRect();
+        const metrics = degreeMetrics();
+        const position = nodeDisplayPosition(node, false, metrics);
+        const size = nodeSize(node, false, metrics);
+        refs.inlineNodeEditor.style.left = `${graph.viewport.x + position.x * graph.viewport.scale}px`;
+        refs.inlineNodeEditor.style.top = `${graph.viewport.y + position.y * graph.viewport.scale}px`;
+        refs.inlineNodeEditor.style.width = `${Math.max(150, size.width * graph.viewport.scale)}px`;
+        refs.inlineNodeEditor.style.height = `${Math.max(52, size.height * graph.viewport.scale)}px`;
+        refs.inlineNodeEditor.style.fontSize = `${clamp(16 * graph.viewport.scale, 13, 18)}px`;
+        refs.inlineNodeEditor.style.maxWidth = `${Math.max(180, rect.width - 24)}px`;
+      }
+
+      function openInlineNodeEditor(id, { selectAll = false } = {}) {
+        const node = nodeById(id);
+        if (!node) return;
+        closeInlineNodeEditor({ commit: true });
+        setSingleNodeSelection(id);
+        ui.inlineEdit = { nodeId: id };
+        refs.inlineNodeEditor.value = node.title;
+        refs.inlineNodeEditor.hidden = false;
+        positionInlineNodeEditor(node);
+        refs.inlineNodeEditor.focus({ preventScroll: true });
+        if (selectAll) refs.inlineNodeEditor.select();
+      }
+
+      function closeInlineNodeEditor({ commit = true } = {}) {
+        const editing = ui.inlineEdit;
+        if (!editing) return;
+        const node = nodeById(editing.nodeId);
+        if (commit && node) {
+          const title = refs.inlineNodeEditor.value.trim().slice(0, 180) || 'Без названия';
+          if (node.title !== title) {
+            stagePendingEdit('Изменено название элемента', () => { node.title = title; });
+          }
+          flushPendingEdit();
+        }
+        ui.inlineEdit = null;
+        refs.inlineNodeEditor.hidden = true;
+        render();
+      }
+
+      function continueStickerSequence() {
+        const current = ui.inlineEdit ? nodeById(ui.inlineEdit.nodeId) : null;
+        if (!current) return;
+        const nextPoint = { x: current.x + current.width + 26, y: current.y };
+        closeInlineNodeEditor({ commit: true });
+        addQuickSticker(nextPoint);
+      }
+
+      function parseHierarchyOutline(value) {
+        const rows = String(value || '').replace(/\r/g, '').split('\n');
+        const items = [];
+        for (const [index, raw] of rows.entries()) {
+          if (!raw.trim()) continue;
+          const prefix = raw.match(/^[\t ]*/)?.[0] || '';
+          if (/ /.test(prefix) && prefix.replace(/\t/g, '').length % 2 !== 0) {
+            throw new Error(`Строка ${index + 1}: отступ пробелами должен быть кратен двум.`);
+          }
+          const depth = (prefix.match(/\t/g) || []).length + Math.floor(prefix.replace(/\t/g, '').length / 2);
+          const title = raw.trim().slice(0, 180);
+          if (!items.length && depth !== 0) throw new Error('Первая строка должна начинаться без отступа.');
+          if (items.length && depth > items.at(-1).depth + 1) throw new Error(`Строка ${index + 1}: пропущен уровень вложенности.`);
+          items.push({ title, depth, line: index + 1 });
+        }
+        if (items.length > 250) throw new Error('За один запуск можно создать не более 250 элементов.');
+        return items;
+      }
+
+      function renderHierarchyPreview() {
+        const target = document.getElementById('hierarchyPreview');
+        try {
+          const items = parseHierarchyOutline(document.getElementById('hierarchySource').value);
+          target.innerHTML = items.length
+            ? `<strong>${items.length} элементов</strong><span>${items.filter((item) => item.depth === 0).length} корневых · глубина ${Math.max(...items.map((item) => item.depth)) + 1}</span>`
+            : 'Введите структуру слева.';
+          target.classList.remove('error');
+        } catch (error) {
+          target.textContent = error.message;
+          target.classList.add('error');
+        }
+      }
+
+      function openHierarchyDialog() {
+        document.getElementById('hierarchyDialog').showModal();
+        renderHierarchyPreview();
+        requestAnimationFrame(() => document.getElementById('hierarchySource').focus());
+      }
+
+      function buildHierarchyFromOutline() {
+        let items;
+        try {
+          items = parseHierarchyOutline(document.getElementById('hierarchySource').value);
+        } catch (error) {
+          toast(error.message, 'error');
+          return;
+        }
+        if (!items.length) {
+          toast('Добавьте хотя бы один элемент', 'error');
+          return;
+        }
+        const edgeCount = items.filter((item) => item.depth > 0).length;
+        if (!ensureGraphCapacity(items.length, edgeCount)) return;
+        const type = TYPE_CONFIG[document.getElementById('hierarchyNodeType').value]
+          ? document.getElementById('hierarchyNodeType').value : 'atom';
+        const origin = canvasCenterWorld();
+        const parentAtDepth = [];
+        const created = [];
+        const edges = [];
+        items.forEach((item, index) => {
+          const node = {
+            id: uid('node'), type, title: item.title, customTypeLabel: type === 'custom' ? 'Своя сущность' : '',
+            sourceRef: '', description: '', shape: 'rounded', radius: type === 'sticker' ? 4 : 8, scale: 1,
+            autoSize: type !== 'sticker', width: type === 'sticker' ? 176 : type === 'atom' ? 190 : 224,
+            height: type === 'sticker' ? 94 : type === 'atom' ? 96 : 108, items: [], pinned: false,
+            color: TYPE_CONFIG[type].color,
+            x: Math.round(origin.x + item.depth * 280), y: Math.round(origin.y + index * 128)
+          };
+          const parent = item.depth > 0 ? parentAtDepth[item.depth - 1] : null;
+          if (parent) edges.push({ id: uid('edge'), source: parent.id, target: node.id, label: 'дочерний', routing: 'orthogonal', points: [] });
+          parentAtDepth[item.depth] = node;
+          parentAtDepth.length = item.depth + 1;
+          created.push(node);
+        });
+        mutate(`Создана иерархия: ${created.length} элементов`, () => {
+          graph.nodes.push(...created);
+          graph.edges.push(...edges);
+          setSingleNodeSelection(created[0].id);
+        });
+        document.getElementById('hierarchyDialog').close();
+        document.getElementById('hierarchySource').value = '';
+        requestAnimationFrame(() => fitGraph());
+      }
+
+      function shortcutLabel(value) {
+        return String(value).split('+').map((part) => ({ mod: navigator.platform.includes('Mac') ? '⌘' : 'Ctrl', shift: '⇧', alt: 'Alt', tab: 'Tab', backslash: '\\' }[part] || part.toUpperCase())).join(' + ');
+      }
+
+      function eventShortcut(event) {
+        const parts = [];
+        if (event.metaKey || event.ctrlKey) parts.push('mod');
+        if (event.altKey) parts.push('alt');
+        if (event.shiftKey) parts.push('shift');
+        if (event.code === 'Tab' && ui.pressedCodes.has('KeyS')) parts.push('s');
+        const key = event.code === 'Backslash' ? 'backslash'
+          : event.code === 'Space' ? 'space'
+            : event.code === 'Tab' ? 'tab'
+              : event.code.startsWith('Key') ? event.code.slice(3).toLowerCase()
+                : event.code.startsWith('Digit') ? event.code.slice(5)
+                  : event.key.toLowerCase();
+        if (!['meta', 'control', 'shift', 'alt', 's'].includes(key) || event.code !== 'Tab') parts.push(key);
+        return [...new Set(parts)].join('+');
+      }
+
+      function matchesShortcut(name, event) {
+        return shortcuts[name] === eventShortcut(event);
+      }
+
+      function renderShortcutUi() {
+        const fixed = [
+          ['Создать обычный элемент', 'двойной клик'], ['Редактировать элемент', 'двойной клик / Enter'],
+          ['Создать связь', 'Shift + drag'], ['Добавить к выделению', 'Ctrl/⌘ + клик'],
+          ['Рамка выделения', 'drag по пустому холсту'], ['Переместить холст', 'пробел + drag'],
+          ['Отменить', 'Ctrl/⌘ Z'], ['Удалить выбранное', 'Delete']
+        ];
+        refs.shortcutHelpList.innerHTML = [
+          ...fixed.map(([label, value]) => `<div class="shortcut-row"><span>${escapeHtml(label)}</span><kbd>${escapeHtml(value)}</kbd></div>`),
+          ...Object.entries(SHORTCUT_DEFAULTS).map(([key, config]) => `<div class="shortcut-row"><span>${escapeHtml(config.label)}</span><kbd>${escapeHtml(shortcutLabel(shortcuts[key]))}</kbd></div>`)
+        ].join('');
+        refs.shortcutSettings.innerHTML = Object.entries(SHORTCUT_DEFAULTS).map(([key, config]) => `<div class="shortcut-setting-row"><span>${escapeHtml(config.label)}</span><button class="text-button shortcut-capture" type="button" data-shortcut-capture="${key}">${escapeHtml(shortcutLabel(shortcuts[key]))}</button></div>`).join('');
+      }
+
+      function openShortcutSettings() {
+        document.getElementById('helpDialog').close();
+        renderShortcutUi();
+        document.getElementById('shortcutSettingsMessage').textContent = '';
+        document.getElementById('shortcutDialog').showModal();
+      }
+
+      function convertListToAtoms() {
+        const list = ui.selection?.kind === 'node' ? nodeById(ui.selection.id) : null;
+        if (!list || list.type !== 'list' || !list.items.length) {
+          toast('В списке нет пунктов для преобразования', 'error');
+          return;
+        }
+        const existingTitles = new Set(graph.edges.filter((edge) => edge.source === list.id).map((edge) => nodeById(edge.target)).filter((node) => node?.type === 'atom').map((node) => node.title));
+        const items = list.items.filter((item) => !existingTitles.has(item));
+        if (!items.length) {
+          toast('Все пункты уже преобразованы в атомы');
+          return;
+        }
+        if (!ensureGraphCapacity(items.length, items.length)) return;
+        const atoms = items.map((title, index) => ({
+          id: uid('node'), type: 'atom', title, customTypeLabel: '', sourceRef: '', description: '', shape: 'rounded', radius: 8,
+          scale: 1, autoSize: true, width: 190, height: 96, items: [], pinned: false, color: TYPE_CONFIG.atom.color,
+          x: Math.round(list.x + list.width + 90), y: Math.round(list.y + index * 126)
+        }));
+        mutate(`Список разложен в атомы: ${atoms.length}`, () => {
+          graph.nodes.push(...atoms);
+          graph.edges.push(...atoms.map((atom) => ({ id: uid('edge'), source: list.id, target: atom.id, label: 'содержит', routing: 'orthogonal', points: [] })));
+          ui.selectedNodeIds = new Set(atoms.map((atom) => atom.id));
+          ui.selection = { kind: 'node', id: atoms.at(-1).id };
+        });
       }
 
       function createEdge(sourceId, targetId) {
@@ -3627,7 +4097,8 @@
           toast('Такая направленная связь уже существует');
           return;
         }
-        const edge = { id: uid('edge'), source: sourceId, target: targetId, label: 'связано с' };
+        if (!ensureGraphCapacity(0, 1)) return;
+        const edge = { id: uid('edge'), source: sourceId, target: targetId, label: 'связано с', routing: 'curve', points: [] };
         mutate('Создана направленная связь', () => {
           graph.edges.push(edge);
           ui.selectedNodeIds.clear();
@@ -3809,7 +4280,6 @@
       function syncConnectionLens() {
         const nodeId = activeConnectionLensNodeId();
         const summary = nodeId ? connectionSummary(nodeId) : null;
-        refs.canvas.classList.toggle('has-connection-lens', Boolean(summary));
 
         refs.nodeLayer.querySelectorAll('[data-node-id]').forEach((element) => {
           const id = element.dataset.nodeId;
@@ -3836,31 +4306,6 @@
           element.classList.toggle('hover-muted', Boolean(activeNodes && group && !group.nodeIds.some((id) => activeNodes.has(id))));
         });
 
-        if (!summary) {
-          refs.connectionLens.hidden = true;
-          refs.connectionLens.replaceChildren();
-          return;
-        }
-
-        const config = TYPE_CONFIG[summary.node.type] || TYPE_CONFIG.custom;
-        const typeLabel = summary.node.type === 'custom' && summary.node.customTypeLabel.trim()
-          ? summary.node.customTypeLabel.trim()
-          : config.label;
-        const relationText = summary.relations.slice(0, 4).map(([label, count]) => `${label}: ${count}`).join(' · ');
-        refs.connectionLens.style.setProperty('--lens-color', summary.node.color);
-        refs.connectionLens.innerHTML = `
-          <div class="connection-lens-heading">
-            <span class="connection-lens-type">${escapeHtml(typeLabel)}</span>
-            <strong class="connection-lens-title" title="${escapeHtml(summary.node.title)}">${escapeHtml(summary.node.title)}</strong>
-          </div>
-          <div class="connection-lens-counts">
-            <span><strong>${summary.incoming.length}</strong>входящих</span>
-            <span><strong>${summary.outgoing.length}</strong>исходящих</span>
-            <span><strong>${summary.neighbors.size}</strong>соседей</span>
-          </div>
-          ${relationText ? `<div class="connection-lens-relations">${escapeHtml(relationText)}</div>` : ''}
-        `;
-        refs.connectionLens.hidden = false;
       }
 
       function setHoverNode(nodeId) {
@@ -4022,22 +4467,33 @@
           const focusOrigin = ui.focusNodeId === node.id;
           const diagnosticMuted = ui.diagnosticNodeIds && !ui.diagnosticNodeIds.has(node.id);
           const diagnosticHighlight = ui.diagnosticNodeIds?.has(node.id);
+          const manualSize = node.autoSize === false;
+          const showResizeHandles = manualSize && selected && ui.selectedNodeIds.size === 1 && !compact;
+          const manualStyle = manualSize && !compact
+            ? `; width:${node.width}px; height:${node.shape === 'circle' ? node.width : node.height}px`
+            : '';
+          const listItems = node.type === 'list' && node.items.length
+            ? `<ul class="node-list-items">${node.items.slice(0, 4).map((item) => `<li>${escapeHtml(item)}</li>`).join('')}${node.items.length > 4 ? `<li class="node-list-more">+${node.items.length - 4} ещё</li>` : ''}</ul>`
+            : '';
           return `
-            <article class="graph-node ${node.shape === 'circle' ? 'circle' : ''} ${selected ? 'selected' : ''} ${source ? 'connect-source' : ''} ${contextMuted ? 'context-muted' : ''} ${focusOrigin ? 'focus-origin' : ''} ${diagnosticMuted ? 'diagnostic-muted' : ''} ${diagnosticHighlight ? 'diagnostic-highlight' : ''}"
+            <article class="graph-node ${node.shape === 'circle' ? 'circle' : ''} ${node.type === 'sticker' ? 'sticker' : ''} ${manualSize ? 'manual-size' : ''} ${selected ? 'selected' : ''} ${source ? 'connect-source' : ''} ${contextMuted ? 'context-muted' : ''} ${focusOrigin ? 'focus-origin' : ''} ${diagnosticMuted ? 'diagnostic-muted' : ''} ${diagnosticHighlight ? 'diagnostic-highlight' : ''}"
               data-node-id="${escapeHtml(node.id)}"
+              data-node-type="${escapeHtml(node.type)}"
               data-degree="${degree}"
               tabindex="0"
               role="button"
               aria-label="${escapeHtml(typeLabel)}: ${escapeHtml(node.title)}"
               aria-pressed="${selected}"
               title="${escapeHtml(node.title)} · связей: ${degree}"
-              style="left:${position.x}px; top:${position.y}px; --node-color:${node.color}; --node-radius:${radius}px; --node-scale:${scale}">
+              style="left:${position.x}px; top:${position.y}px; --node-color:${node.color}; --node-radius:${radius}px; --node-scale:${scale}${manualStyle}">
               ${node.pinned ? `<span class="node-pin-badge" title="Закреплён для автоукладки">${icon('pin', 13)}</span>` : ''}
               <div class="node-topline">${icon(config.icon, 15)}<span class="node-type">${escapeHtml(typeLabel)}</span></div>
               <div class="node-title">${escapeHtml(node.title)}</div>
+              ${listItems}
               <div class="node-ref">${escapeHtml(node.sourceRef || 'Без привязки')}</div>
               <div class="node-compact-label" aria-hidden="true">${escapeHtml(compactNodeLabel(node))}</div>
               <span class="node-port top" aria-hidden="true"></span><span class="node-port right" aria-hidden="true"></span><span class="node-port bottom" aria-hidden="true"></span><span class="node-port left" aria-hidden="true"></span>
+              ${showResizeHandles ? '<span class="resize-handle e" data-resize-handle="e" aria-hidden="true"></span><span class="resize-handle s" data-resize-handle="s" aria-hidden="true"></span><span class="resize-handle se" data-resize-handle="se" aria-hidden="true"></span>' : ''}
             </article>
           `;
         }).join('');
@@ -4072,7 +4528,7 @@
           if (!source || !target) return '';
           const hasReverse = reversePairs.has(JSON.stringify([edge.target, edge.source]));
           const offset = hasReverse ? (edge.source < edge.target ? 18 : -18) : 0;
-          const geometry = edgeGeometry(source, target, offset, metrics);
+          const geometry = edgeGeometry(source, target, edge, offset, metrics);
           const selected = ui.selection?.kind === 'edge' && ui.selection.id === edge.id;
           const contextMuted = focus && (!focus.has(edge.source) || !focus.has(edge.target));
           const diagnosticMuted = ui.diagnosticNodeIds && !ui.diagnosticNodeIds.has(edge.source) && !ui.diagnosticNodeIds.has(edge.target);
@@ -4084,6 +4540,7 @@
               <path class="edge-line" d="${geometry.path}" marker-end="url(#${selected ? 'arrow-selected' : 'arrow'})"></path>
               <rect class="edge-label-bg" x="${geometry.mid.x - labelWidth / 2}" y="${geometry.mid.y - 11}" width="${labelWidth}" height="22" rx="5"></rect>
               <text class="edge-label" x="${geometry.mid.x}" y="${geometry.mid.y + 0.5}">${escapeHtml(label)}</text>
+              ${selected ? geometry.points.map((point, index) => `<circle class="edge-control-point" data-edge-point="${index}" cx="${point.x}" cy="${point.y}" r="${compact ? 10 : 6}" tabindex="0" role="button" aria-label="Точка маршрута ${index + 1}"></circle>`).join('') : ''}
             </g>
           `;
         }).join('');
@@ -4173,15 +4630,22 @@
               ${node.type === 'custom' ? `<div class="field"><label for="customTypeField">Название своего типа</label><input id="customTypeField" data-node-field="customTypeLabel" maxlength="60" value="${escapeHtml(node.customTypeLabel || 'Своя сущность')}" placeholder="Например, Решение комиссии"></div>` : ''}
               <div class="field"><label for="nodeRefField">Ссылка / ID сущности</label><input id="nodeRefField" data-node-field="sourceRef" maxlength="300" value="${escapeHtml(node.sourceRef)}" placeholder="Например, NOTE-184 или URL"></div>
               <div class="field"><label for="nodeDescriptionField">Описание</label><textarea id="nodeDescriptionField" data-node-field="description" maxlength="2000" placeholder="Рабочий контекст элемента">${escapeHtml(node.description)}</textarea></div>
+              ${node.type === 'list' ? `<div class="field"><label for="nodeItemsField">Пункты списка</label><textarea id="nodeItemsField" data-node-items maxlength="12000" placeholder="Один пункт на строку">${escapeHtml(node.items.join('\n'))}</textarea></div><button id="convertListButton" class="text-button" type="button" style="width:100%">${icon('atom')}Разложить в атомы</button>` : ''}
             </section>
             <section class="panel-section">
               <h2 class="section-heading">Вид</h2>
+              <label class="storage-option" style="grid-template-columns:22px minmax(0,1fr); padding:10px; margin-bottom:13px"><input id="autoSizeField" type="checkbox" ${node.autoSize ? 'checked' : ''}><span><strong>Автоматический размер</strong>Учитывает количество связей. Для изменения рамкой отключите.</span></label>
               <div class="field">
                 <span class="field-label">Форма</span>
                 <div class="segmented">${Object.entries(SHAPES).map(([key, item]) => `<button class="segment-button ${node.shape === key ? 'active' : ''}" type="button" data-node-shape="${key}" aria-pressed="${node.shape === key}" title="${escapeHtml(item.label)}"><span class="shape-sample ${key}" aria-hidden="true"></span><span class="sr-only">${escapeHtml(item.label)}</span></button>`).join('')}</div>
               </div>
               ${node.shape !== 'circle' ? `<div class="field"><label for="radiusField">Скругление</label><div class="range-row"><input id="radiusField" type="range" min="0" max="36" step="1" value="${clamp(node.radius, 0, 36)}"><span id="radiusValue" class="range-value">${clamp(node.radius, 0, 36)} px</span></div></div>` : ''}
-              ${renderScaleControl([node])}
+              ${node.autoSize ? renderScaleControl([node]) : `
+                <div style="display:grid; grid-template-columns:${node.shape === 'circle' ? '1fr' : '1fr 1fr'}; gap:8px; margin-bottom:8px">
+                  <div class="field"><label for="nodeWidthField">${node.shape === 'circle' ? 'Диаметр' : 'Ширина'}, px</label><input id="nodeWidthField" data-node-size="width" type="number" min="96" max="1200" step="1" value="${Math.round(node.width)}"></div>
+                  ${node.shape === 'circle' ? '' : `<div class="field"><label for="nodeHeightField">Высота, px</label><input id="nodeHeightField" data-node-size="height" type="number" min="64" max="900" step="1" value="${Math.round(node.height)}"></div>`}
+                </div>
+                <p class="field-hint" style="margin-bottom:13px">Размер можно задать числом или изменить за боковую, нижнюю или угловую ручку.</p>`}
               ${renderColorControl([node])}
             </section>
             <section class="panel-section">
@@ -4209,6 +4673,9 @@
             <section class="panel-section">
               <h2 class="section-heading">Связь</h2>
               <div class="field"><label for="edgeLabelField">Название связи</label><input id="edgeLabelField" maxlength="80" value="${escapeHtml(edge.label)}"></div>
+              <div class="field"><label for="edgeRoutingField">Линия</label><select id="edgeRoutingField"><option value="curve" ${edge.routing === 'curve' ? 'selected' : ''}>Плавная</option><option value="orthogonal" ${edge.routing === 'orthogonal' ? 'selected' : ''}>С углами</option><option value="straight" ${edge.routing === 'straight' ? 'selected' : ''}>Ломаная</option></select></div>
+              <p class="field-hint" style="margin-bottom:13px">Двойной клик по линии добавляет точку. Выбранные точки можно перетаскивать.</p>
+              <button id="resetEdgePointsButton" class="text-button" type="button" style="width:100%; margin-bottom:8px" ${edge.points.length ? '' : 'disabled'}>Сбросить точки</button>
               <div class="field"><span class="field-label">Направление</span><div style="display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:6px"><span style="overflow-wrap:anywhere">${escapeHtml(source?.title || '—')}</span>${icon('arrow-left-right')}<span style="overflow-wrap:anywhere">${escapeHtml(target?.title || '—')}</span></div></div>
               <button id="reverseEdgeButton" class="text-button" type="button" style="width:100%">${icon('arrow-left-right')}Развернуть связь</button>
             </section>
@@ -4246,10 +4713,12 @@
         });
         refs.canvas.classList.toggle('mode-hand', ui.mode === 'hand');
         refs.canvas.classList.toggle('mode-connect', ui.mode === 'connect');
+        refs.canvas.classList.toggle('mode-sticker', ui.mode === 'sticker');
         const mode = {
           select: { icon: 'pointer', label: 'Выбор' },
           hand: { icon: 'hand', label: 'Перемещение холста' },
-          connect: { icon: 'link', label: ui.connectSourceId ? 'Выберите конечный элемент' : 'Выберите начальный элемент' }
+          connect: { icon: 'link', label: ui.connectSourceId ? 'Выберите конечный элемент' : 'Выберите начальный элемент' },
+          sticker: { icon: 'sticker', label: 'Стикер: нажмите на холст' }
         }[ui.mode];
         refs.modeStatus.innerHTML = `${icon(mode.icon)}${escapeHtml(mode.label)}`;
         const selectedCount = ui.selectedNodeIds.size;
@@ -4285,10 +4754,11 @@
         renderInspector();
         renderControls();
         syncConnectionLens();
+        if (ui.inlineEdit) positionInlineNodeEditor(nodeById(ui.inlineEdit.nodeId));
       }
 
       function setMode(mode) {
-        if (!['select', 'hand', 'connect'].includes(mode)) return;
+        if (!['select', 'hand', 'connect', 'sticker'].includes(mode)) return;
         ui.mode = mode;
         if (mode !== 'connect') ui.connectSourceId = null;
         render();
@@ -4363,9 +4833,16 @@
         refs.canvas.classList.remove('panning');
         refs.edgePreview.hidden = true;
         refs.edgePreview.setAttribute('d', '');
+        refs.selectionMarquee.hidden = true;
+        refs.nodeLayer.querySelectorAll('.magnet-target').forEach((element) => element.classList.remove('magnet-target'));
         if (edgeRenderFrame) cancelAnimationFrame(edgeRenderFrame);
         edgeRenderFrame = 0;
-        if (action.kind === 'node-drag' || action.kind === 'group-drag') restoreSnapshot(action.before);
+        if (['node-drag', 'group-drag', 'node-resize', 'edge-point'].includes(action.kind)) restoreSnapshot(action.before);
+        if (action.kind === 'marquee') {
+          ui.selectedNodeIds = new Set(action.previousIds);
+          const primaryId = [...ui.selectedNodeIds].at(-1);
+          ui.selection = primaryId ? { kind: 'node', id: primaryId } : null;
+        }
         if (action.kind === 'pan') {
           graph.viewport.x = action.startViewport.x;
           graph.viewport.y = action.startViewport.y;
@@ -4379,13 +4856,29 @@
         if (!element || event.button !== 0) return;
         flushPendingEdit();
         const id = element.dataset.nodeId;
-        if (event.metaKey || event.ctrlKey) return;
         if (ui.mode === 'hand' || ui.spacePressed) {
           event.preventDefault();
           event.stopPropagation();
           beginPan(event);
           return;
         }
+        const resizeHandle = event.target.closest('[data-resize-handle]');
+        if (resizeHandle) {
+          const node = nodeById(id);
+          if (!node || node.autoSize || isSemanticCompact()) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setSingleNodeSelection(id);
+          ui.pointerAction = {
+            kind: 'node-resize', pointerId: event.pointerId, nodeId: id,
+            direction: resizeHandle.dataset.resizeHandle,
+            startClient: { x: event.clientX, y: event.clientY },
+            startWidth: node.width, startHeight: node.height, before: graphSnapshot()
+          };
+          try { refs.canvas.setPointerCapture?.(event.pointerId); } catch {}
+          return;
+        }
+        if (event.metaKey || event.ctrlKey) return;
         if (ui.mode === 'connect') {
           event.preventDefault();
           event.stopPropagation();
@@ -4393,6 +4886,7 @@
         }
         event.preventDefault();
         event.stopPropagation();
+        element.focus({ preventScroll: true });
         const node = nodeById(id);
         if (!node) return;
         if (event.shiftKey) {
@@ -4404,6 +4898,7 @@
             start: nodeCenter(node),
             current: screenToWorld(event.clientX, event.clientY)
           };
+          try { refs.canvas.setPointerCapture?.(event.pointerId); } catch {}
           refs.edgePreview.hidden = false;
           renderNodes();
           updateEdgePreview();
@@ -4423,6 +4918,7 @@
           before: graphSnapshot(),
           activated: false
         };
+        try { refs.canvas.setPointerCapture?.(event.pointerId); } catch {}
         renderNodes();
         ui.selectedNodeIds.forEach((nodeId) => refs.nodeLayer.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`)?.classList.add('dragging'));
         renderInspector();
@@ -4457,6 +4953,7 @@
           before: graphSnapshot(),
           activated: false
         };
+        try { refs.canvas.setPointerCapture?.(event.pointerId); } catch {}
         renderGroups();
         renderInspector();
         renderControls();
@@ -4464,8 +4961,13 @@
 
       function handleCanvasPointerDown(event) {
         if (event.button !== 0 && event.button !== 1) return;
-        if (event.target.closest('[data-node-id], [data-edge-id], [data-group-id]')) return;
         flushPendingEdit();
+        if (ui.mode === 'hand' || ui.spacePressed || event.button === 1) {
+          event.preventDefault();
+          beginPan(event);
+          return;
+        }
+        if (event.target.closest('[data-node-id], [data-edge-id], [data-group-id], .inline-node-editor')) return;
         if (ui.mode === 'connect') {
           ui.connectSourceId = null;
           clearSelection();
@@ -4473,6 +4975,31 @@
           return;
         }
         event.preventDefault();
+        if (ui.mode === 'sticker' && event.button === 0) {
+          const point = screenToWorld(event.clientX, event.clientY);
+          addQuickSticker({ x: point.x - 88, y: point.y - 47 });
+          return;
+        }
+        if (ui.mode === 'select' && event.button === 0) {
+          const rect = refs.canvas.getBoundingClientRect();
+          const additive = event.metaKey || event.ctrlKey;
+          ui.pointerAction = {
+            kind: 'marquee', pointerId: event.pointerId,
+            startClient: { x: event.clientX, y: event.clientY },
+            startLocal: { x: event.clientX - rect.left, y: event.clientY - rect.top },
+            previousIds: additive ? [...ui.selectedNodeIds] : [], additive
+          };
+          if (!additive) clearSelection();
+          refs.selectionMarquee.hidden = false;
+          refs.selectionMarquee.style.left = `${event.clientX - rect.left}px`;
+          refs.selectionMarquee.style.top = `${event.clientY - rect.top}px`;
+          refs.selectionMarquee.style.width = '0px';
+          refs.selectionMarquee.style.height = '0px';
+          try { refs.canvas.setPointerCapture?.(event.pointerId); } catch {}
+          renderInspector();
+          renderControls();
+          return;
+        }
         clearSelection();
         beginPan(event);
         renderInspector();
@@ -4489,6 +5016,69 @@
           graph.viewport.x = action.startViewport.x + event.clientX - action.startClient.x;
           graph.viewport.y = action.startViewport.y + event.clientY - action.startClient.y;
           applyViewport();
+          return;
+        }
+        if (action.kind === 'marquee') {
+          const rect = refs.canvas.getBoundingClientRect();
+          const x1 = Math.min(action.startClient.x, event.clientX) - rect.left;
+          const y1 = Math.min(action.startClient.y, event.clientY) - rect.top;
+          const x2 = Math.max(action.startClient.x, event.clientX) - rect.left;
+          const y2 = Math.max(action.startClient.y, event.clientY) - rect.top;
+          refs.selectionMarquee.style.left = `${x1}px`;
+          refs.selectionMarquee.style.top = `${y1}px`;
+          refs.selectionMarquee.style.width = `${x2 - x1}px`;
+          refs.selectionMarquee.style.height = `${y2 - y1}px`;
+          const metrics = degreeMetrics();
+          const compact = isSemanticCompact();
+          const selected = new Set(action.previousIds);
+          graph.nodes.forEach((node) => {
+            if (hiddenNodeIds().has(node.id)) return;
+            const position = nodeDisplayPosition(node, compact, metrics);
+            const size = nodeSize(node, compact, metrics);
+            const left = graph.viewport.x + position.x * graph.viewport.scale;
+            const top = graph.viewport.y + position.y * graph.viewport.scale;
+            const right = left + size.width * graph.viewport.scale;
+            const bottom = top + size.height * graph.viewport.scale;
+            if (right >= x1 && left <= x2 && bottom >= y1 && top <= y2) selected.add(node.id);
+          });
+          ui.selectedNodeIds = selected;
+          const primaryId = [...selected].at(-1);
+          ui.selection = primaryId ? { kind: 'node', id: primaryId } : null;
+          renderNodes();
+          renderInspector();
+          renderControls();
+          return;
+        }
+        if (action.kind === 'node-resize') {
+          const node = nodeById(action.nodeId);
+          if (!node) return;
+          const dx = (event.clientX - action.startClient.x) / graph.viewport.scale;
+          const dy = (event.clientY - action.startClient.y) / graph.viewport.scale;
+          if (node.shape === 'circle') {
+            const delta = action.direction === 'e'
+              ? dx
+              : action.direction === 's'
+                ? dy
+                : Math.abs(dx) >= Math.abs(dy) ? dx : dy;
+            node.width = clamp(action.startWidth + delta, 96, 1200);
+            node.height = node.width;
+          } else {
+            if (action.direction.includes('e')) node.width = clamp(action.startWidth + dx, 96, 1200);
+            if (action.direction.includes('s')) node.height = clamp(action.startHeight + dy, 64, 900);
+          }
+          const nodeElement = refs.nodeLayer.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`);
+          if (nodeElement) {
+            nodeElement.style.width = `${node.width}px`;
+            nodeElement.style.height = `${node.shape === 'circle' ? node.width : node.height}px`;
+          }
+          scheduleEdgeRender();
+          return;
+        }
+        if (action.kind === 'edge-point') {
+          const edge = edgeById(action.edgeId);
+          if (!edge?.points[action.pointIndex]) return;
+          edge.points[action.pointIndex] = worldPoint;
+          renderEdges();
           return;
         }
         if (action.kind === 'node-drag' || action.kind === 'group-drag') {
@@ -4514,7 +5104,21 @@
           return;
         }
         if (action.kind === 'connect') {
-          action.current = worldPoint;
+          const metrics = degreeMetrics();
+          const hidden = hiddenNodeIds();
+          let nearest = null;
+          let nearestDistance = 42;
+          graph.nodes.forEach((node) => {
+            if (node.id === action.sourceId || hidden.has(node.id)) return;
+            const center = nodeCenter(node, isSemanticCompact(), metrics);
+            const screenX = graph.viewport.x + center.x * graph.viewport.scale + refs.canvas.getBoundingClientRect().left;
+            const screenY = graph.viewport.y + center.y * graph.viewport.scale + refs.canvas.getBoundingClientRect().top;
+            const distance = Math.hypot(event.clientX - screenX, event.clientY - screenY);
+            if (distance < nearestDistance) { nearest = node; nearestDistance = distance; }
+          });
+          action.snapTargetId = nearest?.id || null;
+          action.current = nearest ? nodeCenter(nearest, isSemanticCompact(), metrics) : worldPoint;
+          refs.nodeLayer.querySelectorAll('[data-node-id]').forEach((element) => element.classList.toggle('magnet-target', element.dataset.nodeId === action.snapTargetId));
           updateEdgePreview();
         }
       }
@@ -4524,10 +5128,23 @@
         if (!action || action.pointerId !== event.pointerId) return;
         ui.pointerAction = null;
         refs.canvas.classList.remove('panning');
+        refs.selectionMarquee.hidden = true;
         if (edgeRenderFrame) cancelAnimationFrame(edgeRenderFrame);
         edgeRenderFrame = 0;
         if (action.kind === 'pan') {
           saveGraph();
+          return;
+        }
+        if (action.kind === 'marquee') {
+          render();
+          return;
+        }
+        if (action.kind === 'node-resize') {
+          commitInteractiveMutation('Изменён размер элемента', action.before);
+          return;
+        }
+        if (action.kind === 'edge-point') {
+          commitInteractiveMutation('Изменён маршрут связи', action.before);
           return;
         }
         if (action.kind === 'node-drag' || action.kind === 'group-drag') {
@@ -4551,10 +5168,49 @@
           ui.suppressNodeClick = true;
           setTimeout(() => { ui.suppressNodeClick = false; }, 80);
           const targetElement = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('[data-node-id]');
+          const targetId = action.snapTargetId || targetElement?.dataset.nodeId;
           renderNodes();
-          if (targetElement) createEdge(action.sourceId, targetElement.dataset.nodeId);
+          if (targetId) createEdge(action.sourceId, targetId);
           else toast('Перетащите связь на другой элемент', 'error');
         }
+      }
+
+      function handleEdgePointerDown(event) {
+        const point = event.target.closest('[data-edge-point]');
+        if (!point || event.button !== 0) return;
+        if (ui.mode === 'hand' || ui.spacePressed) return;
+        const group = point.closest('[data-edge-id]');
+        const edge = group ? edgeById(group.dataset.edgeId) : null;
+        if (!edge) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const before = graphSnapshot();
+        if (!edge.points.length) {
+          const source = nodeById(edge.source);
+          const target = nodeById(edge.target);
+          if (source && target) edge.points = edgeGeometry(source, target, edge).points.map((item) => ({ ...item }));
+        }
+        ui.pointerAction = { kind: 'edge-point', pointerId: event.pointerId, edgeId: edge.id, pointIndex: Number(point.dataset.edgePoint), before };
+        try { refs.canvas.setPointerCapture?.(event.pointerId); } catch {}
+      }
+
+      function addEdgeControlPoint(edgeId, clientX, clientY) {
+        const edge = edgeById(edgeId);
+        const source = edge ? nodeById(edge.source) : null;
+        const target = edge ? nodeById(edge.target) : null;
+        if (!edge || !source || !target) return;
+        const point = screenToWorld(clientX, clientY);
+        mutate('Добавлена точка маршрута связи', () => {
+          edge.points.push(point);
+          const start = nodeCenter(source);
+          const end = nodeCenter(target);
+          const dx = end.x - start.x;
+          const dy = end.y - start.y;
+          const denominator = dx * dx + dy * dy || 1;
+          edge.points.sort((a, b) => (((a.x - start.x) * dx + (a.y - start.y) * dy) - ((b.x - start.x) * dx + (b.y - start.y) * dy)) / denominator);
+          ui.selection = { kind: 'edge', id: edge.id };
+          ui.selectedNodeIds.clear();
+        });
       }
 
       function updateEdgePreview() {
@@ -4583,6 +5239,9 @@
           if (field === 'type') {
             node.type = TYPE_CONFIG[value] ? value : 'custom';
             if (node.type === 'custom' && !node.customTypeLabel) node.customTypeLabel = 'Своя сущность';
+            if (node.type === 'sticker') Object.assign(node, { autoSize: false, width: 176, height: 94, radius: 4 });
+            if (node.type === 'list') Object.assign(node, { autoSize: false, width: 240, height: 138 });
+            if (node.type === 'atom') Object.assign(node, { autoSize: true, width: 190, height: 96 });
           } else {
             const limit = field === 'description' ? 2000 : field === 'title' ? 180 : field === 'customTypeLabel' ? 60 : 300;
             node[field] = String(value).slice(0, limit);
@@ -4638,24 +5297,23 @@
         const localRows = workspace.graphs.map((item) => {
           const active = item.id === graph.id;
           const metadata = graphStorage(item.id);
+          const publishing = publishingGraphIds.has(item.id);
           const updated = new Date(item.updatedAt);
           const updatedLabel = Number.isNaN(updated.getTime()) ? 'дата не указана' : new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(updated);
           return `<li class="graph-list-row ${active ? 'active' : ''}" data-graph-id="${escapeHtml(item.id)}">
             <div class="graph-list-main">
-              <div class="graph-list-title"><span>${escapeHtml(item.title)}</span>${active ? '<span class="graph-current-label">Открыт</span>' : ''}<span class="graph-storage-label ${metadata.mode === 'system' ? 'system' : ''}">${metadata.mode === 'system' ? 'DPMS' : 'Локально'}</span></div>
-              <div class="graph-list-meta">${item.nodes.length} элементов · ${item.edges.length} связей · ${escapeHtml(updatedLabel)}${metadata.syncState === 'offline' ? ' · ожидает синхронизации' : ''}</div>
+              <div class="graph-list-title"><span>${escapeHtml(item.title)}</span>${active ? '<span class="graph-current-label">Открыт</span>' : ''}<span class="graph-storage-label">Локально</span>${publishing ? '<span class="graph-storage-label system">Публикуем…</span>' : metadata.revision ? `<span class="graph-storage-label system">${metadata.publishState === 'published' ? 'Опубликован' : 'Есть изменения'}</span>` : ''}</div>
+              <div class="graph-list-meta">${item.nodes.length} элементов · ${item.edges.length} связей · ${escapeHtml(updatedLabel)}${metadata.error ? ` · ${escapeHtml(metadata.error)}` : ''}</div>
             </div>
             <div class="graph-list-actions">
               <button class="text-button" type="button" data-graph-open="${escapeHtml(item.id)}" ${active ? 'disabled' : ''}>Открыть</button>
+              <button class="icon-button" type="button" data-graph-publish="${escapeHtml(item.id)}" aria-label="${metadata.revision ? 'Обновить снимок' : 'Опубликовать'} ${escapeHtml(item.title)}" title="${metadata.revision ? 'Обновить снимок в DPMS' : 'Отправить снимок в DPMS'}" ${publishing || !hostBridgeReady ? 'disabled' : ''}><svg class="icon" aria-hidden="true"><use href="#i-upload"></use></svg></button>
               <button class="icon-button" type="button" data-graph-duplicate="${escapeHtml(item.id)}" aria-label="Дублировать граф ${escapeHtml(item.title)}" title="Дублировать"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg></button>
               <button class="icon-button danger" type="button" data-graph-delete="${escapeHtml(item.id)}" aria-label="Удалить граф ${escapeHtml(item.title)}" title="Удалить" ${workspace.graphs.length === 1 ? 'disabled' : ''}><svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg></button>
             </div>
           </li>`;
         });
-        const serverRows = [...serverGraphSummaries.values()].filter((summary) => {
-          const local = workspace.graphs.find((item) => item.id === summary.client_id);
-          return !local || graphStorage(local.id).mode !== 'system';
-        }).map((summary) => {
+        const serverRows = [...serverGraphSummaries.values()].map((summary) => {
           const updated = new Date(summary.updated_at);
           const updatedLabel = Number.isNaN(updated.getTime()) ? 'дата не указана' : new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(updated);
           return `<li class="graph-list-row" data-server-graph-id="${escapeHtml(summary.client_id)}">
@@ -4664,140 +5322,161 @@
               <div class="graph-list-meta">${summary.node_count} элементов · ${summary.edge_count} связей · ${escapeHtml(updatedLabel)}</div>
             </div>
             <div class="graph-list-actions">
-              <button class="text-button" type="button" data-server-graph-open="${escapeHtml(summary.client_id)}">Открыть</button>
+              <button class="text-button" type="button" data-server-graph-open="${escapeHtml(summary.client_id)}" ${serverDownloadsInFlight.has(summary.client_id) ? 'disabled' : ''}>${serverDownloadsInFlight.has(summary.client_id) ? 'Скачиваем…' : 'Скачать копию'}</button>
+              <button class="icon-button danger" type="button" data-server-graph-delete="${escapeHtml(summary.client_id)}" data-server-revision="${summary.revision}" aria-label="Удалить облачный снимок ${escapeHtml(summary.title)}" title="Удалить снимок из DPMS"><svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg></button>
             </div>
           </li>`;
         });
-        refs.graphsDialogBody.innerHTML = `<ul class="graph-list">${[...localRows, ...serverRows].join('')}</ul>`;
+        refs.graphsDialogBody.innerHTML = `
+          <div class="graph-list-section-title"><span>На этом устройстве</span><span>${localRows.length}</span></div>
+          <ul class="graph-list">${localRows.join('')}</ul>
+          <div class="graph-list-section-title"><span>Снимки в DPMS</span><span>${serverRows.length}</span></div>
+          ${hostBridgeReady ? `<ul class="graph-list">${serverRows.join('') || '<li class="graph-list-meta" style="padding:12px 0">Облачных снимков пока нет.</li>'}</ul>` : '<p class="graph-list-meta">Серверное хранилище доступно внутри DPMS.</p>'}`;
       }
 
       function openGraphManager() {
         flushPendingEdit();
-        saveGraph();
+        saveGraph({ markChanged: false });
         renderGraphManager();
         document.getElementById('graphsDialog').showModal();
         refreshServerGraphs();
       }
 
-      function openStorageDialog() {
-        const metadata = graphStorage();
-        const radio = document.querySelector(`input[name="storageMode"][value="${metadata.mode}"]`);
-        if (radio) radio.checked = true;
-        refs.storageDialogStatus.classList.remove('error');
-        refs.storageDialogStatus.textContent = metadata.mode === 'system'
-          ? metadata.syncState === 'offline'
-            ? metadata.error || 'Граф сохранён локально и ожидает синхронизации.'
-            : 'Граф хранится в системе и доступен после входа с других устройств.'
-          : 'Граф хранится только в этом браузере и не отправляется на сервер.';
-        document.getElementById('storageDialog').showModal();
-      }
-
-      async function applyStorageChoice() {
-        const selected = document.querySelector('input[name="storageMode"]:checked')?.value;
-        if (!['local', 'system'].includes(selected)) return;
-        const graphId = graph.id;
-        const metadata = graphStorage(graphId);
-        const button = document.getElementById('applyStorageButton');
-        button.disabled = true;
-        button.classList.add('loading');
-        button.setAttribute('aria-busy', 'true');
-        button.textContent = selected === 'system' ? 'Сохраняем…' : 'Переключаем…';
-        refs.storageDialogStatus.classList.remove('error');
-
-        try {
-          if (selected === 'system') {
-            if (!saveGraph()) return;
-            metadata.mode = 'system';
-            metadata.syncState = 'saving';
-            metadata.error = '';
-            persistWorkspace();
-            renderStorageControl();
-            const savedDocument = await syncSystemGraph(graphId);
-            if (!savedDocument) {
-              const currentMetadata = workspace.storage[graphId];
-              if (currentMetadata?.mode === 'system' && currentMetadata.syncState === 'offline') {
-                refs.storageDialogStatus.classList.add('error');
-                refs.storageDialogStatus.textContent = currentMetadata.error || 'Синхронизация не выполнена. Локальная копия сохранена.';
-                return;
-              }
-              window.document.getElementById('storageDialog').close();
-              return;
-            }
-            window.document.getElementById('storageDialog').close();
-            toast('Граф сохранён в системе DPMS', 'success');
-            return;
-          }
-
-          if (serverSavesInFlight.has(graphId)) {
-            refs.storageDialogStatus.classList.add('error');
-            refs.storageDialogStatus.textContent = 'Дождитесь завершения текущего сохранения и повторите переключение.';
-            return;
-          }
-          clearTimeout(serverSaveTimers.get(graphId));
-          serverSaveTimers.delete(graphId);
-          if (metadata.mode === 'system' && metadata.revision) {
-            try {
-              await requestHost('delete', { clientId: graphId, baseRevision: metadata.revision });
-            } catch (error) {
-              if (error?.status !== 404) throw error;
-            }
-          }
-          serverGraphSummaries.delete(graphId);
-          setGraphStorage(graphId, localStorageMetadata());
+      async function publishGraph(id) {
+        const source = workspace.graphs.find((item) => item.id === id);
+        if (!source || !hostBridgeReady || publishingGraphIds.has(id)) return;
+        if (source.id === graph.id) {
+          flushPendingEdit();
+          if (!saveGraph()) return;
+        }
+        const metadata = graphStorage(id);
+        const remote = serverGraphSummaries.get(id);
+        if (remote && !metadata.revision) {
+          metadata.publishState = 'conflict';
+          metadata.error = 'В DPMS уже есть снимок с таким ID. Скачайте его копию или удалите снимок явно.';
           persistWorkspace();
+          renderGraphManager();
+          toast(metadata.error, 'error');
+          return;
+        }
+        metadata.error = '';
+        const publishedPayload = deepClone(source);
+        const publishedFingerprint = JSON.stringify(publishedPayload);
+        publishingGraphIds.add(id);
+        renderGraphManager();
+        renderStorageControl();
+        try {
+          const document = await requestHost('put', { clientId: id, baseRevision: metadata.revision, payload: publishedPayload });
+          const currentSource = workspace.graphs.find((item) => item.id === id);
+          const changedDuringPublish = !currentSource || JSON.stringify(currentSource) !== publishedFingerprint;
+          metadata.revision = document.revision;
+          metadata.serverUpdatedAt = document.updated_at;
+          metadata.publishState = changedDuringPublish ? 'changed' : 'published';
+          metadata.error = changedDuringPublish ? 'Снимок опубликован, но на устройстве уже есть более новые изменения.' : '';
+          rememberServerDocument(document);
+          if (!persistWorkspace()) {
+            metadata.publishState = 'error';
+            metadata.error = 'Снимок опубликован, но браузер не сохранил его ревизию. Обновите список перед повторной отправкой.';
+            renderGraphManager();
+            renderStorageControl();
+            toast(metadata.error, 'error');
+            return;
+          }
+          renderGraphManager();
           renderStorageControl();
-          document.getElementById('storageDialog').close();
-          toast('Граф оставлен только на этом устройстве', 'success');
+          toast(changedDuringPublish ? metadata.error : 'Снимок графа опубликован в DPMS', changedDuringPublish ? '' : 'success');
         } catch (error) {
-          refs.storageDialogStatus.classList.add('error');
-          refs.storageDialogStatus.textContent = error?.message || 'Не удалось изменить место хранения';
+          metadata.publishState = error?.status === 409 ? 'conflict' : 'error';
+          metadata.error = String(error?.message || 'Не удалось опубликовать снимок').slice(0, 300);
+          persistWorkspace();
+          renderGraphManager();
+          renderStorageControl();
+          toast(metadata.error, 'error');
         } finally {
-          button.disabled = false;
-          button.classList.remove('loading');
-          button.removeAttribute('aria-busy');
-          button.textContent = 'Применить';
+          publishingGraphIds.delete(id);
+          renderGraphManager();
+          renderStorageControl();
         }
       }
 
       async function openServerGraph(id) {
+        if (serverDownloadsInFlight.has(id)) return;
+        serverDownloadsInFlight.add(id);
+        renderGraphManager();
         try {
           flushPendingEdit();
           if (!saveGraph()) return;
-          const cached = workspace.graphs.find((item) => item.id === id);
-          const needsAdditionalCacheEntry = !cached || graphStorage(id).mode !== 'system';
-          if (needsAdditionalCacheEntry && workspace.graphs.length >= MAX_CACHED_GRAPHS) {
+          if (workspace.graphs.length >= MAX_CACHED_GRAPHS) {
             toast('Локальный кэш содержит 100 графов. Удалите один из них, чтобы открыть граф из системы.', 'error');
             return;
           }
-          const document = await requestHost('get', { clientId: id });
-          const existingIndex = workspace.graphs.findIndex((item) => item.id === id);
-          if (existingIndex >= 0 && graphStorage(id).mode !== 'system') {
-            const local = workspace.graphs[existingIndex];
-            const previousId = local.id;
-            local.id = uid('graph');
-            local.title = `${local.title} — локальная версия`.slice(0, 80);
-            setGraphStorage(local.id, localStorageMetadata());
-            delete workspace.storage[previousId];
-            if (workspace.activeGraphId === previousId) workspace.activeGraphId = local.id;
+          const serverDocument = await requestHost('get', { clientId: id });
+          if (workspace.graphs.length >= MAX_CACHED_GRAPHS) {
+            throw new Error('Пока снимок скачивался, локальный кэш заполнился. Удалите один граф и повторите действие.');
           }
-          const serverGraph = normalizeGraph(document.payload);
-          const targetIndex = workspace.graphs.findIndex((item) => item.id === serverGraph.id);
-          if (targetIndex >= 0) workspace.graphs[targetIndex] = serverGraph;
-          else workspace.graphs.push(serverGraph);
-          setGraphStorage(serverGraph.id, {
-            mode: 'system', revision: document.revision, serverUpdatedAt: document.updated_at,
-            syncState: 'synced', error: ''
-          });
-          rememberServerDocument(document);
-          graph = serverGraph;
+          const serverGraph = normalizeGraph(serverDocument.payload);
+          const idCollision = workspace.graphs.some((item) => item.id === serverGraph.id);
+          if (idCollision) {
+            serverGraph.id = uid('graph');
+            serverGraph.title = `${serverGraph.title} — облачная копия`.slice(0, 80);
+          }
+          const previousWorkspace = deepClone(workspace);
+          workspace.graphs = [...workspace.graphs, serverGraph];
+          workspace.storage = {
+            ...workspace.storage,
+            [serverGraph.id]: normalizeStorageMetadata(idCollision ? localStorageMetadata() : {
+              mode: 'local', revision: serverDocument.revision, serverUpdatedAt: serverDocument.updated_at,
+              publishState: 'published', error: ''
+            })
+          };
           workspace.activeGraphId = serverGraph.id;
+          if (!persistWorkspace()) {
+            workspace = previousWorkspace;
+            graph = workspace.graphs.find((item) => item.id === workspace.activeGraphId) || workspace.graphs[0];
+            throw new Error('Снимок получен, но браузер не смог сохранить локальную копию. Освободите место и повторите действие.');
+          }
+          graph = serverGraph;
+          rememberServerDocument(serverDocument);
           resetGraphSession();
-          persistWorkspace();
           render();
           document.getElementById('graphsDialog').close();
           refs.canvas.focus({ preventScroll: true });
         } catch (error) {
-          toast(error?.message || 'Не удалось открыть граф из системы', 'error');
+          toast(error?.message || 'Не удалось скачать снимок из системы', 'error');
+        } finally {
+          serverDownloadsInFlight.delete(id);
+          if (document.getElementById('graphsDialog').open) renderGraphManager();
+        }
+      }
+
+      async function deleteServerGraph(id, revision) {
+        const summary = serverGraphSummaries.get(id);
+        if (!summary || !confirm(`Удалить облачный снимок «${summary.title}»? Локальные графы останутся на устройстве.`)) return;
+        const metadata = workspace.storage?.[id];
+        const previousMetadata = metadata ? deepClone(metadata) : null;
+        if (metadata) {
+          setGraphStorage(id, localStorageMetadata());
+          if (!persistWorkspace()) {
+            workspace.storage[id] = previousMetadata;
+            renderGraphManager();
+            renderStorageControl();
+            toast('Удаление отменено: браузер не сохранил локальный статус.', 'error');
+            return;
+          }
+        }
+        try {
+          await requestHost('delete', { clientId: id, baseRevision: Number(revision) || summary.revision });
+          serverGraphSummaries.delete(id);
+          renderGraphManager();
+          renderStorageControl();
+          toast('Облачный снимок удалён');
+        } catch (error) {
+          if (previousMetadata) {
+            workspace.storage[id] = previousMetadata;
+            persistWorkspace();
+            renderStorageControl();
+          }
+          toast(error?.message || 'Не удалось удалить облачный снимок', 'error');
         }
       }
 
@@ -4805,11 +5484,11 @@
         const next = workspace.graphs.find((item) => item.id === id);
         if (!next || next.id === graph.id) return;
         flushPendingEdit();
-        if (!saveGraph()) return;
+        if (!saveGraph({ markChanged: false })) return;
         graph = next;
         workspace.activeGraphId = graph.id;
         resetGraphSession();
-        saveGraph();
+        persistWorkspace();
         render();
         document.getElementById('graphsDialog').close();
         refs.canvas.focus({ preventScroll: true });
@@ -4821,7 +5500,7 @@
           return;
         }
         flushPendingEdit();
-        if (!saveGraph()) return;
+        if (!saveGraph({ markChanged: false })) return;
         const previous = graph;
         const next = blankGraph(`Новый граф ${workspace.graphs.length + 1}`);
         workspace.graphs.push(next);
@@ -4829,7 +5508,7 @@
         workspace.activeGraphId = next.id;
         graph = next;
         resetGraphSession();
-        if (!saveGraph()) {
+        if (!saveGraph({ markChanged: false })) {
           workspace.graphs = workspace.graphs.filter((item) => item.id !== next.id);
           delete workspace.storage[next.id];
           graph = previous;
@@ -4860,7 +5539,7 @@
         copy.audit = [...copy.audit, { id: uid('audit'), at: now, action: `Создана копия графа «${source.title}»` }].slice(-200);
         workspace.graphs.push(copy);
         setGraphStorage(copy.id, localStorageMetadata());
-        if (!saveGraph()) {
+        if (!persistWorkspace()) {
           workspace.graphs = workspace.graphs.filter((item) => item.id !== copy.id);
           delete workspace.storage[copy.id];
           return;
@@ -4869,28 +5548,10 @@
         toast('Копия графа создана', 'success');
       }
 
-      async function deleteGraph(id) {
+      function deleteGraph(id) {
         const target = workspace.graphs.find((item) => item.id === id);
         if (!target || workspace.graphs.length === 1) return;
-        if (serverSavesInFlight.has(id)) {
-          toast('Дождитесь завершения текущего сохранения и повторите удаление.', 'error');
-          return;
-        }
-        if (!confirm(`Удалить граф «${target.title}»? Это действие нельзя отменить.`)) return;
-        const metadata = graphStorage(id);
-        clearTimeout(serverSaveTimers.get(id));
-        serverSaveTimers.delete(id);
-        if (metadata.mode === 'system' && metadata.revision) {
-          try {
-            await requestHost('delete', { clientId: id, baseRevision: metadata.revision });
-            serverGraphSummaries.delete(id);
-          } catch (error) {
-            if (error?.status !== 404) {
-              toast(error?.message || 'Не удалось удалить граф из системы', 'error');
-              return;
-            }
-          }
-        }
+        if (!confirm(`Удалить локальный граф «${target.title}»? Облачный снимок, если он есть, останется в DPMS.`)) return;
         const previousGraphs = workspace.graphs;
         const previousGraph = graph;
         const previousStorage = deepClone(workspace.storage);
@@ -4902,7 +5563,7 @@
           resetGraphSession();
           render();
         }
-        if (!saveGraph()) {
+        if (!persistWorkspace()) {
           workspace.graphs = previousGraphs;
           workspace.storage = previousStorage;
           graph = previousGraph;
@@ -4958,8 +5619,12 @@
         const customTypeLabel = document.getElementById('editCustomType').value.trim().slice(0, 60) || 'Своя сущность';
         const sourceRef = document.getElementById('editNodeRef').value.trim().slice(0, 300);
         const description = document.getElementById('editNodeDescription').value.trim().slice(0, 2000);
+        const previousType = node.type;
         mutate('Отредактирована информация элемента', () => {
           Object.assign(node, { title, type, customTypeLabel, sourceRef, description });
+          if (type === 'sticker' && previousType !== 'sticker') Object.assign(node, { autoSize: false, width: 176, height: 94, radius: 4 });
+          if (type === 'list' && previousType !== 'list') Object.assign(node, { autoSize: false, width: 240, height: 138 });
+          if (type === 'atom' && previousType !== 'atom') Object.assign(node, { autoSize: true, width: 190, height: 96 });
         });
         ui.editDialogDirty = false;
         ui.editingNodeId = null;
@@ -5208,15 +5873,47 @@
         return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable;
       }
 
+      function isNativeControl(target) {
+        return target instanceof Element && Boolean(target.closest('button, a, summary'));
+      }
+
       function handleKeyDown(event) {
-        if (document.querySelector('dialog[open]')) return;
-        const editing = isTextEditing(event.target);
-        const command = event.metaKey || event.ctrlKey;
-        if (command && (event.key === '\\' || event.code === 'Backslash')) {
+        ui.pressedCodes.add(event.code);
+        if (document.getElementById('shortcutDialog').open && ui.shortcutCapture) {
           event.preventDefault();
-          togglePanels();
+          event.stopPropagation();
+          if (event.key === 'Escape') {
+            ui.shortcutCapture = null;
+            renderShortcutUi();
+            return;
+          }
+          if (['Meta', 'Control', 'Shift', 'Alt'].includes(event.key)) return;
+          const value = eventShortcut(event);
+          const message = document.getElementById('shortcutSettingsMessage');
+          const belongsToAnotherDefault = Object.entries(SHORTCUT_DEFAULTS)
+            .some(([key, config]) => key !== ui.shortcutCapture && config.value === value);
+          const fixedKey = ['Delete', 'Backspace', 'Enter', ' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)
+            || (!event.metaKey && !event.ctrlKey && !event.altKey && ['v', 'h', 'l', '+', '=', '-', '?'].includes(event.key.toLowerCase()));
+          if (RESERVED_SHORTCUTS.has(value) || fixedKey || belongsToAnotherDefault) {
+            message.textContent = 'Это сочетание уже используется браузером, системой или фиксированной командой холста.';
+            return;
+          }
+          const conflict = Object.entries(shortcuts).find(([key, shortcut]) => key !== ui.shortcutCapture && shortcut === value);
+          if (conflict) {
+            message.textContent = `Сочетание уже используется: ${SHORTCUT_DEFAULTS[conflict[0]].label}.`;
+            return;
+          }
+          shortcuts[ui.shortcutCapture] = value;
+          ui.shortcutCapture = null;
+          saveShortcuts();
+          message.textContent = 'Сочетание сохранено.';
+          renderShortcutUi();
           return;
         }
+        if (document.querySelector('dialog[open]')) return;
+        const editing = isTextEditing(event.target);
+        const nativeControl = isNativeControl(event.target);
+        const command = event.metaKey || event.ctrlKey;
         if (command && event.key.toLowerCase() === 'z' && !editing) {
           event.preventDefault();
           event.shiftKey ? redo() : undo();
@@ -5235,13 +5932,28 @@
           render();
           return;
         }
-        if (editing) return;
-        if (command || event.altKey) return;
-        if (event.key === 'Tab' && event.shiftKey && ui.selection?.kind === 'node' && ui.selectedNodeIds.size === 1) {
+        if (editing || nativeControl) return;
+        if (matchesShortcut('panels', event)) {
+          event.preventDefault();
+          togglePanels();
+          return;
+        }
+        if (matchesShortcut('hierarchy', event)) {
+          event.preventDefault();
+          openHierarchyDialog();
+          return;
+        }
+        if (matchesShortcut('sibling', event) && ui.selection?.kind === 'node' && ui.selectedNodeIds.size === 1) {
+          event.preventDefault();
+          createSiblingNode();
+          return;
+        }
+        if (matchesShortcut('child', event) && ui.selection?.kind === 'node' && ui.selectedNodeIds.size === 1) {
           event.preventDefault();
           createChildNode();
           return;
         }
+        if (command || event.altKey) return;
         if (event.code === 'Space') {
           event.preventDefault();
           ui.spacePressed = true;
@@ -5270,10 +5982,14 @@
         if (event.key === 'v' || event.key === 'V') setMode('select');
         if (event.key === 'h' || event.key === 'H') setMode('hand');
         if (event.key === 'l' || event.key === 'L') setMode('connect');
-        if (event.key === '?' || (event.shiftKey && event.key === '/')) document.getElementById('helpDialog').showModal();
-        if (event.key === '0' || event.code === 'Digit0') {
+        if (matchesShortcut('sticker', event)) setMode('sticker');
+        if (event.key === '?' || (event.shiftKey && event.key === '/')) {
+          renderShortcutUi();
+          document.getElementById('helpDialog').showModal();
+        }
+        if (matchesShortcut('fit', event) || matchesShortcut('arrange', event)) {
           event.preventDefault();
-          event.shiftKey ? autoArrangeGraph() : fitGraph();
+          matchesShortcut('arrange', event) ? autoArrangeGraph() : fitGraph();
         }
         if (event.key === '+' || event.key === '=') setZoom(graph.viewport.scale * 1.12);
         if (event.key === '-') setZoom(graph.viewport.scale / 1.12);
@@ -5384,7 +6100,9 @@
           if (!node) return;
           event.preventDefault();
           event.stopPropagation();
-          openNodeEditor(node.dataset.nodeId);
+          const item = nodeById(node.dataset.nodeId);
+          if (item?.type === 'sticker') openInlineNodeEditor(item.id, { selectAll: true });
+          else openNodeEditor(node.dataset.nodeId);
         });
         refs.nodeLayer.addEventListener('click', (event) => {
           const node = event.target.closest('[data-node-id]');
@@ -5408,17 +6126,57 @@
           }
         });
 
+        refs.edges.addEventListener('pointerdown', handleEdgePointerDown);
         refs.edges.addEventListener('click', (event) => {
           const edge = event.target.closest('[data-edge-id]');
           if (!edge) return;
           event.stopPropagation();
+          if (ui.selection?.kind === 'edge' && ui.selection.id === edge.dataset.edgeId) return;
           ui.selectedNodeIds.clear();
           ui.selection = { kind: 'edge', id: edge.dataset.edgeId };
           render();
         });
+        refs.edges.addEventListener('dblclick', (event) => {
+          const edge = event.target.closest('[data-edge-id]');
+          if (!edge || event.target.closest('[data-edge-point]')) return;
+          event.preventDefault();
+          event.stopPropagation();
+          addEdgeControlPoint(edge.dataset.edgeId, event.clientX, event.clientY);
+        });
         refs.edges.addEventListener('keydown', (event) => {
           const edge = event.target.closest('[data-edge-id]');
-          if (!edge || (event.key !== 'Enter' && event.key !== ' ')) return;
+          if (!edge) return;
+          const point = event.target.closest('[data-edge-point]');
+          if (point && (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key) || event.key === 'Delete' || event.key === 'Backspace')) {
+            event.preventDefault();
+            event.stopPropagation();
+            const targetEdge = edgeById(edge.dataset.edgeId);
+            const pointIndex = Number(point.dataset.edgePoint);
+            if (!targetEdge) return;
+            const source = nodeById(targetEdge.source);
+            const target = nodeById(targetEdge.target);
+            const seededPoints = !targetEdge.points.length && source && target
+              ? edgeGeometry(source, target, targetEdge).points.map((item) => ({ ...item }))
+              : null;
+            if (event.key === 'Delete' || event.key === 'Backspace') {
+              mutate('Удалена точка маршрута связи', () => {
+                if (seededPoints) targetEdge.points = seededPoints;
+                if (targetEdge.points[pointIndex]) targetEdge.points.splice(pointIndex, 1);
+              });
+              return;
+            }
+            const step = event.shiftKey ? 10 : 2;
+            mutate('Смещена точка маршрута связи', () => {
+              if (seededPoints) targetEdge.points = seededPoints;
+              if (!targetEdge.points[pointIndex]) return;
+              if (event.key === 'ArrowUp') targetEdge.points[pointIndex].y -= step;
+              if (event.key === 'ArrowDown') targetEdge.points[pointIndex].y += step;
+              if (event.key === 'ArrowLeft') targetEdge.points[pointIndex].x -= step;
+              if (event.key === 'ArrowRight') targetEdge.points[pointIndex].x += step;
+            });
+            return;
+          }
+          if (event.key !== 'Enter' && event.key !== ' ') return;
           event.preventDefault();
           ui.selectedNodeIds.clear();
           ui.selection = { kind: 'edge', id: edge.dataset.edgeId };
@@ -5428,7 +6186,34 @@
         refs.canvas.addEventListener('pointerdown', handleCanvasPointerDown);
         refs.canvas.addEventListener('dblclick', (event) => {
           if (event.target.closest('[data-node-id], [data-edge-id], [data-group-id], .tool-rail')) return;
+          if (ui.mode === 'sticker') return;
           addNodeAt(screenToWorld(event.clientX, event.clientY));
+        });
+        refs.inlineNodeEditor.addEventListener('input', () => {
+          const node = ui.inlineEdit ? nodeById(ui.inlineEdit.nodeId) : null;
+          if (!node) return;
+          const title = refs.inlineNodeEditor.value.slice(0, 180);
+          stagePendingEdit('Изменено название элемента', () => { node.title = title; });
+          const element = refs.nodeLayer.querySelector(`[data-node-id="${CSS.escape(node.id)}"] .node-title`);
+          element?.replaceChildren(document.createTextNode(title));
+        });
+        refs.inlineNodeEditor.addEventListener('keydown', (event) => {
+          const editedNode = ui.inlineEdit ? nodeById(ui.inlineEdit.nodeId) : null;
+          if (event.key === 'Tab' && !event.shiftKey && editedNode?.type === 'sticker') {
+            event.preventDefault();
+            continueStickerSequence();
+          } else if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            closeInlineNodeEditor({ commit: true });
+            refs.canvas.focus({ preventScroll: true });
+          } else if (event.key === 'Escape') {
+            event.preventDefault();
+            closeInlineNodeEditor({ commit: true });
+            refs.canvas.focus({ preventScroll: true });
+          }
+        });
+        refs.inlineNodeEditor.addEventListener('blur', () => {
+          if (ui.inlineEdit) closeInlineNodeEditor({ commit: true });
         });
         window.addEventListener('pointermove', handlePointerMove);
         window.addEventListener('pointerup', handlePointerUp);
@@ -5467,6 +6252,19 @@
         }, { passive: false });
 
         refs.inspector.addEventListener('change', (event) => {
+          const sizeField = event.target.dataset.nodeSize;
+          if (sizeField) {
+            const node = ui.selection?.kind === 'node' ? nodeById(ui.selection.id) : null;
+            if (!node || node.autoSize || !['width', 'height'].includes(sizeField)) return;
+            const minimum = sizeField === 'width' ? 96 : 64;
+            const maximum = sizeField === 'width' ? 1200 : 900;
+            const value = clamp(Number(event.target.value) || minimum, minimum, maximum);
+            mutate('Изменён размер элемента', () => {
+              node[sizeField] = value;
+              if (node.shape === 'circle') node.height = node.width;
+            });
+            return;
+          }
           const field = event.target.dataset.nodeField;
           if (field === 'type') updateNodeField(field, event.target.value);
           else if (field) flushPendingEdit();
@@ -5493,6 +6291,25 @@
             }
             flushPendingEdit();
           }
+          if (event.target.id === 'edgeRoutingField') {
+            const edge = ui.selection?.kind === 'edge' ? edgeById(ui.selection.id) : null;
+            if (edge) mutate('Изменён вид линии', () => { edge.routing = ['curve', 'orthogonal', 'straight'].includes(event.target.value) ? event.target.value : 'curve'; });
+          }
+          if (event.target.id === 'autoSizeField') {
+            const node = ui.selection?.kind === 'node' ? nodeById(ui.selection.id) : null;
+            if (node) {
+              const metrics = degreeMetrics();
+              const size = nodeSize(node, false, metrics);
+              mutate(event.target.checked ? 'Включён автоматический размер' : 'Включён ручной размер', () => {
+                if (!event.target.checked) {
+                  node.width = clamp(size.width, 96, 1200);
+                  node.height = clamp(size.height, 64, 900);
+                  node.scale = 1;
+                }
+                node.autoSize = event.target.checked;
+              });
+            }
+          }
         });
         refs.inspector.addEventListener('input', (event) => {
           const node = ui.selection?.kind === 'node' ? nodeById(ui.selection.id) : null;
@@ -5514,6 +6331,13 @@
             }
             if (field === 'sourceRef') element?.querySelector('.node-ref')?.replaceChildren(document.createTextNode(node.sourceRef || 'Без привязки'));
             if (field === 'customTypeLabel') element?.querySelector('.node-type')?.replaceChildren(document.createTextNode(node.customTypeLabel || 'Своя сущность'));
+            return;
+          }
+          if (node && event.target.matches('[data-node-items]')) {
+            stagePendingEdit('Изменены пункты списка', () => {
+              node.items = event.target.value.split(/\r?\n/).map((item) => item.trim().slice(0, 180)).filter(Boolean).slice(0, 200);
+            });
+            renderNodes();
             return;
           }
           if (event.target.id === 'edgeLabelField') {
@@ -5591,6 +6415,15 @@
             return;
           }
           if (event.target.closest('#deleteSelectionButton')) deleteSelection();
+          if (event.target.closest('#convertListButton')) {
+            convertListToAtoms();
+            return;
+          }
+          if (event.target.closest('#resetEdgePointsButton')) {
+            const edge = ui.selection?.kind === 'edge' ? edgeById(ui.selection.id) : null;
+            if (edge) mutate('Сброшены точки маршрута связи', () => { edge.points = []; });
+            return;
+          }
           if (event.target.closest('#reverseEdgeButton')) {
             const edge = ui.selection?.kind === 'edge' ? edgeById(ui.selection.id) : null;
             if (edge) {
@@ -5644,13 +6477,60 @@
         document.getElementById('mobileFitButton').addEventListener('click', fitGraph);
         document.getElementById('arrangeButton').addEventListener('click', autoArrangeGraph);
         document.getElementById('railArrangeButton').addEventListener('click', autoArrangeGraph);
+        document.getElementById('hierarchyButton').addEventListener('click', openHierarchyDialog);
         document.getElementById('diagnosticsButton').addEventListener('click', openDiagnostics);
         document.getElementById('themeButton').addEventListener('click', toggleTheme);
         document.getElementById('togglePanelsButton').addEventListener('click', togglePanels);
         document.getElementById('graphManagerButton').addEventListener('click', openGraphManager);
-        refs.storageButton.addEventListener('click', openStorageDialog);
-        document.getElementById('applyStorageButton').addEventListener('click', applyStorageChoice);
-        document.getElementById('helpButton').addEventListener('click', () => document.getElementById('helpDialog').showModal());
+        refs.storageButton.addEventListener('click', openGraphManager);
+        document.getElementById('helpButton').addEventListener('click', () => {
+          renderShortcutUi();
+          document.getElementById('helpDialog').showModal();
+        });
+        document.getElementById('openShortcutSettingsButton').addEventListener('click', openShortcutSettings);
+        document.getElementById('resetShortcutsButton').addEventListener('click', () => {
+          shortcuts = Object.fromEntries(Object.entries(SHORTCUT_DEFAULTS).map(([key, config]) => [key, config.value]));
+          saveShortcuts();
+          renderShortcutUi();
+          document.getElementById('shortcutSettingsMessage').textContent = 'Сочетания сброшены.';
+        });
+        refs.shortcutSettings.addEventListener('click', (event) => {
+          const button = event.target.closest('[data-shortcut-capture]');
+          if (!button) return;
+          ui.shortcutCapture = button.dataset.shortcutCapture;
+          refs.shortcutSettings.querySelectorAll('.shortcut-capture').forEach((item) => item.classList.toggle('recording', item === button));
+          button.textContent = 'Нажмите клавиши…';
+          document.getElementById('shortcutSettingsMessage').textContent = '';
+        });
+        document.getElementById('hierarchyForm').addEventListener('submit', (event) => {
+          event.preventDefault();
+          buildHierarchyFromOutline();
+        });
+        document.getElementById('hierarchySource').addEventListener('input', renderHierarchyPreview);
+        document.getElementById('hierarchySource').addEventListener('keydown', (event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+            event.preventDefault();
+            buildHierarchyFromOutline();
+            return;
+          }
+          if (event.key !== 'Tab') return;
+          const field = event.target;
+          const start = field.selectionStart;
+          const end = field.selectionEnd;
+          const lineStart = field.value.lastIndexOf('\n', start - 1) + 1;
+          const linePrefix = field.value.slice(lineStart, start);
+          if (event.shiftKey) {
+            if (linePrefix.trim()) return;
+            if (field.value.slice(lineStart, lineStart + 1) !== '\t') return;
+            event.preventDefault();
+            field.setRangeText('', lineStart, lineStart + 1, 'end');
+          } else {
+            if (linePrefix.trim()) return;
+            event.preventDefault();
+            field.setRangeText('\t', start, end, 'end');
+          }
+          renderHierarchyPreview();
+        });
         document.getElementById('historyButton').addEventListener('click', () => {
           renderHistory();
           document.getElementById('historyDialog').showModal();
@@ -5689,10 +6569,14 @@
         refs.graphsDialogBody.addEventListener('click', (event) => {
           const openButton = event.target.closest('[data-graph-open]');
           const serverOpenButton = event.target.closest('[data-server-graph-open]');
+          const publishButton = event.target.closest('[data-graph-publish]');
+          const serverDeleteButton = event.target.closest('[data-server-graph-delete]');
           const duplicateButton = event.target.closest('[data-graph-duplicate]');
           const deleteButton = event.target.closest('[data-graph-delete]');
           if (openButton) switchGraph(openButton.dataset.graphOpen);
           if (serverOpenButton) openServerGraph(serverOpenButton.dataset.serverGraphOpen);
+          if (publishButton) publishGraph(publishButton.dataset.graphPublish);
+          if (serverDeleteButton) deleteServerGraph(serverDeleteButton.dataset.serverGraphDelete, serverDeleteButton.dataset.serverRevision);
           if (duplicateButton) duplicateGraph(duplicateButton.dataset.graphDuplicate);
           if (deleteButton) deleteGraph(deleteButton.dataset.graphDelete);
         });
@@ -5735,6 +6619,7 @@
 
         window.addEventListener('keydown', handleKeyDown);
         window.addEventListener('keyup', (event) => {
+          ui.pressedCodes.delete(event.code);
           if (event.code === 'Space') {
             ui.spacePressed = false;
             if (ui.mode !== 'hand') refs.canvas.classList.remove('mode-hand');
@@ -5748,6 +6633,7 @@
 
       applyTheme();
       bindEvents();
+      renderShortcutUi();
       render();
       syncResponsivePanels();
       const notifyHostReady = () => {
@@ -5769,7 +6655,6 @@
         if (event.data?.type !== HOST_READY_MESSAGE || event.data?.version !== 1) return;
         hostBridgeReady = true;
         notifyHostReady();
-        refreshServerGraphs();
       });
       requestAnimationFrame(() => {
         if (storedWorkspaceResult.status === 'missing') {
