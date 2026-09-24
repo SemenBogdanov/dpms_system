@@ -1,0 +1,28 @@
+[Unit]
+Description=DPMS durable host boot record
+After=local-fs.target
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/dpms-monitor/record_boot.py
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=10s
+StateDirectory=dpms-boot-events
+StateDirectoryMode=0750
+UMask=0027
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
