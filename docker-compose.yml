@@ -24,6 +24,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://dpms_user:dpms_pass@db:5432/dpms
       UPLOAD_DIR: /app/uploads
+      SERVER_BOOT_SOURCE_ID: local-development
       INTEGRATION_SECRET_KEY: ${INTEGRATION_SECRET_KEY:-local-dev-integration-key-not-for-production-2026}
       AUDIT_TZ_WORKER_ENABLED: "true"
       AUDIT_TZ_EXTERNAL_AI_ENABLED: "true"
@@ -111,6 +112,41 @@ services:
     security_opt:
       - no-new-privileges:true
     pids_limit: 128
+
+  server-boot-worker:
+    build: ./backend
+    command: ["python", "-m", "app.workers.server_boot"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dpms_user:dpms_pass@db:5432/dpms
+      SERVER_BOOT_EVENTS_DIR: /var/lib/dpms-boot-events
+      SERVER_BOOT_SOURCE_ID: local-development
+      SERVER_BOOT_POLL_SECONDS: "60"
+      PYTHONDONTWRITEBYTECODE: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      - type: bind
+        source: ./deploy/stability/fixtures
+        target: /var/lib/dpms-boot-events
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 32
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.server_boot", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3
 
   frontend:
     build: ./frontend
