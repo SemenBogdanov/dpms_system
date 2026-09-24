@@ -65,7 +65,9 @@ mount или управления сервером из приложения.
   `local-development`. Это синтетические события, не production history.
 - Перед app promote release manager проверяет установленный host recorder;
   worker включён в promote, healthcheck и rollback. При откате на старый compose
-  новый worker останавливается. Файлы host и записи БД не удаляются.
+  всем контейнерам нового worker (в том числе остановленным) сначала отключается
+  restart policy, затем они останавливаются. После restart Docker они не вернутся.
+  Файлы host и записи БД не удаляются.
 - Перед миграцией production нужен backup БД по действующему release protocol.
 
 ## Приёмка
@@ -77,6 +79,9 @@ mount или управления сервером из приложения.
 - Release `097_server_boot_events`: 29/29 backend tests, PostgreSQL migration
   upgrade/downgrade/upgrade и concurrent dedup smoke PASS; единственный head097.
 - Recorder20/20 и local-LLM release guards9/9 PASS.
+- Critic выявил риск возврата worker после rollback при restart Docker.
+  Исправлено; retirement tests5/5 и два изолированных Docker-контейнера
+  (running/stopped -> stopped/restart=no) PASS. БД и тома тестом не затрагивались.
 - Frontend production build и lint/smoke PASS (три прежних lint warnings).
 - Неизменённая панель на стабильном origin55177: 54/54 Playwright PASS,
   Chromium/WebKit, light/dark/rose. Это локальная проверка, не вход реального

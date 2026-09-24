@@ -870,6 +870,21 @@ promote_release() {
   log "rollback_command=/opt/dpms-tools/dpms-node.sh rollback $backup_dir"
 }
 
+stop_retired_server_boot_worker() {
+  local container_ids
+  local -a containers=()
+  container_ids="$(
+    docker ps -aq --filter "label=com.docker.compose.project=$DPMS_COMPOSE_PROJECT" \
+      --filter "label=com.docker.compose.service=server-boot-worker"
+  )"
+  if [[ -n "$container_ids" ]]; then
+    mapfile -t containers <<< "$container_ids"
+    # A stopped restart:always container otherwise returns after a daemon restart.
+    docker update --restart=no "${containers[@]}" >/dev/null
+    docker stop "${containers[@]}" >/dev/null
+  fi
+}
+
 rollback_release() {
   require_root
   with_lock
@@ -944,8 +959,7 @@ rollback_release() {
   if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fx server-boot-worker >/dev/null; then
     runtime_services+=(server-boot-worker)
   else
-    docker ps -q --filter "label=com.docker.compose.project=$DPMS_COMPOSE_PROJECT" \
-      --filter "label=com.docker.compose.service=server-boot-worker" | xargs -r docker stop >/dev/null
+    stop_retired_server_boot_worker
   fi
   local -a connector_files=()
   if [[ -f "$DPMS_CONNECTOR_DIR/compose-activated" ]]; then
