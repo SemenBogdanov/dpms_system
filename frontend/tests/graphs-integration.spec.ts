@@ -210,6 +210,44 @@ async function installApiMock(page: Page, initialGraphs: StoredGraph[] = []) {
   return { serverGraphs, stats, behavior }
 }
 
+type LayoutGraph = {
+  activeViewId: string
+  nodes: Array<{ id: string; title: string; x: number; y: number; autoSize: boolean; pinned: boolean }>
+  edges: Array<{ id: string; source: string; target: string }>
+  views: Array<{ id: string; layout: string; positions: Record<string, { x: number; y: number }> }>
+}
+
+async function readActiveStoredGraph(page: Page): Promise<LayoutGraph> {
+  const graph = await page.evaluate((ownerId) => {
+    const stored = JSON.parse(window.localStorage.getItem(`dpms-graphs-workspace-v3:${ownerId}`) || '{}') as {
+      activeGraphId: string
+      graphs?: Array<LayoutGraph & { id: string }>
+    }
+    return stored.graphs?.find((item) => item.id === stored.activeGraphId)
+  }, userId)
+  expect(graph, 'The active graph must be persisted locally').toBeTruthy()
+  return graph!
+}
+
+function graphPositions(graph: LayoutGraph) {
+  return graph.nodes.map(({ id, x, y }) => ({ id, x, y }))
+}
+
+async function selectGraphLayout(page: Page, layout: 'radial' | 'compact' | 'hierarchy') {
+  const before = graphPositions(await readActiveStoredGraph(page))
+  const field = page.frameLocator('iframe[title="Рабочее пространство графов"]').locator('#viewLayoutField')
+  await field.selectOption(layout)
+  await expect(field).toHaveValue(layout)
+  await expect.poll(async () => {
+    const graph = await readActiveStoredGraph(page)
+    return graph.views.find((view) => view.id === graph.activeViewId)?.layout
+  }).toBe(layout)
+  await expect.poll(async () => graphPositions(await readActiveStoredGraph(page)), {
+    message: 'Selecting a layout must move nodes without a separate Arrange action',
+  }).not.toEqual(before)
+  return readActiveStoredGraph(page)
+}
+
 test('Graphs open as a DPMS section without losing the standalone workspace', async ({ page }, testInfo) => {
   const runtimeErrors: string[] = []
   page.on('pageerror', (error) => runtimeErrors.push(error.message))
@@ -267,8 +305,9 @@ test('Graphs open as a DPMS section without losing the standalone workspace', as
   expect(frameSource).toContain(`owner=${encodeURIComponent(userId)}`)
 
   if (testInfo.project.name === 'chromium-desktop') {
-    await frame.getByRole('button', { name: 'Включить тёмную тему' }).click()
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark' })
     await expect(frame.locator('html')).toHaveAttribute('data-theme', 'dark')
+    await expect(frame.locator('#themeButton')).toHaveCount(0)
   }
 
   const widths = await page.evaluate(() => ({
@@ -283,6 +322,38 @@ test('Graphs open as a DPMS section without losing the standalone workspace', as
     fullPage: false,
   })
   expect(runtimeErrors).toEqual([])
+})
+
+test('Connection lens is opt-in and persists for the active view', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop', 'Connection lens interaction is covered once on desktop')
+  await installApiMock(page)
+  await page.goto('/graphs')
+
+  const frame = page.frameLocator('iframe[title="Рабочее пространство графов"]')
+  const lens = frame.getByRole('checkbox', { name: 'Линза связей' })
+  const origin = frame.locator('[data-node-id="demo-task"]')
+  const unrelated = frame.locator('[data-node-id="demo-tracker"]')
+
+  await expect(lens).not.toBeChecked()
+  await origin.hover()
+  await expect(origin).not.toHaveClass(/hover-origin/)
+  await expect(unrelated).not.toHaveClass(/hover-muted/)
+
+  await lens.check()
+  await origin.hover()
+  await expect(origin).toHaveClass(/hover-origin/)
+  await expect(unrelated).toHaveClass(/hover-muted/)
+  await expect(frame.locator('#canvas')).toHaveClass(/has-connection-lens/)
+
+  await page.reload()
+  const reloadedFrame = page.frameLocator('iframe[title="Рабочее пространство графов"]')
+  await expect(reloadedFrame.getByRole('checkbox', { name: 'Линза связей' })).toBeChecked()
+  await reloadedFrame.locator('[data-node-id="demo-task"]').hover()
+  await expect(reloadedFrame.locator('[data-node-id="demo-tracker"]')).toHaveClass(/hover-muted/)
+
+  await reloadedFrame.getByRole('checkbox', { name: 'Линза связей' }).uncheck()
+  await expect(reloadedFrame.locator('[data-node-id="demo-tracker"]')).not.toHaveClass(/hover-muted/)
+  await expect(reloadedFrame.locator('#canvas')).not.toHaveClass(/has-connection-lens/)
 })
 
 test('Editing is local-only and cloud snapshots require an explicit upload', async ({ page }, testInfo) => {
@@ -376,6 +447,32 @@ test('A rejected localStorage write rolls the visible edit back', async ({ page 
 
   await expect(frame.locator('#toastRegion')).toContainText('Локальное хранилище заполнено')
   await expect(frame.locator('[data-node-id="demo-note"]')).toContainText('Сохранённое название')
+
+  const storedBeforeLayout = await readActiveStoredGraph(page)
+  const layoutField = frame.locator('#viewLayoutField')
+  const modeBeforeLayout = await layoutField.inputValue()
+  expect(modeBeforeLayout).not.toBe('compact')
+  const worldStyleBeforeLayout = await frame.locator('#world').getAttribute('style')
+  expect(worldStyleBeforeLayout).not.toBeNull()
+  const readVisibleNodePositions = () => frame.locator('.graph-node').evaluateAll((nodes) => nodes.map((node) => ({
+    id: node.getAttribute('data-node-id'),
+    left: (node as HTMLElement).style.left,
+    top: (node as HTMLElement).style.top,
+  })))
+  const positionsBeforeLayout = await readVisibleNodePositions()
+
+  await layoutField.selectOption('compact')
+  // Let any deferred fit-to-graph run before asserting the rollback is stable.
+  await workspaceFrame!.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+  await expect(layoutField).toHaveValue(modeBeforeLayout)
+  expect(await readVisibleNodePositions()).toEqual(positionsBeforeLayout)
+  await expect(frame.locator('#world')).toHaveAttribute('style', worldStyleBeforeLayout!)
+  expect(await readActiveStoredGraph(page)).toEqual(storedBeforeLayout)
+  await expect(frame.locator('#toastRegion')).toContainText('Локальное хранилище заполнено')
+  await expect(frame.locator('#toastRegion')).not.toContainText('Граф упорядочен и показан целиком')
+
   await frame.locator('#canvas').focus()
   await page.keyboard.press('Control+z')
   await expect(frame.locator('[data-node-id="demo-note"]')).toContainText('Сохранённое название')
@@ -432,6 +529,7 @@ test('Import creates a separate local graph and never uploads it implicitly', as
   await frame.locator('#importInput').setInputFiles({
     name: 'imported-graph.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(imported)),
   })
+  await frame.locator('#confirmImportButton').click()
 
   await expect(frame.locator('#graphTitle')).toHaveValue('Импортированный граф')
   await page.waitForTimeout(1_000)
@@ -603,6 +701,224 @@ test('UI creation stops at the graph capacity instead of corrupting the workspac
   await expect(frame.locator('#storageRecoveryDialog')).not.toBeVisible()
 })
 
+test('Hierarchy wizard preserves outline order across immediate layouts, undo and reload', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop', 'Hierarchy layout regression is covered once on desktop')
+  await installApiMock(page)
+  await page.goto('/graphs')
+  const frame = page.frameLocator('iframe[title="Рабочее пространство графов"]')
+  await expect(frame.locator('.graph-node')).toHaveCount(4)
+  const existing = await readActiveStoredGraph(page)
+  const existingIds = new Set(existing.nodes.map((node) => node.id))
+  const rows = [
+    { title: 'Z root', depth: 0, parent: null },
+    { title: 'Z short branch', depth: 1, parent: 0 },
+    { title: 'Z short leaf', depth: 2, parent: 1 },
+    { title: 'A long branch', depth: 1, parent: 0 },
+    { title: 'Z deep branch', depth: 2, parent: 3 },
+    { title: 'Z deepest leaf', depth: 3, parent: 4 },
+    { title: 'A deepest leaf', depth: 3, parent: 4 },
+    { title: 'A wide leaf', depth: 2, parent: 3 },
+    { title: 'M wide leaf', depth: 2, parent: 3 },
+    { title: 'M root leaf', depth: 1, parent: 0 },
+    { title: 'A root', depth: 0, parent: null },
+    { title: 'Z second leaf', depth: 1, parent: 10 },
+    { title: 'A second leaf', depth: 1, parent: 10 },
+  ]
+  await frame.getByRole('button', { name: 'Мастер иерархий' }).click()
+  await frame.locator('#hierarchySource').fill(rows.map(({ title, depth }) => `${'\t'.repeat(depth)}${title}`).join('\n'))
+  await frame.locator('#hierarchyNodeType').selectOption('atom')
+  await frame.getByRole('button', { name: 'Построить граф', exact: true }).click()
+  await expect(frame.locator('#hierarchyDialog')).toBeHidden()
+  await expect(frame.locator('.graph-node')).toHaveCount(existing.nodes.length + rows.length)
+  await expect(frame.locator('#viewLayoutField')).toHaveValue('hierarchy')
+
+  const initial = await readActiveStoredGraph(page)
+  const outlineNodes = initial.nodes.filter((node) => !existingIds.has(node.id))
+  const outlineIds = outlineNodes.map((node) => node.id)
+  expect(outlineNodes.map((node) => node.title)).toEqual(rows.map((row) => row.title))
+  expect(outlineNodes.every((node) => node.autoSize)).toBe(true)
+  expect(graphPositions(initial).filter((node) => existingIds.has(node.id))).toEqual(graphPositions(existing))
+  const expectedEdges = rows.flatMap((row, index) => row.parent === null ? [] : [{
+    source: outlineIds[row.parent], target: outlineIds[index],
+  }])
+  expect(initial.edges.filter((edge) => outlineIds.includes(edge.source) || outlineIds.includes(edge.target))
+    .map(({ source, target }) => ({ source, target }))).toEqual(expectedEdges)
+  expect(initial.edges).toHaveLength(existing.edges.length + expectedEdges.length)
+  await expect(frame.locator('.edge-group')).toHaveCount(initial.edges.length)
+
+  function expectOutline(graph: LayoutGraph) {
+    expect(graph.nodes.map((node) => node.id)).toEqual(initial.nodes.map((node) => node.id))
+    expect(graph.edges).toEqual(initial.edges)
+    const view = graph.views.find((item) => item.id === graph.activeViewId)!
+    expect(view.layout).toBe('hierarchy')
+    const nodes = graph.nodes.filter((node) => outlineIds.includes(node.id))
+    nodes.forEach((node, index) => {
+      expect(Number.isFinite(node.x) && Number.isFinite(node.y), node.title).toBe(true)
+      expect(view.positions[node.id]).toEqual({ x: node.x, y: node.y })
+      expect(node.x - nodes[0].x, `${node.title}: relative x`).toBeCloseTo(outlineNodes[index].x - outlineNodes[0].x, 0)
+      expect(node.y - nodes[0].y, `${node.title}: relative y`).toBeCloseTo(outlineNodes[index].y - outlineNodes[0].y, 0)
+      if (index > 0) expect(node.y, `${node.title}: preorder row`).toBeGreaterThan(nodes[index - 1].y)
+      const parent = rows[index].parent
+      if (parent !== null) expect(node.x, `${node.title}: indentation`).toBeGreaterThan(nodes[parent].x)
+      else expect(node.x).toBe(nodes[0].x)
+    })
+  }
+
+  async function expectNoOutlineOverlap() {
+    // Fit-to-graph can hide full-sized cards behind semantic-zoom circles.
+    for (let attempt = 0; attempt < 20 && (await frame.locator('#canvas').getAttribute('class'))?.includes('semantic-compact'); attempt += 1) {
+      await frame.locator('#zoomInButton').click()
+    }
+    await expect(frame.locator('#canvas')).not.toHaveClass(/semantic-compact/)
+    const boxes = await frame.locator('.graph-node').evaluateAll((elements, ids) => elements
+      .filter((element) => ids.includes(element.getAttribute('data-node-id') || ''))
+      .map((element) => {
+        const { x, y, width, height } = element.getBoundingClientRect()
+        return { id: element.getAttribute('data-node-id'), x, y, width, height }
+      }), outlineIds)
+    expect(boxes).toHaveLength(rows.length)
+    expect(new Set(boxes.map((box) => Math.round(box.width))).size, 'Different degrees must exercise dynamic sizes').toBeGreaterThan(1)
+    boxes.forEach((box, index) => {
+      expect(box.width).toBeGreaterThan(0)
+      expect(box.height).toBeGreaterThan(0)
+      boxes.slice(index + 1).forEach((other) => {
+        const overlapX = Math.min(box.x + box.width, other.x + other.width) - Math.max(box.x, other.x)
+        const overlapY = Math.min(box.y + box.height, other.y + other.height) - Math.max(box.y, other.y)
+        expect(Math.min(overlapX, overlapY), `Cards ${box.id} and ${other.id} overlap`).toBeLessThanOrEqual(0.5)
+      })
+    })
+  }
+
+  expectOutline(initial)
+  await expectNoOutlineOverlap()
+  const radial = await selectGraphLayout(page, 'radial')
+  const compact = await selectGraphLayout(page, 'compact')
+  await frame.locator('#undoButton').click()
+  await expect(frame.locator('#viewLayoutField')).toHaveValue('radial')
+  await expect.poll(async () => graphPositions(await readActiveStoredGraph(page))).toEqual(graphPositions(radial))
+  await frame.locator('#redoButton').click()
+  await expect(frame.locator('#viewLayoutField')).toHaveValue('compact')
+  await expect.poll(async () => graphPositions(await readActiveStoredGraph(page))).toEqual(graphPositions(compact))
+
+  const restored = await selectGraphLayout(page, 'hierarchy')
+  expectOutline(restored)
+  await expectNoOutlineOverlap()
+  await frame.locator('#fitButton').click()
+  mkdirSync('test-results/graphs', { recursive: true })
+  await page.screenshot({ path: 'test-results/graphs/hierarchy-restored.png', fullPage: false })
+  await page.reload()
+  await expect(frame.locator('.graph-node')).toHaveCount(initial.nodes.length)
+  await expect(frame.locator('.edge-group')).toHaveCount(initial.edges.length)
+  await expect(frame.locator('#viewLayoutField')).toHaveValue('hierarchy')
+  const reloaded = await readActiveStoredGraph(page)
+  expect(reloaded.activeViewId).toBe(initial.activeViewId)
+  expect(graphPositions(reloaded)).toEqual(graphPositions(restored))
+  expectOutline(reloaded)
+  await expectNoOutlineOverlap()
+})
+
+test('Hierarchy layout keeps imported cycles, multiple parents and pinned positions deterministic', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop', 'Cyclic hierarchy regression is covered once on desktop')
+  await installApiMock(page)
+  await page.goto('/graphs')
+  const frame = page.frameLocator('iframe[title="Рабочее пространство графов"]')
+  const imported = serverGraph('cyclic-outline', 'Cyclic hierarchy fixture').payload
+  const baseNode = imported.nodes[0] as Record<string, unknown>
+  const nodes = ['z-cycle', 'a-cycle', 'm-cycle', 'second-parent', 'pinned', 'isolated'].map((id, index) => ({
+    ...baseNode, id, title: id, autoSize: true, pinned: id === 'pinned', x: 900 + index * 310, y: -600 + index * 140,
+  }))
+  const edges = [
+    ['z-cycle', 'a-cycle'], ['a-cycle', 'm-cycle'], ['m-cycle', 'z-cycle'],
+    ['second-parent', 'a-cycle'], ['pinned', 'm-cycle'],
+  ].map(([source, target], index) => ({ id: `cycle-edge-${index}`, source, target, label: 'дочерний' }))
+  Object.assign(imported, { version: 3, nodes, edges, views: [], activeViewId: '' })
+  await frame.locator('#importInput').setInputFiles({
+    name: 'cyclic-outline.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(imported)),
+  })
+  await frame.locator('#confirmImportButton').click()
+  await expect(frame.locator('#graphTitle')).toHaveValue(imported.title)
+  await expect(frame.locator('.graph-node')).toHaveCount(nodes.length)
+  const before = await readActiveStoredGraph(page)
+  const pinned = nodes.find((node) => node.pinned)!
+
+  function expectIntact(graph: LayoutGraph) {
+    expect(graph.nodes.map((node) => node.id)).toEqual(nodes.map((node) => node.id))
+    expect(graph.edges).toEqual(before.edges)
+    expect(graph.edges.map(({ id, source, target }) => ({ id, source, target })))
+      .toEqual(edges.map(({ id, source, target }) => ({ id, source, target })))
+    expect(graph.nodes.every((node) => Number.isFinite(node.x) && Number.isFinite(node.y))).toBe(true)
+    expect(graph.nodes.find((node) => node.id === pinned.id)).toMatchObject({ pinned: true, x: pinned.x, y: pinned.y })
+  }
+
+  async function expectHierarchyMode() {
+    await expect(frame.locator('#viewLayoutField')).toHaveValue('hierarchy')
+    const graph = await readActiveStoredGraph(page)
+    expect(graph.views.find((view) => view.id === graph.activeViewId)?.layout).toBe('hierarchy')
+  }
+
+  expectIntact(before)
+  const first = await selectGraphLayout(page, 'hierarchy')
+  expectIntact(first)
+  for (const button of ['#arrangeButton', '#railArrangeButton']) {
+    await frame.locator(button).click()
+    await expectHierarchyMode()
+    await expect.poll(async () => graphPositions(await readActiveStoredGraph(page))).toEqual(graphPositions(first))
+    expectIntact(await readActiveStoredGraph(page))
+  }
+  expectIntact(await selectGraphLayout(page, 'compact'))
+  const repeated = await selectGraphLayout(page, 'hierarchy')
+  await expectHierarchyMode()
+  expectIntact(repeated)
+  expect(graphPositions(repeated)).toEqual(graphPositions(first))
+  await expect(frame.locator('.graph-node')).toHaveCount(nodes.length)
+  await expect(frame.locator('.edge-group')).toHaveCount(edges.length)
+})
+
+test('A large binary hierarchy stays inside coordinate limits and survives reload unchanged', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'chromium-desktop', 'Hierarchy coordinate limits are covered once on desktop')
+  await installApiMock(page)
+  await page.goto('/graphs')
+  const frame = page.frameLocator('iframe[title="Рабочее пространство графов"]')
+  const imported = serverGraph('binary-outline', 'Binary hierarchy bounds fixture').payload
+  const baseNode = imported.nodes[0] as Record<string, unknown>
+  const nodes = Array.from({ length: 1023 }, (_, index) => ({
+    ...baseNode, id: `tree-node-${index}`, title: `Branch ${index}`, autoSize: false,
+    width: 224, height: 108, pinned: false, x: (index % 32) * 300, y: Math.floor(index / 32) * 140,
+  }))
+  const edges = nodes.slice(1).map((node, index) => ({
+    id: `tree-edge-${index}`, source: nodes[Math.floor(index / 2)].id, target: node.id, label: 'дочерний',
+  }))
+  Object.assign(imported, { version: 3, nodes, edges, views: [], activeViewId: '' })
+  await frame.locator('#importInput').setInputFiles({
+    name: 'binary-outline.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(imported)),
+  })
+  await frame.locator('#confirmImportButton').click()
+  await expect(frame.locator('#graphTitle')).toHaveValue(imported.title)
+  await expect(frame.locator('.graph-node')).toHaveCount(nodes.length)
+  const before = await readActiveStoredGraph(page)
+  const arranged = await selectGraphLayout(page, 'hierarchy')
+  expect(arranged.nodes.map((node) => node.id)).toEqual(nodes.map((node) => node.id))
+  expect(arranged.edges).toEqual(before.edges)
+  expect(arranged.edges).toHaveLength(edges.length)
+  expect(arranged.nodes.filter((node) => !Number.isFinite(node.x) || !Number.isFinite(node.y)
+    || Math.abs(node.x) > 100_000 || Math.abs(node.y) > 100_000), 'No coordinate may be clamped on reload').toEqual([])
+  const ys = arranged.nodes.map((node) => node.y)
+  expect(Math.max(...ys) - Math.min(...ys), 'The fixture must require translation into the allowed range').toBeGreaterThan(100_000)
+  const view = arranged.views.find((item) => item.id === arranged.activeViewId)!
+  expect(view.positions).toEqual(Object.fromEntries(arranged.nodes.map(({ id, x, y }) => [id, { x, y }])))
+
+  await page.reload()
+  await expect(frame.locator('.graph-node')).toHaveCount(nodes.length)
+  await expect(frame.locator('.edge-group')).toHaveCount(edges.length)
+  await expect(frame.locator('#viewLayoutField')).toHaveValue('hierarchy')
+  const reloaded = await readActiveStoredGraph(page)
+  expect(reloaded.activeViewId).toBe(arranged.activeViewId)
+  expect(reloaded.views.find((item) => item.id === reloaded.activeViewId)).toMatchObject({ layout: 'hierarchy', positions: view.positions })
+  expect(reloaded.edges).toEqual(arranged.edges)
+  // Exact absolute coordinates also preserve every root-relative offset.
+  expect(graphPositions(reloaded)).toEqual(graphPositions(arranged))
+})
+
 test('Sticker flow, hierarchy builder, list atoms, resizing and edge routing work together', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'chromium-desktop', 'Dense canvas interactions are covered once on desktop')
   await installApiMock(page)
@@ -727,7 +1043,9 @@ test('Sticker flow, hierarchy builder, list atoms, resizing and edge routing wor
   const orthogonalCoordinates = [...(pathBeforePointDrag || '').matchAll(/[ML]\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g)]
     .map((match) => ({ x: Number(match[1]), y: Number(match[2]) }))
   expect(orthogonalCoordinates.length).toBeGreaterThan(2)
-  orthogonalCoordinates.slice(1).forEach((point, index) => {
+  // Compact circles keep radial terminal stubs; all interior segments remain axial.
+  orthogonalCoordinates.slice(1, -1).forEach((point, index) => {
+    if (index === 0) return
     const previous = orthogonalCoordinates[index]
     expect(Math.abs(point.x - previous.x) < 0.001 || Math.abs(point.y - previous.y) < 0.001).toBe(true)
   })

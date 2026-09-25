@@ -9,6 +9,9 @@
     if (new URLSearchParams(window.location.search).get('embedded') === '1') {
       document.documentElement.classList.add('dpms-embedded');
     }
+    const initialTheme = new URLSearchParams(window.location.search).get('theme');
+    document.documentElement.dataset.theme = ['light', 'dark', 'rose'].includes(initialTheme)
+      ? initialTheme : matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   </script>
   <style>
     :root {
@@ -65,6 +68,15 @@
       --warning: #f5b95f;
       --shadow: 0 10px 28px rgb(0 0 0 / 28%);
       --focus: #8ab4ff;
+    }
+
+    html[data-theme="rose"] {
+      color-scheme: light;
+      --app-bg: #fff5f8; --panel: #ffffff; --panel-strong: #fffafd;
+      --canvas: #fff8fa; --canvas-grid: #ead4df; --text: #321e29;
+      --muted: #79616e; --subtle: #8d7682; --border: #eddae3;
+      --border-strong: #cba6b9; --accent: #b62968; --accent-hover: #942153;
+      --accent-soft: #fce5ee; --focus: #b62968; --edge-outgoing: #b62968;
     }
 
     * {
@@ -367,7 +379,7 @@
     }
 
     .view-controls select,
-    .view-controls input {
+    .view-controls input:not([type="checkbox"]) {
       min-width: 0;
       height: 38px;
       padding: 0 9px;
@@ -386,6 +398,34 @@
     .view-controls-row .icon-button {
       width: 40px;
       height: 38px;
+    }
+
+    .view-toggle {
+      display: flex;
+      min-height: 36px;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 9px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel-strong);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .view-toggle:hover { border-color: var(--border-strong); }
+    .view-toggle:has(input:checked) {
+      border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+      background: var(--accent-soft);
+    }
+
+    .view-toggle input {
+      width: 17px;
+      height: 17px;
+      margin: 0;
+      accent-color: var(--accent);
     }
 
     .section-heading {
@@ -793,7 +833,7 @@
       width: 224px;
       min-height: 108px;
       padding: 12px;
-      overflow: hidden;
+      overflow: visible;
       border: 1px solid color-mix(in srgb, var(--node-color) 55%, var(--border));
       border-left: 4px solid var(--node-color);
       border-radius: var(--node-radius, 8px);
@@ -839,18 +879,28 @@
       -webkit-line-clamp: initial;
     }
 
+    .graph-node[data-node-type="list"] {
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      gap: 6px;
+    }
+    .graph-node[data-node-type="list"] .node-title { align-self: start; }
+    .node-list-region { min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
     .node-list-items {
-      display: grid;
-      gap: 4px;
-      margin: 8px 0 0;
+      min-height: 0;
+      flex: 1;
+      overflow: hidden;
+      margin: 0;
       padding: 0 0 0 17px;
       color: var(--muted);
       font-size: 11px;
       line-height: 1.35;
     }
+    .node-list-items li { margin-bottom: 4px; overflow-wrap: anywhere; }
 
     .node-list-more {
-      list-style: none;
+      flex: none;
+      font-size: 11px;
+      line-height: 16px;
       color: var(--subtle);
     }
 
@@ -881,6 +931,18 @@
     .resize-handle.e { top: calc(50% - 12px); right: -8px; cursor: ew-resize; }
     .resize-handle.s { bottom: -8px; left: calc(50% - 12px); cursor: ns-resize; }
     .resize-handle.se { right: -8px; bottom: -8px; cursor: nwse-resize; }
+    .resize-handle.ne { right: -8px; top: -8px; cursor: nesw-resize; }
+    .resize-handle.nw { left: -8px; top: -8px; cursor: nwse-resize; }
+    .resize-handle.sw { left: -8px; bottom: -8px; cursor: nesw-resize; }
+    .node-port[data-port-id] {
+      width: 12px; height: 12px; z-index: 7; pointer-events: auto;
+      transform: translate(-50%, -50%);
+    }
+    .node-port[data-resize-handle] { opacity: 1; background: var(--accent); border-radius: 3px; }
+    .node-port[data-port-id^="n:"], .node-port[data-port-id^="s:"] { cursor: ns-resize; }
+    .node-port[data-port-id^="e:"], .node-port[data-port-id^="w:"] { cursor: ew-resize; }
+    .node-port.snap-port { opacity: 1; background: var(--success); box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 24%, transparent); }
+    .graph-node.magnet-target .node-port { display: block; opacity: 1; }
 
     .inline-node-editor {
       position: absolute;
@@ -1944,9 +2006,6 @@
         <button id="historyButton" class="icon-button hide-mobile" type="button" aria-label="Открыть историю" title="История изменений">
           <svg class="icon" aria-hidden="true"><use href="#i-history"></use></svg>
         </button>
-        <button id="themeButton" class="icon-button" type="button" aria-label="Включить тёмную тему" title="Сменить тему">
-          <svg class="icon" aria-hidden="true"><use id="themeIconUse" href="#i-moon"></use></svg>
-        </button>
         <button id="togglePanelsButton" class="icon-button hide-mobile" type="button" aria-label="Скрыть боковые панели" title="Скрыть боковые панели (⌘ \)">
           <svg class="icon" aria-hidden="true"><use href="#i-panels"></use></svg>
         </button>
@@ -2029,21 +2088,21 @@
             <div id="groupLayer" class="group-layer" aria-label="Группы графа"></div>
             <svg id="edgeLayer" class="edge-layer" aria-label="Связи графа">
               <defs>
-                <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <marker id="arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                   <path d="M 0 0 L 10 5 L 0 10 z" fill="#748094"></path>
                 </marker>
-                <marker id="arrow-selected" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <marker id="arrow-selected" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                   <path d="M 0 0 L 10 5 L 0 10 z" fill="#275fce"></path>
                 </marker>
-                <marker id="arrow-incoming" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <marker id="arrow-incoming" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                   <path d="M 0 0 L 10 5 L 0 10 z" style="fill:var(--edge-incoming)"></path>
                 </marker>
-                <marker id="arrow-outgoing" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <marker id="arrow-outgoing" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                   <path d="M 0 0 L 10 5 L 0 10 z" style="fill:var(--edge-outgoing)"></path>
                 </marker>
               </defs>
               <g id="edges"></g>
-              <path id="edgePreview" class="edge-preview" hidden></path>
+              <path id="edgePreview" class="edge-preview" marker-end="url(#arrow-selected)" hidden></path>
             </svg>
             <div id="nodeLayer" class="node-layer"></div>
           </div>
@@ -2124,6 +2183,21 @@
     </div>
   </dialog>
 
+  <dialog id="importDialog" aria-labelledby="importTitle">
+    <div class="dialog-header"><h2 id="importTitle">Импорт JSON</h2><button class="icon-button" type="button" data-close-dialog="importDialog" aria-label="Закрыть импорт"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button></div>
+    <div class="dialog-body">
+      <button id="chooseImportFileButton" class="text-button" type="button"><svg class="icon" aria-hidden="true"><use href="#i-upload"></use></svg>Выбрать JSON</button>
+      <p id="importFileName" class="field-hint">Файл не выбран · до 5 МБ</p>
+      <div class="field"><label for="importModeField">Формат данных</label><select id="importModeField">
+        <option value="native">Граф DPMS · nodes / edges</option><option value="cubes">Кубики · cubes</option><option value="tree">Дерево JSON · объекты и массивы</option><option value="records">Записи · строка → элемент</option><option value="edges">Связи · источник → получатель</option>
+      </select></div>
+      <div id="importMapping" class="hierarchy-grid"></div>
+      <p id="importError" role="alert" class="field-message"></p>
+      <div id="importPreview" aria-live="polite"></div>
+    </div>
+    <div class="dialog-actions"><button class="text-button" type="button" data-close-dialog="importDialog">Отмена</button><button id="confirmImportButton" class="text-button primary" type="button" disabled>Создать граф локально</button></div>
+  </dialog>
+
   <dialog id="graphsDialog" aria-labelledby="graphsDialogTitle">
     <div class="dialog-header">
       <h2 id="graphsDialogTitle">Все графы</h2>
@@ -2155,7 +2229,7 @@
           <div id="hierarchyPreview" class="hierarchy-preview" aria-live="polite">Введите структуру слева.</div>
         </div>
       </div>
-      <div class="dialog-actions"><button class="text-button" type="button" data-close-dialog="hierarchyDialog">Отмена</button><button class="text-button primary" type="submit">Построить граф</button></div>
+      <div class="dialog-actions"><a class="text-button" href="/knowledge?article=graphs-hierarchy-guide" target="_top">База знаний</a><button class="text-button" type="button" data-close-dialog="hierarchyDialog">Отмена</button><button class="text-button primary" type="submit">Построить граф</button></div>
     </form>
   </dialog>
 
@@ -2225,7 +2299,10 @@
 
   <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
 
-  <script>
+  <script type="module">
+    import { routeEdge } from './edge-routing.mjs';
+    import { PORT_IDS, portPosition } from './connection-ports.mjs';
+    import { detectJsonMode, convertStructuredJson } from './import-adapters.mjs';
     (() => {
       'use strict';
 
@@ -2234,7 +2311,7 @@
       const WORKSPACE_KEY = `dpms-graphs-workspace-v3${storageSuffix}`;
       const LEGACY_WORKSPACE_KEY = `dpms-graphs-workspace-v2${storageSuffix}`;
       const LEGACY_STORAGE_KEY = `dpms-graphs-prototype-v1${storageSuffix}`;
-      const THEME_KEY = 'dpms-graphs-theme';
+      const PREFERENCES_KEY = `dpms-graphs-preferences-v1${storageSuffix}`;
       const SHORTCUTS_KEY = `dpms-graphs-shortcuts-v1${storageSuffix}`;
       const HOST_READY_MESSAGE = 'dpms-graphs-host-ready';
       const WORKSPACE_READY_MESSAGE = 'dpms-graphs-workspace-ready';
@@ -2242,6 +2319,7 @@
       const STORAGE_RESPONSE_MESSAGE = 'dpms-graphs-storage-response';
       const MAX_CACHED_GRAPHS = 100;
       const MAX_GRAPH_NODES = 1500;
+      const MAX_GRAPH_COORDINATE = 100000;
       const MAX_GRAPH_EDGES = 3000;
       const MAX_LOCAL_GRAPH_BYTES = 5 * 1024 * 1024;
       const MIN_SCALE = 0.24;
@@ -2307,7 +2385,6 @@
         modeStatus: document.getElementById('modeStatus'),
         coordinateStatus: document.getElementById('coordinateStatus'),
         selectionStatus: document.getElementById('selectionStatus'),
-        themeIconUse: document.getElementById('themeIconUse'),
         toastRegion: document.getElementById('toastRegion'),
         historyBody: document.getElementById('historyBody'),
         graphsDialogBody: document.getElementById('graphsDialogBody'),
@@ -2348,6 +2425,10 @@
       let workspace = storedWorkspaceResult.workspace || createWorkspace(demoGraph());
       let graph = workspace.graphs.find((item) => item.id === workspace.activeGraphId) || workspace.graphs[0];
       let theme = loadTheme();
+      let wheelInverted = false;
+      let pendingImport = null;
+      let importReadSequence = 0;
+      try { wheelInverted = JSON.parse(localStorage.getItem(PREFERENCES_KEY) || '{}').wheelInverted === true; } catch {}
       let viewportSaveTimer = 0;
       let edgeRenderFrame = 0;
       let pendingEdit = null;
@@ -2631,7 +2712,8 @@
           positions: Object.fromEntries(nodes.map((node) => [node.id, { x: node.x, y: node.y }])),
           viewport: deepClone(viewport),
           focusNodeId: null,
-          focusDepth: 0
+          focusDepth: 0,
+          connectionLensEnabled: false
         };
       }
 
@@ -2709,9 +2791,7 @@
       }
 
       function loadTheme() {
-        const saved = localStorage.getItem(THEME_KEY);
-        if (saved === 'light' || saved === 'dark') return saved;
-        return matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        return document.documentElement.dataset.theme || 'light';
       }
 
       function loadWorkspace() {
@@ -2800,8 +2880,8 @@
             items: Array.isArray(node.items) ? node.items.map((item) => String(item).trim().slice(0, 180)).filter(Boolean).slice(0, 200) : [],
             pinned: Boolean(node.pinned),
             color,
-            x: clamp(Number(node.x) || 0, -100000, 100000),
-            y: clamp(Number(node.y) || 0, -100000, 100000)
+            x: clamp(Number(node.x) || 0, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE),
+            y: clamp(Number(node.y) || 0, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE)
           };
         });
         const edgeIds = new Set();
@@ -2818,11 +2898,13 @@
             id,
             source,
             target,
+            sourcePort: /^[nesw]:[0-4]$/.test(edge.sourcePort) ? edge.sourcePort : null,
+            targetPort: /^[nesw]:[0-4]$/.test(edge.targetPort) ? edge.targetPort : null,
             label: String(edge.label || 'связано с').slice(0, 80),
             routing: ['curve', 'orthogonal', 'straight'].includes(edge.routing) ? edge.routing : 'curve',
             points: Array.isArray(edge.points) ? edge.points.slice(0, 20).flatMap((point) => (
               Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.y))
-                ? [{ x: clamp(Number(point.x), -100000, 100000), y: clamp(Number(point.y), -100000, 100000) }]
+                ? [{ x: clamp(Number(point.x), -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE), y: clamp(Number(point.y), -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE) }]
                 : []
             )) : []
           }];
@@ -2864,8 +2946,8 @@
           const positions = Object.fromEntries(nodes.map((node) => {
             const position = rawPositions[node.id] || node;
             return [node.id, {
-              x: clamp(Number(position.x) || 0, -100000, 100000),
-              y: clamp(Number(position.y) || 0, -100000, 100000)
+              x: clamp(Number(position.x) || 0, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE),
+              y: clamp(Number(position.y) || 0, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE)
             }];
           }));
           const viewViewport = view.viewport || normalizedViewport;
@@ -2881,7 +2963,8 @@
               scale: clamp(Number(viewViewport.scale) || 1, MIN_SCALE, MAX_SCALE)
             },
             focusNodeId,
-            focusDepth: focusNodeId && [1, 2].includes(Number(view.focusDepth)) ? Number(view.focusDepth) : 0
+            focusDepth: focusNodeId && [1, 2].includes(Number(view.focusDepth)) ? Number(view.focusDepth) : 0,
+            connectionLensEnabled: Boolean(view.connectionLensEnabled)
           }];
         });
         if (!views.length) views.push(createDefaultView(nodes, normalizedViewport));
@@ -3300,9 +3383,9 @@
         }
       }
 
-      function degreeMetrics() {
-        const counts = new Map(graph.nodes.map((node) => [node.id, 0]));
-        graph.edges.forEach((edge) => {
+      function degreeMetrics(nodes = graph.nodes, edges = graph.edges) {
+        const counts = new Map(nodes.map((node) => [node.id, 0]));
+        edges.forEach((edge) => {
           if (counts.has(edge.source)) counts.set(edge.source, counts.get(edge.source) + 1);
           if (counts.has(edge.target)) counts.set(edge.target, counts.get(edge.target) + 1);
         });
@@ -3374,69 +3457,34 @@
         return { x: center.x + dx * scale, y: center.y + dy * scale };
       }
 
+      function attachment(node, toward, port, metrics = degreeMetrics()) {
+        const compact = isSemanticCompact();
+        const position = nodeDisplayPosition(node, compact, metrics);
+        const size = nodeSize(node, compact, metrics);
+        if (!compact && node.shape !== 'circle' && /^[nesw]:[0-4]$/.test(port)) {
+          return portPosition(port, { ...position, ...size });
+        }
+        const point = boundaryPoint(node, toward, compact, metrics);
+        const center = nodeCenter(node, compact, metrics);
+        const dx = point.x - center.x;
+        const dy = point.y - center.y;
+        if (compact || node.shape === 'circle') {
+          const length = Math.hypot(dx, dy);
+          return { ...point, nx: length ? dx / length : 1, ny: length ? dy / length : 0 };
+        }
+        const horizontal = Math.abs(dx) / size.width >= Math.abs(dy) / size.height;
+        return { ...point, nx: horizontal ? Math.sign(dx) || 1 : 0, ny: horizontal ? 0 : Math.sign(dy) || 1 };
+      }
+
       function edgeGeometry(source, target, edge, reverseOffset = 0, metrics = degreeMetrics()) {
         const compact = isSemanticCompact();
         const sourceCenter = nodeCenter(source, compact, metrics);
         const targetCenter = nodeCenter(target, compact, metrics);
         const configuredPoints = Array.isArray(edge?.points) ? edge.points : [];
         const routing = edge?.routing || 'curve';
-        const start = boundaryPoint(source, configuredPoints[0] || targetCenter, compact, metrics);
-        const end = boundaryPoint(target, configuredPoints.at(-1) || sourceCenter, compact, metrics);
-        const dx = end.x - start.x;
-        const dy = end.y - start.y;
-        const distance = Math.max(1, Math.hypot(dx, dy));
-        const normalX = -dy / distance * reverseOffset;
-        const normalY = dx / distance * reverseOffset;
-        const offsetPoint = (point) => ({ x: point.x + normalX, y: point.y + normalY });
-
-        if (routing === 'orthogonal') {
-          const points = configuredPoints.length
-            ? configuredPoints.map(offsetPoint)
-            : [{ x: start.x + dx / 2 + normalX, y: start.y + normalY }, { x: start.x + dx / 2 + normalX, y: end.y + normalY }];
-          const waypoints = [...points, end];
-          let previous = start;
-          let path = `M ${start.x} ${start.y}`;
-          waypoints.forEach((point) => {
-            if (point.x !== previous.x) path += ` L ${point.x} ${previous.y}`;
-            if (point.y !== previous.y) path += ` L ${point.x} ${point.y}`;
-            previous = point;
-          });
-          return {
-            path,
-            mid: points[Math.floor((points.length - 1) / 2)] || { x: start.x + dx / 2, y: start.y + dy / 2 },
-            points
-          };
-        }
-
-        if (routing === 'straight' || configuredPoints.length) {
-          const points = configuredPoints.map(offsetPoint);
-          const all = [start, ...points, end];
-          if (routing === 'curve' && points.length) {
-            let path = `M ${start.x} ${start.y}`;
-            points.forEach((point, index) => {
-              const next = all[index + 2];
-              const midpoint = { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 };
-              path += ` Q ${point.x} ${point.y}, ${midpoint.x} ${midpoint.y}`;
-            });
-            path += ` T ${end.x} ${end.y}`;
-            return { path, mid: points[Math.floor(points.length / 2)], points };
-          }
-          return {
-            path: all.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' '),
-            mid: points[Math.floor(points.length / 2)] || { x: start.x + dx / 2, y: start.y + dy / 2 },
-            points
-          };
-        }
-
-        const bend = Math.min(90, Math.max(36, Math.abs(dx) * 0.32));
-        const c1 = { x: start.x + Math.sign(dx || 1) * bend + normalX, y: start.y + normalY };
-        const c2 = { x: end.x - Math.sign(dx || 1) * bend + normalX, y: end.y + normalY };
-        const path = `M ${start.x} ${start.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${end.x} ${end.y}`;
-        const mid = {
-          x: (start.x + 3 * c1.x + 3 * c2.x + end.x) / 8,
-          y: (start.y + 3 * c1.y + 3 * c2.y + end.y) / 8
-        };
-        return { path, mid, points: [] };
+        const start = attachment(source, configuredPoints[0] || targetCenter, edge?.sourcePort, metrics);
+        const end = attachment(target, configuredPoints.at(-1) || sourceCenter, edge?.targetPort, metrics);
+        return routeEdge(start, end, routing, configuredPoints, reverseOffset);
       }
 
       function screenToWorld(clientX, clientY) {
@@ -3556,9 +3604,39 @@
         return result;
       }
 
-      function commitAutoLayout(arranged) {
-        const protectedLayout = preserveLayoutBlocks(arranged);
+      function fitLayoutCoordinates(arranged) {
+        if (!arranged.size) return arranged;
+        const points = [...arranged.values()];
+        const offset = {};
+        for (const axis of ['x', 'y']) {
+          const values = points.map((point) => point[axis]);
+          if (values.some((value) => !Number.isFinite(value))) return null;
+          const min = Math.min(...values);
+          const max = Math.max(...values);
+          if (max - min > MAX_GRAPH_COORDINATE * 2) return null;
+          offset[axis] = min < -MAX_GRAPH_COORDINATE ? -MAX_GRAPH_COORDINATE - min
+            : max > MAX_GRAPH_COORDINATE ? MAX_GRAPH_COORDINATE - max : 0;
+        }
+        return new Map([...arranged].map(([id, point]) => [id, {
+          x: point.x + offset.x, y: point.y + offset.y
+        }]));
+      }
+
+      function commitAutoLayout(arranged, layout) {
+        const bounded = fitLayoutCoordinates(arranged);
+        const protectedLayout = bounded && preserveLayoutBlocks(bounded);
+        if (!protectedLayout || [...protectedLayout.values()].some((point) =>
+          Math.abs(point.x) > MAX_GRAPH_COORDINATE || Math.abs(point.y) > MAX_GRAPH_COORDINATE)) {
+          renderViewControls();
+          toast('Укладка слишком велика. Уменьшите размеры элементов или выберите другую укладку.', 'error');
+          return;
+        }
+        const needsChange = activeView()?.layout !== layout || graph.nodes.some((node) => {
+          const position = protectedLayout.get(node.id);
+          return position && (position.x !== node.x || position.y !== node.y);
+        });
         const changed = mutate('Граф автоматически упорядочен', () => {
+          if (activeView()) activeView().layout = layout;
           graph.nodes.forEach((node) => {
             const position = protectedLayout.get(node.id);
             if (!position) return;
@@ -3566,43 +3644,59 @@
             node.y = position.y;
           });
         });
+        if (!changed && needsChange) return;
         requestAnimationFrame(() => {
           fitGraph();
           if (changed) toast('Граф упорядочен и показан целиком', 'success');
-          else toast('Закреплённые элементы сохранены на местах');
+          else toast('Граф уже упорядочен');
         });
       }
 
-      function hierarchyLayout(components, adjacency, metrics, nodeOrder) {
+      function hierarchyLayout(nodes, edges, metrics) {
         const arranged = new Map();
-        const incoming = new Map(graph.nodes.map((node) => [node.id, 0]));
-        graph.edges.forEach((edge) => incoming.set(edge.target, (incoming.get(edge.target) || 0) + 1));
-        let componentY = 0;
-        components.forEach((ids) => {
-          const rootId = [...ids].sort((a, b) => {
-            return (incoming.get(a) || 0) - (incoming.get(b) || 0) || (metrics.counts.get(b) || 0) - (metrics.counts.get(a) || 0) || nodeOrder.get(a) - nodeOrder.get(b);
-          })[0];
-          const levels = new Map([[rootId, 0]]);
-          const queue = [rootId];
-          for (let index = 0; index < queue.length; index += 1) {
-            const id = queue[index];
-            [...(adjacency.get(id) || [])].sort((a, b) => nodeOrder.get(a) - nodeOrder.get(b)).forEach((neighbor) => {
-              if (levels.has(neighbor)) return;
-              levels.set(neighbor, levels.get(id) + 1);
-              queue.push(neighbor);
-            });
+        const nodesById = new Map(nodes.map((node) => [node.id, node]));
+        const parents = new Map();
+        const children = new Map(nodes.map((node) => [node.id, []]));
+        // Choose one layout parent without changing links; explicit child links take priority.
+        edges.forEach((edge) => {
+          if (edge.source === edge.target || !nodesById.has(edge.source) || !nodesById.has(edge.target)) return;
+          const current = parents.get(edge.target);
+          if (!current || (current.label !== 'дочерний' && edge.label === 'дочерний')) parents.set(edge.target, edge);
+        });
+        nodes.forEach((node) => {
+          const parent = parents.get(node.id);
+          if (parent) children.get(parent.source).push(node.id);
+        });
+        const roots = nodes.filter((node) => !parents.has(node.id));
+        const visited = new Set();
+        let cursorY = 0;
+        // The second pass covers cyclic components; preorder preserves the outline's sibling order.
+        [...roots, ...nodes].forEach((root) => {
+          if (visited.has(root.id)) return;
+          const rows = [];
+          const columnWidths = [];
+          const stack = [{ id: root.id, depth: 0 }];
+          while (stack.length) {
+            const { id, depth } = stack.pop();
+            if (visited.has(id)) continue;
+            visited.add(id);
+            const size = nodeSize(nodesById.get(id), false, metrics);
+            rows.push({ id, depth, size });
+            columnWidths[depth] = Math.max(columnWidths[depth] || 0, size.width);
+            const descendants = children.get(id);
+            for (let index = descendants.length - 1; index >= 0; index -= 1) {
+              stack.push({ id: descendants[index], depth: depth + 1 });
+            }
           }
-          const columns = [];
-          ids.forEach((id) => {
-            const level = levels.get(id) || 0;
-            if (!columns[level]) columns[level] = [];
-            columns[level].push(id);
+          const columnX = [0];
+          columnWidths.forEach((width, depth) => {
+            columnX[depth + 1] = columnX[depth] + Math.max(280, Math.ceil(width) + 64);
           });
-          const maxRows = Math.max(...columns.map((column) => column.length));
-          columns.forEach((column, level) => column
-            .sort((a, b) => (metrics.counts.get(b) || 0) - (metrics.counts.get(a) || 0) || nodeOrder.get(a) - nodeOrder.get(b))
-            .forEach((id, row) => arranged.set(id, { x: level * 360, y: componentY + row * 180 })));
-          componentY += Math.max(1, maxRows) * 180 + 180;
+          rows.forEach(({ id, depth, size }) => {
+            arranged.set(id, { x: columnX[depth], y: cursorY });
+            cursorY += Math.max(128, Math.ceil(size.height) + 32);
+          });
+          cursorY += 64;
         });
         return arranged;
       }
@@ -3613,8 +3707,13 @@
         return new Map(ordered.map((node, index) => [node.id, { x: (index % columns) * 300, y: Math.floor(index / columns) * 170 }]));
       }
 
-      function autoArrangeGraph() {
+      function autoArrangeGraph(layoutMode = activeView()?.layout || 'radial') {
+        if (!['radial', 'hierarchy', 'compact'].includes(layoutMode)) layoutMode = activeView()?.layout || 'radial';
         if (!graph.nodes.length) {
+          if (activeView()?.layout !== layoutMode) {
+            const changed = mutate('Изменён способ автоукладки', () => { activeView().layout = layoutMode; });
+            if (!changed) return;
+          }
           fitGraph();
           toast('В графе пока нет элементов');
           return;
@@ -3649,13 +3748,12 @@
           components.push(ids);
         });
 
-        const layoutMode = activeView()?.layout || 'radial';
         if (layoutMode === 'hierarchy') {
-          commitAutoLayout(hierarchyLayout(components, adjacency, metrics, nodeOrder));
+          commitAutoLayout(hierarchyLayout(graph.nodes, graph.edges, metrics), layoutMode);
           return;
         }
         if (layoutMode === 'compact') {
-          commitAutoLayout(compactGridLayout(metrics, nodeOrder));
+          commitAutoLayout(compactGridLayout(metrics, nodeOrder), layoutMode);
           return;
         }
 
@@ -3760,7 +3858,7 @@
           rowHeight = Math.max(rowHeight, layout.height);
         });
 
-        commitAutoLayout(arranged);
+        commitAutoLayout(arranged, layoutMode);
       }
 
       function ensureGraphCapacity(nodesToAdd = 0, edgesToAdd = 0) {
@@ -3812,6 +3910,10 @@
           setSingleNodeSelection(node.id);
         });
         requestAnimationFrame(() => {
+          if (type === 'sticker') {
+            openInlineNodeEditor(node.id, { selectAll: true });
+            return;
+          }
           const input = document.getElementById('nodeTitleField');
           input?.focus();
           input?.select();
@@ -3987,14 +4089,14 @@
         const parentAtDepth = [];
         const created = [];
         const edges = [];
-        items.forEach((item, index) => {
+        items.forEach((item) => {
           const node = {
             id: uid('node'), type, title: item.title, customTypeLabel: type === 'custom' ? 'Своя сущность' : '',
             sourceRef: '', description: '', shape: 'rounded', radius: type === 'sticker' ? 4 : 8, scale: 1,
             autoSize: type !== 'sticker', width: type === 'sticker' ? 176 : type === 'atom' ? 190 : 224,
             height: type === 'sticker' ? 94 : type === 'atom' ? 96 : 108, items: [], pinned: false,
             color: TYPE_CONFIG[type].color,
-            x: Math.round(origin.x + item.depth * 280), y: Math.round(origin.y + index * 128)
+            x: 0, y: 0
           };
           const parent = item.depth > 0 ? parentAtDepth[item.depth - 1] : null;
           if (parent) edges.push({ id: uid('edge'), source: parent.id, target: node.id, label: 'дочерний', routing: 'orthogonal', points: [] });
@@ -4002,11 +4104,25 @@
           parentAtDepth.length = item.depth + 1;
           created.push(node);
         });
-        mutate(`Создана иерархия: ${created.length} элементов`, () => {
+        const metrics = degreeMetrics([...graph.nodes, ...created], [...graph.edges, ...edges]);
+        const proposed = hierarchyLayout(created, edges, metrics);
+        proposed.forEach((position) => {
+          position.x += Math.round(origin.x);
+          position.y += Math.round(origin.y);
+        });
+        const positions = fitLayoutCoordinates(proposed);
+        if (!positions) {
+          toast('Иерархия слишком велика. Разделите её на несколько графов.', 'error');
+          return;
+        }
+        created.forEach((node) => Object.assign(node, positions.get(node.id)));
+        const changed = mutate(`Создана иерархия: ${created.length} элементов`, () => {
           graph.nodes.push(...created);
           graph.edges.push(...edges);
+          if (activeView()) activeView().layout = 'hierarchy';
           setSingleNodeSelection(created[0].id);
         });
+        if (!changed) return;
         document.getElementById('hierarchyDialog').close();
         document.getElementById('hierarchySource').value = '';
         requestAnimationFrame(() => fitGraph());
@@ -4083,7 +4199,7 @@
         });
       }
 
-      function createEdge(sourceId, targetId) {
+      function createEdge(sourceId, targetId, ports = {}) {
         if (!sourceId || !targetId) return;
         if (sourceId === targetId) {
           toast('Нельзя связать элемент с самим собой', 'error');
@@ -4098,7 +4214,7 @@
           return;
         }
         if (!ensureGraphCapacity(0, 1)) return;
-        const edge = { id: uid('edge'), source: sourceId, target: targetId, label: 'связано с', routing: 'curve', points: [] };
+        const edge = { id: uid('edge'), source: sourceId, target: targetId, label: 'связано с', routing: 'curve', points: [], sourcePort: ports.sourcePort || null, targetPort: ports.targetPort || null };
         mutate('Создана направленная связь', () => {
           graph.edges.push(edge);
           ui.selectedNodeIds.clear();
@@ -4194,7 +4310,15 @@
       function setActiveViewLayout(layout) {
         const view = activeView();
         if (!view || !['radial', 'hierarchy', 'compact'].includes(layout)) return;
-        mutate('Изменён способ автоукладки', () => { view.layout = layout; });
+        autoArrangeGraph(layout);
+      }
+
+      function setConnectionLensEnabled(enabled) {
+        const view = activeView();
+        if (!view || view.connectionLensEnabled === Boolean(enabled)) return;
+        mutate(enabled ? 'Включена линза связей' : 'Отключена линза связей', () => {
+          view.connectionLensEnabled = Boolean(enabled);
+        });
       }
 
       function renderViewControls() {
@@ -4213,7 +4337,15 @@
               <option value="compact" ${current?.layout === 'compact' ? 'selected' : ''}>Компактная сетка</option>
             </select>
             <button class="icon-button danger" type="button" data-view-action="delete" aria-label="Удалить представление" title="Удалить представление" ${graph.views.length <= 1 ? 'disabled' : ''}>${icon('trash')}</button>
-          </div>`;
+          </div>
+          <label class="view-toggle" title="Подсвечивать связанные элементы и приглушать остальные">
+            <input id="connectionLensField" type="checkbox" ${current?.connectionLensEnabled ? 'checked' : ''}>
+            <span>Линза связей</span>
+          </label>
+          <label class="view-toggle">
+            <input id="wheelInvertField" type="checkbox" ${wheelInverted ? 'checked' : ''}>
+            <span>Инверсия колеса</span>
+          </label>`;
       }
 
       function nodeGroup(nodeId) {
@@ -4271,6 +4403,7 @@
       }
 
       function activeConnectionLensNodeId() {
+        if (!activeView()?.connectionLensEnabled) return null;
         if (ui.mode === 'connect' || ui.pointerAction?.kind === 'connect') return null;
         if (ui.hoverNodeId && nodeById(ui.hoverNodeId)) return ui.hoverNodeId;
         if (ui.selection?.kind === 'node' && ui.selectedNodeIds.size === 1 && nodeById(ui.selection.id)) return ui.selection.id;
@@ -4280,6 +4413,7 @@
       function syncConnectionLens() {
         const nodeId = activeConnectionLensNodeId();
         const summary = nodeId ? connectionSummary(nodeId) : null;
+        refs.canvas.classList.toggle('has-connection-lens', Boolean(summary));
 
         refs.nodeLayer.querySelectorAll('[data-node-id]').forEach((element) => {
           const id = element.dataset.nodeId;
@@ -4469,12 +4603,22 @@
           const diagnosticHighlight = ui.diagnosticNodeIds?.has(node.id);
           const manualSize = node.autoSize === false;
           const showResizeHandles = manualSize && selected && ui.selectedNodeIds.size === 1 && !compact;
-          const manualStyle = manualSize && !compact
-            ? `; width:${node.width}px; height:${node.shape === 'circle' ? node.width : node.height}px`
+          const displaySize = nodeSize(node, false, metrics);
+          const manualStyle = !compact
+            ? `; width:${displaySize.width / scale}px; height:${displaySize.height / scale}px`
             : '';
-          const listItems = node.type === 'list' && node.items.length
-            ? `<ul class="node-list-items">${node.items.slice(0, 4).map((item) => `<li>${escapeHtml(item)}</li>`).join('')}${node.items.length > 4 ? `<li class="node-list-more">+${node.items.length - 4} ещё</li>` : ''}</ul>`
+          const listItems = node.type === 'list'
+            ? `<div class="node-list-region"><ul class="node-list-items">${node.items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul><span class="node-list-more" hidden></span></div>`
             : '';
+          const ports = !compact && node.shape !== 'circle' ? PORT_IDS.map((port) => {
+            const [side, index] = port.split(':');
+            const point = portPosition(port, { x: 0, y: 0, width: 100, height: 100 });
+            const handle = index === '2' ? side : port;
+            const leftBorder = node.type === 'sticker' ? 1 : 4;
+            const xInset = point.x / 100 * (leftBorder + 1) - leftBorder;
+            const yInset = point.y / 100 * 2 - 1;
+            return `<span class="node-port" data-port-id="${port}" ${showResizeHandles ? `data-resize-handle="${handle}"` : ''} style="left:calc(${point.x}% + ${xInset}px);top:calc(${point.y}% + ${yInset}px)" aria-hidden="true"></span>`;
+          }).join('') : '';
           return `
             <article class="graph-node ${node.shape === 'circle' ? 'circle' : ''} ${node.type === 'sticker' ? 'sticker' : ''} ${manualSize ? 'manual-size' : ''} ${selected ? 'selected' : ''} ${source ? 'connect-source' : ''} ${contextMuted ? 'context-muted' : ''} ${focusOrigin ? 'focus-origin' : ''} ${diagnosticMuted ? 'diagnostic-muted' : ''} ${diagnosticHighlight ? 'diagnostic-highlight' : ''}"
               data-node-id="${escapeHtml(node.id)}"
@@ -4492,12 +4636,30 @@
               ${listItems}
               <div class="node-ref">${escapeHtml(node.sourceRef || 'Без привязки')}</div>
               <div class="node-compact-label" aria-hidden="true">${escapeHtml(compactNodeLabel(node))}</div>
-              <span class="node-port top" aria-hidden="true"></span><span class="node-port right" aria-hidden="true"></span><span class="node-port bottom" aria-hidden="true"></span><span class="node-port left" aria-hidden="true"></span>
-              ${showResizeHandles ? '<span class="resize-handle e" data-resize-handle="e" aria-hidden="true"></span><span class="resize-handle s" data-resize-handle="s" aria-hidden="true"></span><span class="resize-handle se" data-resize-handle="se" aria-hidden="true"></span>' : ''}
+              ${ports}
+              ${showResizeHandles && node.shape === 'circle' ? '<span class="resize-handle e" data-resize-handle="e" aria-hidden="true"></span><span class="resize-handle s" data-resize-handle="s" aria-hidden="true"></span>' : ''}
+              ${showResizeHandles ? ['nw', 'ne', 'sw', 'se'].map((direction) => `<span class="resize-handle ${direction}" data-resize-handle="${direction}" aria-hidden="true"></span>`).join('') : ''}
             </article>
           `;
         }).join('');
+        refs.nodeLayer.querySelectorAll('[data-node-type="list"]').forEach(updateListPreview);
         refs.emptyState.hidden = graph.nodes.length > 0;
+      }
+
+      function updateListPreview(element) {
+        const list = element.querySelector('.node-list-items');
+        const more = element.querySelector('.node-list-more');
+        if (!list || !more || isSemanticCompact()) return;
+        const items = [...list.children];
+        items.forEach((item) => { item.hidden = false; });
+        more.hidden = true;
+        const fits = (item) => item.getBoundingClientRect().bottom <= list.getBoundingClientRect().bottom + 0.5;
+        if (items.every(fits)) return;
+        more.hidden = false;
+        more.textContent = 'ещё';
+        const count = items.filter(fits).length;
+        items.forEach((item, index) => { item.hidden = index >= count; });
+        more.textContent = `+${items.length - count} ещё`;
       }
 
       function renderEdges() {
@@ -4731,8 +4893,6 @@
               : ui.diagnosticNodeIds
                 ? `Диагностика: ${ui.diagnosticLabel}`
                 : 'Ничего не выбрано';
-        refs.themeIconUse.setAttribute('href', theme === 'dark' ? '#i-sun' : '#i-moon');
-        document.getElementById('themeButton').setAttribute('aria-label', theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему');
         const panelsButton = document.getElementById('togglePanelsButton');
         panelsButton.classList.toggle('active', ui.panelsHidden);
         panelsButton.setAttribute('aria-pressed', String(ui.panelsHidden));
@@ -4831,7 +4991,7 @@
         if (!action) return false;
         ui.pointerAction = null;
         refs.canvas.classList.remove('panning');
-        refs.edgePreview.hidden = true;
+        refs.edgePreview.setAttribute('hidden', '');
         refs.edgePreview.setAttribute('d', '');
         refs.selectionMarquee.hidden = true;
         refs.nodeLayer.querySelectorAll('.magnet-target').forEach((element) => element.classList.remove('magnet-target'));
@@ -4863,7 +5023,7 @@
           return;
         }
         const resizeHandle = event.target.closest('[data-resize-handle]');
-        if (resizeHandle) {
+        if (resizeHandle && !event.shiftKey && ui.mode !== 'connect') {
           const node = nodeById(id);
           if (!node || node.autoSize || isSemanticCompact()) return;
           event.preventDefault();
@@ -4871,9 +5031,9 @@
           setSingleNodeSelection(id);
           ui.pointerAction = {
             kind: 'node-resize', pointerId: event.pointerId, nodeId: id,
-            direction: resizeHandle.dataset.resizeHandle,
+            direction: resizeHandle.dataset.resizeHandle.split(':')[0],
             startClient: { x: event.clientX, y: event.clientY },
-            startWidth: node.width, startHeight: node.height, before: graphSnapshot()
+            startWidth: node.width, startHeight: node.height, startX: node.x, startY: node.y, before: graphSnapshot()
           };
           try { refs.canvas.setPointerCapture?.(event.pointerId); } catch {}
           return;
@@ -4895,11 +5055,12 @@
             kind: 'connect',
             pointerId: event.pointerId,
             sourceId: id,
+            sourcePort: event.target.closest('[data-port-id]')?.dataset.portId || null,
             start: nodeCenter(node),
             current: screenToWorld(event.clientX, event.clientY)
           };
           try { refs.canvas.setPointerCapture?.(event.pointerId); } catch {}
-          refs.edgePreview.hidden = false;
+          refs.edgePreview.removeAttribute('hidden');
           renderNodes();
           updateEdgePreview();
           return;
@@ -5054,22 +5215,37 @@
           if (!node) return;
           const dx = (event.clientX - action.startClient.x) / graph.viewport.scale;
           const dy = (event.clientY - action.startClient.y) / graph.viewport.scale;
+          const right = action.startX + action.startWidth;
+          const bottom = action.startY + action.startHeight;
           if (node.shape === 'circle') {
-            const delta = action.direction === 'e'
-              ? dx
-              : action.direction === 's'
-                ? dy
-                : Math.abs(dx) >= Math.abs(dy) ? dx : dy;
-            node.width = clamp(action.startWidth + delta, 96, 1200);
+            const minimum = Math.max(96, action.direction.includes('w') ? right - MAX_GRAPH_COORDINATE : 96, action.direction.includes('n') ? bottom - MAX_GRAPH_COORDINATE : 96);
+            const maximum = Math.min(900, action.direction.includes('w') ? right + MAX_GRAPH_COORDINATE : 900, action.direction.includes('n') ? bottom + MAX_GRAPH_COORDINATE : 900);
+            // Legacy circles may be wider than 900; keep them unchanged if the opposite edge cannot stay fixed within bounds.
+            if (minimum > maximum) return;
+            const horizontal = action.direction.includes('w') ? -dx : dx;
+            const vertical = action.direction.includes('n') ? -dy : dy;
+            const delta = ['e', 'w'].includes(action.direction) ? horizontal : ['n', 's'].includes(action.direction) ? vertical : Math.abs(horizontal) >= Math.abs(vertical) ? horizontal : vertical;
+            node.width = clamp(action.startWidth + delta, minimum, maximum);
             node.height = node.width;
           } else {
             if (action.direction.includes('e')) node.width = clamp(action.startWidth + dx, 96, 1200);
             if (action.direction.includes('s')) node.height = clamp(action.startHeight + dy, 64, 900);
+            if (action.direction.includes('w')) node.width = clamp(action.startWidth - dx, 96, 1200);
+            if (action.direction.includes('n')) node.height = clamp(action.startHeight - dy, 64, 900);
           }
+          if (node.shape !== 'circle') {
+            if (action.direction.includes('w')) node.width = clamp(node.width, Math.max(96, right - MAX_GRAPH_COORDINATE), Math.min(1200, right + MAX_GRAPH_COORDINATE));
+            if (action.direction.includes('n')) node.height = clamp(node.height, Math.max(64, bottom - MAX_GRAPH_COORDINATE), Math.min(900, bottom + MAX_GRAPH_COORDINATE));
+          }
+          if (action.direction.includes('w')) node.x = action.startX + action.startWidth - node.width;
+          if (action.direction.includes('n')) node.y = action.startY + action.startHeight - node.height;
           const nodeElement = refs.nodeLayer.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`);
           if (nodeElement) {
             nodeElement.style.width = `${node.width}px`;
             nodeElement.style.height = `${node.shape === 'circle' ? node.width : node.height}px`;
+            nodeElement.style.left = `${node.x}px`;
+            nodeElement.style.top = `${node.y}px`;
+            updateListPreview(nodeElement);
           }
           scheduleEdgeRender();
           return;
@@ -5104,23 +5280,50 @@
           return;
         }
         if (action.kind === 'connect') {
-          const metrics = degreeMetrics();
-          const hidden = hiddenNodeIds();
-          let nearest = null;
-          let nearestDistance = 42;
-          graph.nodes.forEach((node) => {
-            if (node.id === action.sourceId || hidden.has(node.id)) return;
-            const center = nodeCenter(node, isSemanticCompact(), metrics);
-            const screenX = graph.viewport.x + center.x * graph.viewport.scale + refs.canvas.getBoundingClientRect().left;
-            const screenY = graph.viewport.y + center.y * graph.viewport.scale + refs.canvas.getBoundingClientRect().top;
-            const distance = Math.hypot(event.clientX - screenX, event.clientY - screenY);
-            if (distance < nearestDistance) { nearest = node; nearestDistance = distance; }
+          const target = connectionTarget(event, action);
+          action.snapTargetId = target?.node.id || null;
+          action.targetPort = target?.port || null;
+          action.current = worldPoint;
+          refs.nodeLayer.querySelectorAll('[data-node-id]').forEach((element) => {
+            const isTarget = element.dataset.nodeId === action.snapTargetId;
+            element.classList.toggle('magnet-target', isTarget);
+            element.querySelectorAll('[data-port-id]').forEach((port) => port.classList.toggle('snap-port', isTarget && port.dataset.portId === action.targetPort));
           });
-          action.snapTargetId = nearest?.id || null;
-          action.current = nearest ? nodeCenter(nearest, isSemanticCompact(), metrics) : worldPoint;
-          refs.nodeLayer.querySelectorAll('[data-node-id]').forEach((element) => element.classList.toggle('magnet-target', element.dataset.nodeId === action.snapTargetId));
           updateEdgePreview();
         }
+      }
+
+      function connectionTarget(event, action) {
+        const point = screenToWorld(event.clientX, event.clientY);
+        const metrics = degreeMetrics();
+        const compact = isSemanticCompact();
+        const hidden = hiddenNodeIds();
+        const candidates = graph.nodes.filter((node) => node.id !== action.sourceId && !hidden.has(node.id));
+        const contains = (node) => {
+          const center = nodeCenter(node, compact, metrics);
+          const size = nodeSize(node, compact, metrics);
+          const dx = Math.abs(point.x - center.x);
+          const dy = Math.abs(point.y - center.y);
+          if (compact || node.shape === 'circle') return Math.hypot(dx, dy) <= size.width / 2;
+          const radius = Math.min(node.radius * effectiveNodeScale(node, metrics), size.width / 2, size.height / 2);
+          return dx <= size.width / 2 && dy <= size.height / 2
+            && Math.hypot(Math.max(0, dx - size.width / 2 + radius), Math.max(0, dy - size.height / 2 + radius)) <= radius;
+        };
+        // A real hit wins over attraction to a neighbouring shape; DOM order resolves overlaps.
+        const hit = document.elementsFromPoint(event.clientX, event.clientY)
+          .map((element) => candidates.find((node) => node.id === element.closest('[data-node-id]')?.dataset.nodeId))
+          .find((node) => node && contains(node));
+        let nearest = hit ? { node: hit, port: null } : null;
+        let distance = 18;
+        (hit ? [hit] : candidates).forEach((node) => {
+          const ports = !compact && node.shape !== 'circle' ? PORT_IDS : [null];
+          ports.forEach((port) => {
+            const location = attachment(node, point, port, metrics);
+            const screenDistance = Math.hypot(point.x - location.x, point.y - location.y) * graph.viewport.scale;
+            if (screenDistance < distance) { distance = screenDistance; nearest = { node, port }; }
+          });
+        });
+        return nearest;
       }
 
       function handlePointerUp(event) {
@@ -5163,14 +5366,13 @@
           return;
         }
         if (action.kind === 'connect') {
-          refs.edgePreview.hidden = true;
+          refs.edgePreview.setAttribute('hidden', '');
           refs.edgePreview.setAttribute('d', '');
           ui.suppressNodeClick = true;
           setTimeout(() => { ui.suppressNodeClick = false; }, 80);
-          const targetElement = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('[data-node-id]');
-          const targetId = action.snapTargetId || targetElement?.dataset.nodeId;
+          const target = connectionTarget(event, action);
           renderNodes();
-          if (targetId) createEdge(action.sourceId, targetId);
+          if (target) createEdge(action.sourceId, target.node.id, { sourcePort: action.sourcePort, targetPort: target.port });
           else toast('Перетащите связь на другой элемент', 'error');
         }
       }
@@ -5218,11 +5420,10 @@
         if (!action || action.kind !== 'connect') return;
         const source = nodeById(action.sourceId);
         if (!source) return;
-        const start = boundaryPoint(source, action.current);
-        const end = action.current;
-        const bend = Math.min(80, Math.max(28, Math.abs(end.x - start.x) * 0.3));
-        const direction = Math.sign(end.x - start.x || 1);
-        refs.edgePreview.setAttribute('d', `M ${start.x} ${start.y} C ${start.x + direction * bend} ${start.y}, ${end.x - direction * bend} ${end.y}, ${end.x} ${end.y}`);
+        const target = nodeById(action.snapTargetId);
+        const start = attachment(source, target ? nodeCenter(target) : action.current, action.sourcePort);
+        const end = target ? attachment(target, start, action.targetPort) : { ...action.current, nx: -start.nx, ny: -start.ny };
+        refs.edgePreview.setAttribute('d', routeEdge(start, end).path);
       }
 
       function updateNodeField(field, value) {
@@ -5751,16 +5952,9 @@
         setTimeout(() => item.remove(), 3200);
       }
 
-      function toggleTheme() {
-        theme = theme === 'dark' ? 'light' : 'dark';
-        localStorage.setItem(THEME_KEY, theme);
-        applyTheme();
-        renderControls();
-      }
-
       function applyTheme() {
         document.documentElement.dataset.theme = theme;
-        const themeColor = theme === 'dark' ? '#17191e' : '#f4f6f8';
+        const themeColor = theme === 'dark' ? '#17191e' : theme === 'rose' ? '#fff5f8' : '#f4f6f8';
         document.querySelector('meta[name="theme-color"]').setAttribute('content', themeColor);
         document.querySelector('#arrow path')?.setAttribute('fill', theme === 'dark' ? '#8993a2' : '#748094');
         document.querySelector('#arrow-selected path')?.setAttribute('fill', theme === 'dark' ? '#75a0ff' : '#275fce');
@@ -5809,44 +6003,97 @@
 
       async function importGraph(file) {
         if (!file) return;
+        const sequence = ++importReadSequence;
+        openImportDialog();
         try {
           if (file.size > 5 * 1024 * 1024) throw new Error('Файл превышает лимит 5 МБ');
-          if (workspace.graphs.length >= MAX_CACHED_GRAPHS) {
-            throw new Error('Достигнут лимит прототипа: 100 графов');
-          }
           const parsed = JSON.parse(await file.text());
-          const adapted = adaptImportedGraph(parsed, file.name);
+          if (sequence !== importReadSequence || !document.getElementById('importDialog').open) return;
+          pendingImport = { parsed, fileName: file.name, candidate: null };
+          document.getElementById('importFileName').textContent = file.name;
+          document.getElementById('importModeField').value = detectJsonMode(parsed);
+          renderImportMapping();
+          previewImport();
+        } catch (error) {
+          if (sequence === importReadSequence) document.getElementById('importError').textContent = error instanceof SyntaxError ? 'Некорректный синтаксис JSON. Проверьте запятые и кавычки в файле.' : error.message;
+        } finally {
+          document.getElementById('importInput').value = '';
+        }
+      }
+
+      function openImportDialog() {
+        pendingImport = null;
+        document.getElementById('fileDialog').close();
+        document.getElementById('importError').textContent = '';
+        document.getElementById('importPreview').replaceChildren();
+        document.getElementById('importFileName').textContent = 'Файл не выбран · до 5 МБ';
+        document.getElementById('confirmImportButton').disabled = true;
+        renderImportMapping();
+        if (!document.getElementById('importDialog').open) document.getElementById('importDialog').showModal();
+      }
+
+      function renderImportMapping() {
+        const mode = document.getElementById('importModeField').value;
+        const fields = mode === 'records'
+          ? [['recordPath', 'Путь к массиву (JSON Pointer)'], ['idField', 'Поле ID'], ['titleField', 'Поле названия'], ['parentField', 'Поле родителя']]
+          : mode === 'edges' ? [['recordPath', 'Путь к массиву (JSON Pointer)'], ['sourceField', 'Поле источника'], ['targetField', 'Поле получателя'], ['labelField', 'Поле связи']] : [];
+        document.getElementById('importMapping').innerHTML = fields.map(([name, label]) => `<div class="field"><label for="import-${name}">${label}</label><input id="import-${name}" data-import-field="${name}" placeholder="${name === 'recordPath' ? '/items или пусто для корня' : 'Автоопределение'}" maxlength="300"></div>`).join('');
+      }
+
+      function previewImport() {
+        const confirmButton = document.getElementById('confirmImportButton');
+        confirmButton.disabled = true;
+        document.getElementById('importError').textContent = '';
+        document.getElementById('importPreview').replaceChildren();
+        if (!pendingImport) return;
+        pendingImport.candidate = null;
+        try {
+          const mode = document.getElementById('importModeField').value;
+          const options = { mode };
+          document.querySelectorAll('[data-import-field]').forEach((field) => { if (field.value.trim()) options[field.dataset.importField] = field.value.trim(); });
+          let adapted;
+          if (mode === 'native' || mode === 'cubes') {
+            if (detectJsonMode(pendingImport.parsed) !== mode) throw new Error(mode === 'native' ? 'Это не сохранённый граф DPMS: нужны массивы nodes и edges. Выберите «Дерево JSON», «Записи» или «Связи».' : 'Не найден массив cubes. Выберите другой формат данных.');
+            adapted = adaptImportedGraph(pendingImport.parsed, pendingImport.fileName);
+          } else adapted = convertStructuredJson(pendingImport.parsed, options, pendingImport.fileName);
           const imported = normalizeGraph(adapted.graph);
+          const issues = [...(adapted.issues || [])];
+          if (imported.edges.length !== adapted.graph.edges.length) issues.push(`Пропущено некорректных или повторных связей: ${adapted.graph.edges.length - imported.edges.length}.`);
+          if (mode === 'native' && pendingImport.parsed.edges.length !== imported.edges.length) throw new Error('В графе есть повторные связи, самосвязи или ссылки на отсутствующие элементы. Исправьте edges либо импортируйте документ как дерево данных.');
+          pendingImport.candidate = imported;
+          document.getElementById('importPreview').innerHTML = `<p><strong>Элементов: ${imported.nodes.length} · Связей: ${imported.edges.length}</strong></p><ul>${imported.nodes.slice(0, 8).map((node) => `<li>${escapeHtml(node.title)}</li>`).join('')}</ul>${issues.length ? `<h3>Замечания к импорту</h3><ul>${issues.map((issue) => `<li>${escapeHtml(issue)}</li>`).join('')}</ul>` : ''}`;
+          confirmButton.disabled = false;
+        } catch (error) {
+          document.getElementById('importError').textContent = error instanceof Error ? error.message : 'Не удалось преобразовать данные';
+        }
+      }
+
+      function confirmImport() {
+        if (!pendingImport?.candidate) return;
+        try {
+          if (workspace.graphs.length >= MAX_CACHED_GRAPHS) throw new Error('Достигнут лимит: 100 локальных графов');
+          const imported = deepClone(pendingImport.candidate);
           flushPendingEdit();
-          const previous = graph;
+          const previousWorkspace = workspace;
           const now = new Date().toISOString();
           imported.id = uid('graph');
           imported.createdAt = now;
           imported.updatedAt = now;
-          graph = imported;
-          workspace.graphs.push(imported);
-          workspace.activeGraphId = imported.id;
-          setGraphStorage(imported.id, localStorageMetadata());
-          resetGraphSession();
-          audit(`Импортирован файл «${file.name}»`);
-          if (!saveGraph()) {
-            workspace.graphs = workspace.graphs.filter((item) => item.id !== imported.id);
-            delete workspace.storage[imported.id];
-            graph = previous;
-            workspace.activeGraphId = previous.id;
-            resetGraphSession();
-            render();
+          imported.audit = [...imported.audit, { id: uid('audit'), at: now, action: `Импортирован файл «${pendingImport.fileName}»` }].slice(-200);
+          workspace = { ...workspace, activeGraphId: imported.id, graphs: [...workspace.graphs, imported], storage: { ...workspace.storage, [imported.id]: localStorageMetadata() } };
+          if (!persistWorkspace()) {
+            workspace = previousWorkspace;
             return;
           }
+          graph = imported;
+          resetGraphSession();
           render();
           fitGraph();
-          toast(adapted.format === 'cubes'
-            ? `Импортировано: ${graph.nodes.length} элементов, ${graph.edges.length} связей`
-            : 'Граф импортирован', 'success');
+          document.getElementById('importDialog').close();
+          pendingImport = null;
+          toast(`Импортировано: ${graph.nodes.length} элементов, ${graph.edges.length} связей`, 'success');
         } catch (error) {
           toast(error instanceof Error ? error.message : 'Не удалось импортировать файл', 'error');
-        } finally {
-          document.getElementById('importInput').value = '';
         }
       }
 
@@ -5964,7 +6211,7 @@
           if (cancelPointerAction()) return;
           ui.hoverNodeId = null;
           ui.connectSourceId = null;
-          refs.edgePreview.hidden = true;
+          refs.edgePreview.setAttribute('hidden', '');
           if (ui.mode !== 'select') setMode('select');
           else {
             clearSelection();
@@ -6030,9 +6277,16 @@
           renderPalette();
         });
         refs.viewControls.addEventListener('change', (event) => {
+          if (event.target.id === 'wheelInvertField') {
+            wheelInverted = event.target.checked;
+            try { localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ wheelInverted })); }
+            catch { toast('Не удалось сохранить настройку колеса', 'error'); }
+            return;
+          }
           if (event.target.id === 'activeViewField') switchView(event.target.value);
           if (event.target.id === 'viewLayoutField') setActiveViewLayout(event.target.value);
           if (event.target.id === 'viewNameField') renameActiveView(event.target.value);
+          if (event.target.id === 'connectionLensField') setConnectionLensEnabled(event.target.checked);
         });
         refs.viewControls.addEventListener('keydown', (event) => {
           if (event.target.id === 'viewNameField' && event.key === 'Enter') {
@@ -6118,6 +6372,13 @@
         refs.nodeLayer.addEventListener('keydown', (event) => {
           const node = event.target.closest('[data-node-id]');
           if (!node) return;
+          if (event.key === 'Tab' && !event.shiftKey && nodeById(node.dataset.nodeId)?.type === 'sticker') {
+            event.preventDefault();
+            event.stopPropagation();
+            openInlineNodeEditor(node.dataset.nodeId);
+            continueStickerSequence();
+            return;
+          }
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
             if (ui.mode === 'connect') handleConnectSelection(node.dataset.nodeId);
@@ -6220,16 +6481,11 @@
         window.addEventListener('pointercancel', cancelPointerAction);
         refs.canvas.addEventListener('wheel', (event) => {
           event.preventDefault();
-          if (event.shiftKey || event.ctrlKey) {
-            const rawDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
-            const factor = Math.exp(-rawDelta * 0.0018);
-            setZoom(graph.viewport.scale * factor, event.clientX, event.clientY);
-          } else {
-            graph.viewport.x -= event.deltaX;
-            graph.viewport.y -= event.deltaY;
-            applyViewport();
-            scheduleViewportSave();
-          }
+          const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? refs.canvas.clientHeight : 1;
+          const rawDelta = (Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX) * unit;
+          const direction = wheelInverted && !event.ctrlKey ? -1 : 1;
+          const factor = Math.exp(-clamp(rawDelta, -600, 600) * 0.0018 * direction);
+          setZoom(graph.viewport.scale * factor, event.clientX, event.clientY);
         }, { passive: false });
         refs.canvas.addEventListener('gesturestart', (event) => {
           event.preventDefault();
@@ -6441,6 +6697,8 @@
                 const source = edge.source;
                 edge.source = edge.target;
                 edge.target = source;
+                [edge.sourcePort, edge.targetPort] = [edge.targetPort || null, edge.sourcePort || null];
+                edge.points.reverse();
               });
             }
           }
@@ -6475,11 +6733,10 @@
         document.getElementById('redoButton').addEventListener('click', redo);
         document.getElementById('fitButton').addEventListener('click', fitGraph);
         document.getElementById('mobileFitButton').addEventListener('click', fitGraph);
-        document.getElementById('arrangeButton').addEventListener('click', autoArrangeGraph);
-        document.getElementById('railArrangeButton').addEventListener('click', autoArrangeGraph);
+        document.getElementById('arrangeButton').addEventListener('click', () => autoArrangeGraph());
+        document.getElementById('railArrangeButton').addEventListener('click', () => autoArrangeGraph());
         document.getElementById('hierarchyButton').addEventListener('click', openHierarchyDialog);
         document.getElementById('diagnosticsButton').addEventListener('click', openDiagnostics);
-        document.getElementById('themeButton').addEventListener('click', toggleTheme);
         document.getElementById('togglePanelsButton').addEventListener('click', togglePanels);
         document.getElementById('graphManagerButton').addEventListener('click', openGraphManager);
         refs.storageButton.addEventListener('click', openGraphManager);
@@ -6545,8 +6802,13 @@
         document.getElementById('railAddButton').addEventListener('click', () => addNodeAt(canvasCenterWorld()));
         document.getElementById('exportButton').addEventListener('click', exportGraph);
         document.getElementById('fileExportButton').addEventListener('click', exportGraph);
-        document.getElementById('importButton').addEventListener('click', () => document.getElementById('importInput').click());
-        document.getElementById('fileImportButton').addEventListener('click', () => document.getElementById('importInput').click());
+        document.getElementById('importButton').addEventListener('click', openImportDialog);
+        document.getElementById('fileImportButton').addEventListener('click', openImportDialog);
+        document.getElementById('chooseImportFileButton').addEventListener('click', () => document.getElementById('importInput').click());
+        document.getElementById('confirmImportButton').addEventListener('click', confirmImport);
+        document.getElementById('importModeField').addEventListener('change', () => { renderImportMapping(); previewImport(); });
+        document.getElementById('importMapping').addEventListener('input', previewImport);
+        document.getElementById('importDialog').addEventListener('close', () => { pendingImport = null; importReadSequence += 1; });
         document.getElementById('importInput').addEventListener('change', (event) => importGraph(event.target.files?.[0]));
         document.getElementById('clearButton').addEventListener('click', clearGraph);
         document.getElementById('createGraphButton').addEventListener('click', createNewGraph);
@@ -6643,6 +6905,11 @@
       window.addEventListener('message', (event) => {
         if (event.origin !== window.location.origin) return;
         if (event.source !== window.parent) return;
+        if (event.data?.type === 'dpms-graphs-theme' && event.data?.version === 1 && ['light', 'dark', 'rose'].includes(event.data.theme)) {
+          theme = event.data.theme;
+          applyTheme();
+          return;
+        }
         if (event.data?.type === STORAGE_RESPONSE_MESSAGE && event.data?.version === 1) {
           const request = bridgeRequests.get(event.data.requestId);
           if (!request) return;

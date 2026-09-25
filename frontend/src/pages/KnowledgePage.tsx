@@ -332,14 +332,17 @@ export function KnowledgePage() {
   }, [loadArticles])
 
   useEffect(() => {
+    if (loading) return
     if (!articles.length) {
       setSelectedSlug('')
       return
     }
     if (articles.some((article) => article.slug === selectedSlug)) return
-    const startArticle = articles.find((article) => article.section === 'start')
+    const requestedSlug = new URLSearchParams(window.location.search).get('article')
+    const startArticle = articles.find((article) => article.slug === requestedSlug)
+      ?? articles.find((article) => article.section === 'start')
     setSelectedSlug(startArticle?.slug ?? articles[0].slug)
-  }, [articles, selectedSlug])
+  }, [articles, selectedSlug, loading])
 
   const selectedArticle = useMemo(
     () => articles.find((article) => article.slug === selectedSlug) ?? articles[0] ?? null,
