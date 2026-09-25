@@ -340,11 +340,17 @@ healthcheck() {
 }
 
 frontend_asset_healthcheck() {
-  local index asset result code content_type missing_code
+  local index asset result code content_type missing_code graph_modules=0
   local -a assets=()
   index=$(curl -k -fsS -H "Host: ${DPMS_DOMAIN_PUNY}" https://127.0.0.1/ || true)
   mapfile -t assets < <(printf '%s' "$index" | grep -oE '/assets/[^"]+\.(js|css)' | sort -u)
   [[ ${#assets[@]} -gt 0 ]] || return 1
+
+  if [[ -f "$DPMS_LIVE_ROOT/frontend/dist/graph-workspace/index.html" ]] && \
+    grep -q 'connection-ports.mjs' "$DPMS_LIVE_ROOT/frontend/dist/graph-workspace/index.html"; then
+    graph_modules=1
+    assets+=(/graph-workspace/connection-ports.mjs /graph-workspace/edge-routing.mjs /graph-workspace/import-adapters.mjs)
+  fi
 
   for asset in "${assets[@]}"; do
     result=$(curl -k -sS -o /dev/null -w '%{http_code} %{content_type}' \
@@ -353,7 +359,7 @@ frontend_asset_healthcheck() {
     content_type="${result#* }"
     [[ "$code" == 200 ]] || return 1
     case "$asset" in
-      *.js) [[ "$content_type" == *javascript* ]] || return 1 ;;
+      *.js|*.mjs) [[ "$content_type" == *javascript* ]] || return 1 ;;
       *.css) [[ "$content_type" == text/css* ]] || return 1 ;;
     esac
   done
@@ -361,7 +367,14 @@ frontend_asset_healthcheck() {
   missing_code=$(curl -k -sS -o /dev/null -w '%{http_code}' \
     -H "Host: ${DPMS_DOMAIN_PUNY}" \
     "https://127.0.0.1/assets/dpms-healthcheck-missing.js" || true)
-  [[ "$missing_code" == 404 ]]
+  [[ "$missing_code" == 404 ]] || return 1
+  if [[ "$graph_modules" == 1 ]]; then
+    missing_code=$(curl -k -sS -o /dev/null -w '%{http_code}' \
+      -H "Host: ${DPMS_DOMAIN_PUNY}" \
+      "https://127.0.0.1/graph-workspace/dpms-healthcheck-missing.mjs" || true)
+    [[ "$missing_code" == 404 ]] || return 1
+  fi
+  return 0
 }
 
 wait_for_healthcheck() {
