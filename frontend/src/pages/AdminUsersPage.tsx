@@ -11,7 +11,7 @@ import { AdminServerBootPanel } from '@/components/AdminServerBootPanel'
 import { AuditCalendarAdminPanel } from '@/components/audit-calendar/AuditCalendarAdminPanel'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
-import { Copy, History, KeyRound, Pencil, PlugZap, Plus, RotateCcw, Trash2, UserPlus, Users } from 'lucide-react'
+import { BarChart3, Copy, History, KeyRound, Pencil, PlugZap, Plus, RotateCcw, Trash2, UserPlus, Users } from 'lucide-react'
 
 const MONTHS = [
   'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
@@ -490,13 +490,14 @@ export function AdminUsersPage() {
           <p className="text-sm font-medium text-primary">Администрирование</p>
           <h1 className="mt-1 text-2xl font-semibold text-slate-900">Сотрудники</h1>
         </div>
-        <nav className="flex items-center rounded-md border border-slate-200 bg-white p-1" aria-label="Разделы администрирования">
+        <nav className="flex max-w-full flex-wrap items-center rounded-md border border-slate-200 bg-white p-1" aria-label="Разделы администрирования">
           <span className="inline-flex min-h-10 items-center gap-2 rounded bg-primary px-3 text-sm font-medium text-primary-foreground">
             <Users className="h-4 w-4" />Сотрудники
           </span>
           <Link to="/admin/integrations" className="inline-flex min-h-10 items-center gap-2 rounded px-3 text-sm font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">
             <PlugZap className="h-4 w-4" />Интеграции
           </Link>
+          {currentUser?.role === 'admin' && <Link to="/admin/usage" className="inline-flex min-h-11 items-center gap-2 rounded px-3 text-sm font-medium text-muted-foreground hover:bg-surface-muted focus-visible:ring-2 focus-visible:ring-primary"><BarChart3 className="h-4 w-4" aria-hidden="true" />Использование</Link>}
         </nav>
       </header>
 

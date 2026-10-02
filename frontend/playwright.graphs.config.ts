@@ -23,6 +23,13 @@ export default defineConfig({
       },
     },
     {
+      name: 'webkit-desktop',
+      use: {
+        ...devices['Desktop Safari'],
+        viewport: { width: 1440, height: 900 },
+      },
+    },
+    {
       name: 'webkit-iphone-13',
       use: {
         ...devices['iPhone 13'],

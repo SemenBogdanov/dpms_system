@@ -72,6 +72,10 @@ async function fixture(page: Page, options: { theme?: Theme; role?: string; data
   await page.route('**/api/**', async (route) => {
     const request = route.request()
     const url = new URL(request.url())
+    if (url.pathname === '/api/usage/section-views' && request.method() === 'POST') {
+      await route.fulfill({ status: 204 })
+      return
+    }
     if (request.method() !== 'GET') {
       control.writes.push(`${request.method()} ${url.pathname}`)
       await route.fulfill({ status: 405, json: { detail: 'Read-only fixture' } })

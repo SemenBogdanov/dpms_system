@@ -2426,9 +2426,16 @@
       let graph = workspace.graphs.find((item) => item.id === workspace.activeGraphId) || workspace.graphs[0];
       let theme = loadTheme();
       let wheelInverted = false;
+      let canvasInputMode = /Mac|iPhone|iPad/i.test(navigator.platform) ? 'trackpad' : 'mouse';
+      let inputPreferences = {};
       let pendingImport = null;
       let importReadSequence = 0;
-      try { wheelInverted = JSON.parse(localStorage.getItem(PREFERENCES_KEY) || '{}').wheelInverted === true; } catch {}
+      try {
+        const stored = JSON.parse(localStorage.getItem(PREFERENCES_KEY) || '{}');
+        if (stored && typeof stored === 'object' && !Array.isArray(stored)) inputPreferences = stored;
+        wheelInverted = inputPreferences.wheelInverted === true;
+        if (['trackpad', 'mouse'].includes(inputPreferences.canvasInputMode)) canvasInputMode = inputPreferences.canvasInputMode;
+      } catch {}
       let viewportSaveTimer = 0;
       let edgeRenderFrame = 0;
       let pendingEdit = null;
@@ -4342,6 +4349,10 @@
             <input id="connectionLensField" type="checkbox" ${current?.connectionLensEnabled ? 'checked' : ''}>
             <span>Линза связей</span>
           </label>
+          <select id="canvasInputModeField" aria-label="Управление холстом" title="Устройство управления холстом">
+            <option value="trackpad" ${canvasInputMode === 'trackpad' ? 'selected' : ''}>Тачпад</option>
+            <option value="mouse" ${canvasInputMode === 'mouse' ? 'selected' : ''}>Мышь</option>
+          </select>
           <label class="view-toggle">
             <input id="wheelInvertField" type="checkbox" ${wheelInverted ? 'checked' : ''}>
             <span>Инверсия колеса</span>
@@ -6277,10 +6288,11 @@
           renderPalette();
         });
         refs.viewControls.addEventListener('change', (event) => {
-          if (event.target.id === 'wheelInvertField') {
-            wheelInverted = event.target.checked;
-            try { localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ wheelInverted })); }
-            catch { toast('Не удалось сохранить настройку колеса', 'error'); }
+          if (event.target.id === 'wheelInvertField' || event.target.id === 'canvasInputModeField') {
+            if (event.target.id === 'wheelInvertField') wheelInverted = event.target.checked;
+            else if (['trackpad', 'mouse'].includes(event.target.value)) canvasInputMode = event.target.value;
+            try { localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ ...inputPreferences, wheelInverted, canvasInputMode })); }
+            catch { toast('Не удалось сохранить настройки управления', 'error'); }
             return;
           }
           if (event.target.id === 'activeViewField') switchView(event.target.value);
@@ -6481,7 +6493,17 @@
         window.addEventListener('pointercancel', cancelPointerAction);
         refs.canvas.addEventListener('wheel', (event) => {
           event.preventDefault();
+          // Safari gestures own pinch zoom; concurrent wheel events must not apply it twice.
+          if (gestureStartScale !== null) return;
           const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? refs.canvas.clientHeight : 1;
+          if (canvasInputMode === 'trackpad' && !event.ctrlKey && !event.shiftKey) {
+            const horizontalUnit = event.deltaMode === 2 ? refs.canvas.clientWidth : unit;
+            graph.viewport.x -= event.deltaX * horizontalUnit;
+            graph.viewport.y -= event.deltaY * unit;
+            applyViewport();
+            scheduleViewportSave();
+            return;
+          }
           const rawDelta = (Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX) * unit;
           const direction = wheelInverted && !event.ctrlKey ? -1 : 1;
           const factor = Math.exp(-clamp(rawDelta, -600, 600) * 0.0018 * direction);
@@ -6501,11 +6523,16 @@
           event.preventDefault();
           setZoom(gestureStartScale * Math.max(Number(event.scale) || 1, 0.01), gestureAnchor.x, gestureAnchor.y);
         }, { passive: false });
-        refs.canvas.addEventListener('gestureend', (event) => {
+        window.addEventListener('gestureend', (event) => {
+          if (gestureStartScale === null) return;
           event.preventDefault();
           gestureStartScale = null;
           gestureAnchor = null;
         }, { passive: false });
+        window.addEventListener('blur', () => {
+          gestureStartScale = null;
+          gestureAnchor = null;
+        });
 
         refs.inspector.addEventListener('change', (event) => {
           const sizeField = event.target.dataset.nodeSize;

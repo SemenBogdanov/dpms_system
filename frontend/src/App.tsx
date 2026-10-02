@@ -71,6 +71,7 @@ const CalculatorPage = lazyPage(() => import('@/pages/CalculatorPage'), 'Calcula
 const ProfilePage = lazyPage(() => import('@/pages/ProfilePage'), 'ProfilePage')
 const ShopPage = lazyPage(() => import('@/pages/ShopPage'), 'ShopPage')
 const AdminUsersPage = lazyPage(() => import('@/pages/AdminUsersPage'), 'AdminUsersPage')
+const AdminUsagePage = lazyPage(() => import('@/pages/AdminUsagePage'), 'AdminUsagePage')
 const AdminIntegrationsPage = lazyPage(() => import('@/pages/AdminIntegrationsPage'), 'AdminIntegrationsPage')
 const CatalogPage = lazyPage(() => import('@/pages/CatalogPage'), 'CatalogPage')
 const KnowledgePage = lazyPage(() => import('@/pages/KnowledgePage'), 'KnowledgePage')
@@ -217,6 +218,7 @@ function App() {
         <Route path="personal-tasks" element={<PersonalTasksPage />} />
         <Route path="deadline-trackers" element={<DeadlineTrackersPage />} />
         <Route path="graphs" element={<GraphsPage />} />
+        <Route path="admin/usage" element={<AdminRoute><AdminUsagePage /></AdminRoute>} />
         <Route path="work-entities" element={<TaskWorkspaceRoute><WorkEntitiesPage /></TaskWorkspaceRoute>} />
         <Route path="audit" element={<AuditAccessRoute><AuditPage /></AuditAccessRoute>} />
         <Route path="audit-calendar" element={<AuditCalendarAccessRoute><AuditCalendarPage /></AuditCalendarAccessRoute>} />

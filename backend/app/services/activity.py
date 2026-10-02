@@ -27,6 +27,7 @@ FOCUS_START_EVENTS = {"focus_start"}
 FOCUS_PAUSE_EVENTS = {"focus_pause"}
 FOCUS_AUTO_PAUSE_EVENTS = {"focus_auto_pause"}
 FOCUS_SECONDS_EVENTS = FOCUS_PAUSE_EVENTS | FOCUS_AUTO_PAUSE_EVENTS | {"focus_time_corrected"}
+USAGE_EVENTS = {"login_success", "usage_section_view"}
 PUBLIC_METADATA_KEYS = {
     "active_seconds",
     "added_seconds",
@@ -131,12 +132,15 @@ async def list_activity_events(
     end: datetime | None = None,
     event_type: str | None = None,
     limit: int = 200,
+    include_usage: bool = False,
 ) -> ActivityEventListResponse:
     limit = min(max(limit, 1), 500)
     stmt = select(ActivityEvent).order_by(ActivityEvent.occurred_at.desc())
     count_stmt = select(func.count(ActivityEvent.id))
 
     filters = []
+    if not include_usage:
+        filters.append(ActivityEvent.event_type.not_in(USAGE_EVENTS))
     if user_id is not None:
         filters.append(ActivityEvent.actor_id == user_id)
     if start is not None:
@@ -307,6 +311,7 @@ async def generate_employee_period_summary(
             ActivityEvent.actor_id == user_id,
             ActivityEvent.occurred_at >= start,
             ActivityEvent.occurred_at < end,
+            ActivityEvent.event_type.not_in(USAGE_EVENTS),
         ).order_by(ActivityEvent.occurred_at.desc())
     )
     actor_events = list(actor_events_result.scalars().all())

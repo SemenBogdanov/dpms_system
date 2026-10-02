@@ -17,6 +17,7 @@ from app.api.routes import audit_calendar
 from app.api.routes import web_push
 from app.api.routes import graphs
 from app.api.routes import server_boot
+from app.api.routes import usage
 from app.database import AsyncSessionLocal
 from app.services.audit_documents import reconcile_staged_audit_documents
 from app.services.audit_synology import synology_session_store
@@ -70,6 +71,8 @@ app.include_router(messages.router, prefix="/api/messages", tags=["messages"])
 app.include_router(web_push.router, prefix="/api/web-push", tags=["web-push"])
 app.include_router(graphs.router, prefix="/api/graphs", tags=["graphs"])
 app.include_router(server_boot.router, prefix="/api/admin/server-boots", tags=["admin"])
+app.include_router(usage.admin_router, prefix="/api/admin/usage", tags=["admin"])
+app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
 app.include_router(activity.router, prefix="/api/activity", tags=["activity"])
 app.include_router(client_events.router, prefix="/api/client-events", tags=["client-events"])
 app.include_router(contacts.router, prefix="/api/contacts", tags=["contacts"])

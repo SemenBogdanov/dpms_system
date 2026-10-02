@@ -1,6 +1,7 @@
 import { Suspense } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
+import { UsageTracker } from './UsageTracker'
 import { SkeletonCard } from './Skeleton'
 import { ThemeToggle } from './ThemeToggle'
 import { AttentionProvider } from '@/contexts/AttentionContext'
@@ -22,6 +23,7 @@ export function Layout() {
   const isGraphWorkspace = location.pathname === '/graphs' || location.pathname.startsWith('/graphs/')
   return (
     <AttentionProvider>
+      <UsageTracker />
       <div className="app-shell flex overflow-hidden bg-background text-foreground transition-colors">
         <Sidebar />
         <div className="flex min-h-0 flex-1 flex-col min-w-0">

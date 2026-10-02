@@ -690,13 +690,14 @@ export function AdminIntegrationsPage() {
           <p className="text-sm font-medium text-primary">Администрирование</p>
           <h1 className="mt-1 text-2xl font-semibold text-foreground">Интеграции</h1>
         </div>
-        <nav className="grid w-full grid-cols-2 items-center rounded-md border border-border bg-background p-1 sm:flex sm:w-auto" aria-label="Разделы администрирования">
+        <nav className="flex w-full flex-wrap items-center rounded-md border border-border bg-background p-1 sm:w-auto" aria-label="Разделы администрирования">
           <Link to="/admin/users" className="inline-flex min-h-10 min-w-0 items-center justify-center gap-2 rounded px-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground sm:px-3">
             <Users className="h-4 w-4" />Сотрудники
           </Link>
           <span className="inline-flex min-h-10 min-w-0 items-center justify-center gap-2 rounded bg-primary px-2 text-sm font-medium text-primary-foreground sm:px-3">
             <PlugZap className="h-4 w-4" />Интеграции
           </span>
+          <Link to="/admin/usage" className="inline-flex min-h-11 items-center gap-2 rounded px-3 text-sm font-medium text-muted-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary">Использование</Link>
         </nav>
       </header>
 

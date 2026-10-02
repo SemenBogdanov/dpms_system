@@ -167,7 +167,8 @@ async function fetchWithRetry(url: string, options: RequestInit, timeoutMs: numb
 async function request<T>(
   path: string,
   options: RequestInit = {},
-  jsonRequest = true
+  jsonRequest = true,
+  redirectOnUnauthorized = true
 ): Promise<T> {
   const url = path.startsWith('http') ? path : `${API_BASE}${path}`
   const token = getToken()
@@ -180,7 +181,7 @@ async function request<T>(
     },
   }
   const res = await fetchWithRetry(url, requestOptions, requestTimeout(path, options, jsonRequest))
-  if (res.status === 401) {
+  if (res.status === 401 && redirectOnUnauthorized) {
     clearToken()
     if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
       window.location.href = '/login'
@@ -232,8 +233,8 @@ export const api = {
       : path
     return request<T>(url, options)
   },
-  post: <T>(path: string, body: unknown) =>
-    request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
+  post: <T>(path: string, body: unknown, options: { redirectOnUnauthorized?: boolean } = {}) =>
+    request<T>(path, { method: 'POST', body: JSON.stringify(body) }, true, options.redirectOnUnauthorized ?? true),
   put: <T>(path: string, body: unknown) =>
     request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   upload: <T>(path: string, body: FormData) =>

@@ -45,4 +45,5 @@ async def activity_events(
         end=_end_exclusive(end_date),
         event_type=event_type,
         limit=limit,
+        include_usage=user.role.value == "admin",
     )

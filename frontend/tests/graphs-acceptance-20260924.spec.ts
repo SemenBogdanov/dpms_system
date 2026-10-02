@@ -436,6 +436,7 @@ async function plainWheel(page: Page, frame: FrameLocator, deltaY: number) {
 
 test('2.8 plain wheel zooms both ways and the inversion checkbox persists across reload', async ({ page }) => {
   const frame = await openWorkspace(page, [])
+  await frame.locator('#canvasInputModeField').selectOption('mouse')
   const invert = frame.locator('#wheelInvertField')
   await expect(invert).toBeVisible()
   await expect(invert).not.toBeChecked()
@@ -464,6 +465,164 @@ test('2.8 plain wheel zooms both ways and the inversion checkbox persists across
   const beforeNormal = await renderedScale(frame)
   await plainWheel(page, frame, 120)
   await expect.poll(() => renderedScale(frame)).toBeLessThan(beforeNormal)
+})
+
+async function renderedViewport(frame: FrameLocator) {
+  return frame.locator('#world').evaluate((element) => {
+    const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform)
+    return { x: matrix.e, y: matrix.f, scale: matrix.a }
+  })
+}
+
+async function canvasWheel(frame: FrameLocator, deltaX: number, deltaY: number, options: WheelEventInit = {}) {
+  await frame.locator('#canvas').evaluate((canvas, args) => {
+    const rect = canvas.getBoundingClientRect()
+    canvas.dispatchEvent(new WheelEvent('wheel', {
+      bubbles: true, cancelable: true, clientX: rect.left + 220, clientY: rect.top + 180,
+      deltaX: args.deltaX, deltaY: args.deltaY, ...args.options,
+    }))
+  }, { deltaX, deltaY, options })
+}
+
+async function canvasGesture(frame: FrameLocator, type: string, scale = 1) {
+  await frame.locator('#canvas').evaluate((canvas, args) => {
+    const rect = canvas.getBoundingClientRect()
+    const event = new Event(args.type, { bubbles: true, cancelable: true })
+    Object.assign(event, { scale: args.scale, clientX: rect.left + 220, clientY: rect.top + 180 })
+    canvas.dispatchEvent(event)
+  }, { type, scale })
+}
+
+test('2.8 Mac defaults to two-finger panning without changing scale and persists position', async ({ page }, testInfo) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'platform', { value: 'MacIntel' }))
+  const frame = await openWorkspace(page, [])
+  const before = await renderedViewport(frame)
+  const canvas = await box(frame.locator('#canvas'))
+  await page.mouse.move(canvas.x + 220, canvas.y + 180)
+  await page.mouse.wheel(80, 45)
+  await expect.poll(() => renderedViewport(frame)).toEqual({ x: before.x - 80, y: before.y - 45, scale: before.scale })
+  await expect(frame.locator('#canvasInputModeField')).toHaveValue('trackpad')
+  await canvasWheel(frame, -40, -20)
+  const final = { x: before.x - 40, y: before.y - 25, scale: before.scale }
+  await expect.poll(async () => (await storedGraph(page)).viewport).toEqual(final)
+  await page.reload()
+  await expect.poll(() => renderedViewport(frame)).toEqual(final)
+  await page.screenshot({ path: testInfo.outputPath('2.8-trackpad-mode.png') })
+})
+
+for (const platform of ['Win32', 'Linux x86_64']) {
+  test(`2.8 ${platform} defaults to mouse wheel zoom`, async ({ page }) => {
+    await page.addInitScript(value => Object.defineProperty(navigator, 'platform', { value }), platform)
+    const frame = await openWorkspace(page, [])
+    await expect(frame.locator('#canvasInputModeField')).toHaveValue('mouse')
+    const before = await renderedScale(frame)
+    await canvasWheel(frame, 0, 120)
+    expect(await renderedScale(frame)).toBeLessThan(before)
+  })
+}
+
+test('2.8 trackpad inversion does not reverse panning or pinch; pinch keeps its anchor', async ({ page }) => {
+  const frame = await openWorkspace(page, [])
+  await frame.locator('#canvasInputModeField').selectOption('trackpad')
+  await frame.locator('#wheelInvertField').check()
+  const before = await renderedViewport(frame)
+  await canvasWheel(frame, 90, 40)
+  const panned = { x: before.x - 90, y: before.y - 40, scale: before.scale }
+  await expect.poll(() => renderedViewport(frame)).toEqual(panned)
+  await canvasWheel(frame, 0, -80, { ctrlKey: true })
+  const zoomed = await renderedViewport(frame)
+  expect(zoomed.scale).toBeGreaterThan(before.scale)
+  // Computed CSS matrices round the scale; the tolerance is below a hundredth of a pixel.
+  expect((220 - zoomed.x) / zoomed.scale).toBeCloseTo((220 - panned.x) / panned.scale, 2)
+  expect((180 - zoomed.y) / zoomed.scale).toBeCloseTo((180 - panned.y) / panned.scale, 2)
+  await canvasWheel(frame, 0, 80, { ctrlKey: true })
+  expect((await renderedViewport(frame)).scale).toBeCloseTo(panned.scale, 5)
+})
+
+test('2.8 input mode and inversion are independent and persist across reload', async ({ page }) => {
+  const frame = await openWorkspace(page, [])
+  await frame.locator('#canvasInputModeField').selectOption('mouse')
+  await frame.locator('#wheelInvertField').check()
+  await page.reload()
+  await expect(frame.locator('#canvasInputModeField')).toHaveValue('mouse')
+  await expect(frame.locator('#wheelInvertField')).toBeChecked()
+  await frame.locator('#canvasInputModeField').selectOption('trackpad')
+  await page.reload()
+  await expect(frame.locator('#canvasInputModeField')).toHaveValue('trackpad')
+  await expect(frame.locator('#wheelInvertField')).toBeChecked()
+})
+
+test('2.8 pinch also works in mouse mode and ignores wheel inversion', async ({ page }) => {
+  const frame = await openWorkspace(page, [])
+  await frame.locator('#canvasInputModeField').selectOption('mouse')
+  await frame.locator('#wheelInvertField').check()
+  const before = await renderedScale(frame)
+  await canvasWheel(frame, 0, -80, { ctrlKey: true })
+  expect(await renderedScale(frame)).toBeGreaterThan(before)
+  await canvasWheel(frame, 0, 80, { ctrlKey: true })
+  expect(await renderedScale(frame)).toBeCloseTo(before, 5)
+})
+
+test('2.8 legacy inversion preference does not force Mac back into wheel zoom', async ({ page }) => {
+  await page.addInitScript((id) => {
+    Object.defineProperty(navigator, 'platform', { value: 'MacIntel' })
+    if (window.parent === window) localStorage.setItem(`dpms-graphs-preferences-v1:${id}`, JSON.stringify({ wheelInverted: true, futurePreference: 'retain' }))
+  }, userId)
+  const frame = await openWorkspace(page, [])
+  await expect(frame.locator('#canvasInputModeField')).toHaveValue('trackpad')
+  await expect(frame.locator('#wheelInvertField')).toBeChecked()
+  await frame.locator('#canvasInputModeField').selectOption('mouse')
+  await frame.locator('#wheelInvertField').uncheck()
+  const preferences = await page.evaluate(id => JSON.parse(localStorage.getItem(`dpms-graphs-preferences-v1:${id}`) || '{}'), userId)
+  expect(preferences).toEqual({ wheelInverted: false, canvasInputMode: 'mouse', futurePreference: 'retain' })
+})
+
+test('2.8 Shift wheel still zooms in trackpad mode', async ({ page }) => {
+  const frame = await openWorkspace(page, [])
+  await frame.locator('#canvasInputModeField').selectOption('trackpad')
+  const before = await renderedScale(frame)
+  await canvasWheel(frame, 0, 120, { shiftKey: true })
+  expect(await renderedScale(frame)).toBeLessThan(before)
+  await frame.locator('#wheelInvertField').check()
+  const inverted = await renderedScale(frame)
+  await canvasWheel(frame, 0, 120, { shiftKey: true })
+  expect(await renderedScale(frame)).toBeGreaterThan(inverted)
+})
+
+test('2.8 Safari gesture owns pinch and releases wheel on end outside canvas or blur', async ({ page }) => {
+  const frame = await openWorkspace(page, [])
+  await frame.locator('#canvasInputModeField').selectOption('trackpad')
+  await frame.locator('#wheelInvertField').check()
+  const before = await renderedScale(frame)
+  await canvasGesture(frame, 'gesturestart')
+  await canvasGesture(frame, 'gesturechange', 1.4)
+  expect(await renderedScale(frame)).toBeCloseTo(before * 1.4, 5)
+  const zoomed = await renderedViewport(frame)
+  await canvasWheel(frame, 20, -100, { ctrlKey: true })
+  expect(await renderedViewport(frame)).toEqual(zoomed)
+  await canvasGesture(frame, 'gesturechange', 0.8)
+  expect(await renderedScale(frame)).toBeCloseTo(before * 0.8, 5)
+  await frame.locator('body').evaluate(() => window.dispatchEvent(new Event('gestureend', { cancelable: true })))
+  const ended = await renderedViewport(frame)
+  await canvasWheel(frame, 30, 0)
+  expect(await renderedViewport(frame)).toEqual({ ...ended, x: ended.x - 30 })
+  await canvasGesture(frame, 'gesturestart')
+  await frame.locator('body').evaluate(() => window.dispatchEvent(new Event('blur')))
+  const blurred = await renderedViewport(frame)
+  await canvasWheel(frame, 0, 15)
+  expect(await renderedViewport(frame)).toEqual({ ...blurred, y: blurred.y - 15 })
+})
+
+test('2.8 line and page delta modes pan in their documented units', async ({ page }) => {
+  const frame = await openWorkspace(page, [])
+  await frame.locator('#canvasInputModeField').selectOption('trackpad')
+  const before = await renderedViewport(frame)
+  await canvasWheel(frame, 2, 3, { deltaMode: 1 })
+  const lined = { x: before.x - 32, y: before.y - 48, scale: before.scale }
+  expect(await renderedViewport(frame)).toEqual(lined)
+  const size = await frame.locator('#canvas').evaluate(el => ({ width: el.clientWidth, height: el.clientHeight }))
+  await canvasWheel(frame, 1, 1, { deltaMode: 2 })
+  expect(await renderedViewport(frame)).toEqual({ x: lined.x - size.width, y: lined.y - size.height, scale: before.scale })
 })
 
 test('2.4 R1: NW resize cannot cross -100000 coordinates, including after reload', async ({ page }) => {

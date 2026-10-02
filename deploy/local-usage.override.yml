@@ -1,0 +1,6 @@
+# Local candidate only: the retained test DB has a legacy migration lineage.
+# No schema changes are required by usage analytics. Never use this in production.
+services:
+  backend:
+    image: dpms-usage-backend:local
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
