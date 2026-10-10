@@ -82,9 +82,12 @@ export function AdminUsagePanel() {
     && (Date.parse(rawEnd) - Date.parse(rawStart)) / 86_400_000 < MAX_DAYS
   const start = validPeriod ? rawStart : defaults.start
   const end = validPeriod ? rawEnd : defaults.end
-  const user = searchParams.get('usage_user') || ''
+  const rawUser = searchParams.get('usage_user') || ''
+  const invalidUser = !!rawUser && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawUser)
+  const user = invalidUser ? '' : rawUser
   const rawOffset = Number(searchParams.get('usage_offset') || 0)
-  const offset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 && rawOffset <= MAX_OFFSET && rawOffset % PAGE_SIZE === 0 ? rawOffset : 0
+  const offset = !invalidUser && Number.isSafeInteger(rawOffset) && rawOffset >= 0 && rawOffset <= MAX_OFFSET && rawOffset % PAGE_SIZE === 0 ? rawOffset : 0
+  const [filterReset, setFilterReset] = useState(false)
   const [draft, setDraft] = useState({ start, end })
   const [validation, setValidation] = useState<string | null>(null)
   const startInput = useRef<HTMLInputElement>(null)
@@ -98,6 +101,17 @@ export function AdminUsagePanel() {
   const data = current?.data
   const error = current?.error
   const loading = !data && !error
+
+  useEffect(() => {
+    if (!invalidUser) return
+    setFilterReset(true)
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous)
+      next.delete('usage_user')
+      next.delete('usage_offset')
+      return next
+    }, { replace: true, preventScrollReset: true })
+  }, [invalidUser, setSearchParams])
 
   useEffect(() => {
     setDraft({ start, end })
@@ -132,6 +146,7 @@ export function AdminUsagePanel() {
   }, [start, end, user, offset, requestId, setSearchParams])
 
   function updateFilters(values: Record<string, string>) {
+    setFilterReset(false)
     setSearchParams((previous) => {
       const next = new URLSearchParams(previous)
       Object.entries(values).forEach(([name, value]) => {
@@ -203,6 +218,7 @@ export function AdminUsagePanel() {
       </form>
 
       <p className="mt-3 text-sm tabular-nums">Период: {dateFormat.format(new Date(`${start}T12:00:00Z`))} – {dateFormat.format(new Date(`${end}T12:00:00Z`))}</p>
+      {filterReset && !user && <p role="status" className="mt-2 text-sm text-muted-foreground">Некорректный фильтр сотрудника сброшен.</p>}
       <div aria-live="polite" aria-busy={loading}>
         {loading && <p role="status" className="py-4 text-sm text-muted-foreground">Загрузка статистики…</p>}
         {error && <div role="alert" className="flex flex-wrap items-center justify-between gap-2 py-4 text-sm">
@@ -237,7 +253,7 @@ export function AdminUsagePanel() {
               <th scope="col" aria-label="Сотрудники" className="whitespace-nowrap px-1 py-3 text-left align-top font-medium sm:px-2"><span aria-hidden="true" className="sm:hidden">Люди</span><span aria-hidden="true" className="hidden sm:inline">Сотрудники</span></th>
             </tr></thead>
             <tbody>{sections.map((section) => <tr key={section.section} className="border-b border-border last:border-0">
-              <th scope="row" className={`${cell} font-medium`}>{section.label || section.section}</th><td className={`${cell} tabular-nums`}>{numbers.format(section.views)}</td><td className={`${cell} tabular-nums`}>{numbers.format(section.users)}</td>
+              <th scope="row" className={`${cell} font-medium`}>{section.section === 'admin-users' ? 'Администрирование: пользователи и аналитика' : section.label || section.section}</th><td className={`${cell} tabular-nums`}>{numbers.format(section.views)}</td><td className={`${cell} tabular-nums`}>{numbers.format(section.users)}</td>
             </tr>)}</tbody>
           </table>}
         </section>

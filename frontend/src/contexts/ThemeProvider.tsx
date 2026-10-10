@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
+import { writePreference } from '@/lib/preferenceStorage'
 import {
   THEME_STORAGE_KEY,
   THEME_MODES,
@@ -14,7 +15,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     applyTheme(theme)
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme)
+    writePreference(THEME_STORAGE_KEY, theme)
   }, [theme])
 
   const setTheme = useCallback((nextTheme: ThemeMode) => {

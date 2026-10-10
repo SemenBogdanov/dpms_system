@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { History, KeyRound, RefreshCw, UserPlus, X } from 'lucide-react'
 import { api } from '@/api/client'
+import { useProtectedModal } from '@/hooks/useProtectedModal'
 import type {
   AdminUser,
   AdminUserAuditAction,
@@ -51,15 +52,6 @@ const DATE_FIELDS = new Set([
   'onboarding_until',
 ])
 
-const FOCUSABLE_SELECTOR = [
-  'button:not([disabled])',
-  'a[href]',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
-  '[tabindex]:not([tabindex="-1"])',
-].join(',')
-
 function formatValue(field: string, value: unknown) {
   if (value === null || value === undefined || value === '') return 'не задано'
   if (typeof value === 'boolean') return value ? 'включено' : 'выключено'
@@ -85,20 +77,17 @@ export function UserAdminHistoryModal({ user, open, onClose }: UserAdminHistoryM
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
-  const panelRef = useRef<HTMLDivElement>(null)
-  const onCloseRef = useRef(onClose)
+  const panelRef = useProtectedModal<HTMLDivElement>(open && Boolean(user), { onEscape: onClose })
+  const userId = user?.id
 
   useEffect(() => {
-    onCloseRef.current = onClose
-  }, [onClose])
-
-  useEffect(() => {
-    if (!open || !user) return
+    if (!open || !userId) return
     let cancelled = false
     setLoading(true)
+    setHistory(null)
     setError(null)
     api
-      .get<AdminUserAuditHistory>(`/api/users/${user.id}/admin-history`, { limit: '100' })
+      .get<AdminUserAuditHistory>(`/api/users/${userId}/admin-history`, { limit: '100' })
       .then((response) => {
         if (!cancelled) setHistory(response)
       })
@@ -114,58 +103,7 @@ export function UserAdminHistoryModal({ user, open, onClose }: UserAdminHistoryM
     return () => {
       cancelled = true
     }
-  }, [open, reloadKey, user])
-
-  useEffect(() => {
-    if (!open) return
-    const previousFocus = document.activeElement as HTMLElement | null
-    const previousOverflow = document.body.style.overflow
-
-    document.body.style.overflow = 'hidden'
-    const focusFrame = window.requestAnimationFrame(() => {
-      const first = panelRef.current?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
-      ;(first || panelRef.current)?.focus()
-    })
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        onCloseRef.current()
-        return
-      }
-      if (event.key !== 'Tab' || !panelRef.current) return
-
-      const focusable = Array.from(
-        panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
-      ).filter((element) => element.offsetParent !== null)
-
-      if (focusable.length === 0) {
-        event.preventDefault()
-        panelRef.current.focus()
-        return
-      }
-
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (!panelRef.current.contains(document.activeElement)) {
-        event.preventDefault()
-        first.focus()
-      } else if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      window.cancelAnimationFrame(focusFrame)
-      window.removeEventListener('keydown', handleKeyDown)
-      document.body.style.overflow = previousOverflow
-      previousFocus?.focus()
-    }
-  }, [open])
+  }, [open, reloadKey, userId])
 
   if (!open || !user) return null
 
@@ -181,7 +119,7 @@ export function UserAdminHistoryModal({ user, open, onClose }: UserAdminHistoryM
         tabIndex={-1}
         className="flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl"
       >
-        <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-4 py-4 sm:px-5">
+        <header className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-200 px-4 py-4 sm:px-5">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-primary">
               <History className="h-4 w-4 shrink-0" aria-hidden="true" />
@@ -217,7 +155,7 @@ export function UserAdminHistoryModal({ user, open, onClose }: UserAdminHistoryM
 
           {!loading && error && (
             <div className="flex min-h-40 flex-col items-center justify-center text-center">
-              <p className="text-sm text-red-600">{error}</p>
+              <p className="text-sm text-red-600" role="alert">{error}</p>
               <button
                 type="button"
                 onClick={() => setReloadKey((value) => value + 1)}
@@ -290,8 +228,8 @@ export function UserAdminHistoryModal({ user, open, onClose }: UserAdminHistoryM
           )}
         </div>
 
-        {history && history.total > history.items.length && (
-          <footer className="border-t border-slate-200 px-4 py-3 text-xs text-slate-500 sm:px-5">
+        {!loading && !error && history && history.total > history.items.length && (
+          <footer className="shrink-0 border-t border-slate-200 px-4 py-3 text-xs text-slate-500 sm:px-5">
             Показаны последние {history.items.length} из {history.total} событий.
           </footer>
         )}

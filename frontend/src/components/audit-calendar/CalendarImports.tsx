@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Plus, RefreshCw, Upload, X } from 'lucide-react'
 import { auditCalendar, type CalendarImport, type CalendarPlan, type CalendarRole, type CalendarState } from '@/api/auditCalendar'
 import { addDays, allSlots, calendarRoles, errorText, MIN_DATE, timeLabel } from '@/lib/auditCalendar'
@@ -6,7 +6,14 @@ import { useCalendarDraftGuard, useCalendarMutation } from '@/lib/auditCalendarH
 import { CalendarCommandForm } from './CalendarCommandForm'
 
 export function CalendarImports({ state, onRefresh }: { state: CalendarState; onRefresh: () => Promise<unknown> }) {
-  const [batches, setBatches] = useState<CalendarImport[]>([])
+  const [batches, setBatches] = useState<CalendarImport[] | null>(null)
+  const [listError, setListError] = useState('')
+  const [listLoading, setListLoading] = useState(true)
+  const [reading, setReading] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const revision = useRef(0)
+  const listSequence = useRef(0)
+  const pending = useRef(false)
   const [source, setSource] = useState<unknown>(null)
   const [fileName, setFileName] = useState('')
   const [mapping, setMapping] = useState<{ source: string; user: string }[]>([])
@@ -18,46 +25,94 @@ export function CalendarImports({ state, onRefresh }: { state: CalendarState; on
   const [bootstrap, setBootstrap] = useState(false)
   const [groupMapping, setGroupMapping] = useState<{ code: string; auditor_id: string; tech_id: string }[]>([])
   const mutation = useCalendarMutation()
-  useCalendarDraftGuard(source !== null)
-  useEffect(() => {
-    let live = true
-    auditCalendar.imports().then(result => { if (live) setBatches(Array.isArray(result) ? result : result.items) }).catch(e => { if (live) setNotice(errorText(e)) })
-    return () => { live = false }
+  useCalendarDraftGuard(source !== null || reading)
+  const loadBatches = useCallback(async () => {
+    const sequence = ++listSequence.current
+    setListLoading(true); setListError('')
+    try {
+      const result = await auditCalendar.imports()
+      if (sequence === listSequence.current) setBatches(Array.isArray(result) ? result : result.items)
+    } catch (e) { if (sequence === listSequence.current) setListError(errorText(e)) }
+    finally { if (sequence === listSequence.current) setListLoading(false) }
   }, [])
+  useEffect(() => {
+    void loadBatches()
+    return () => { revision.current += 1; listSequence.current += 1 }
+  }, [loadBatches])
+  function clearDraft() {
+    revision.current += 1
+    setSource(null); setPreview(null); setMapping([]); setGroupMapping([]); setBootstrap(false)
+    setFileName(''); setReason(''); setConfirmed(false); setReading(false); setNotice(''); mutation.rebase('')
+  }
   async function readFile(file: File | undefined) {
-    if (!file) return
+    if (!file || pending.current) return
+    clearDraft()
+    const current = revision.current
+    setFileName(file.name); setReading(true)
     try {
       if (file.size > 8 * 1024 * 1024) throw new Error('Размер JSON не должен превышать 8 МБ.')
       const data: unknown = JSON.parse(await file.text())
+      if (current !== revision.current) return
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Нужен JSON-объект V5.')
-      setSource(data); setDraftVersion(state.scope.version); setFileName(file.name); setMapping([]); setGroupMapping([]); setBootstrap(false); setPreview(null); setConfirmed(false); setNotice('')
-    } catch (e) { mutation.setError(errorText(e)) }
+      setSource(data); setDraftVersion(state.scope.version)
+    } catch (e) { if (current === revision.current) mutation.setError(errorText(e)) }
+    finally { if (current === revision.current) setReading(false) }
   }
   async function makePreview() {
+    if (pending.current || reading || source === null || mutation.stale || state.scope.archived) return
     const chosen = mapping.filter(m => m.source || m.user)
     if (chosen.some(m => !m.source.trim() || !m.user) || new Set(chosen.map(m => m.source.trim())).size !== chosen.length) { mutation.setError('Заполните уникальный код источника и учётную запись в каждой строке.'); return }
     if (bootstrap && (groupMapping.some(g => !g.code.trim() || !g.auditor_id || !g.tech_id || g.code === 'G21' || g.auditor_id === g.tech_id) || new Set(groupMapping.map(g => g.code.trim())).size !== groupMapping.length)) { mutation.setError('Укажите уникальные группы с явным составом А+Т. G21 не получает выдуманный состав.'); return }
     const body = { source, mapping: Object.fromEntries(chosen.map(m => [m.source.trim(), m.user])), bootstrap_history: bootstrap, group_mapping: bootstrap ? Object.fromEntries(groupMapping.map(g => [g.code.trim(), { auditor_id: g.auditor_id, tech_id: g.tech_id }])) : {} }
+    const current = revision.current
+    pending.current = true; setPreview(null); setConfirmed(false)
     const result = await mutation.run(body, draftVersion, (request_id, expected_version) => auditCalendar.preview({ ...body, request_id, expected_version }))
-    if (result) { setPreview(result.value); setDraftVersion(result.value.version); setConfirmed(false); await onRefresh().catch(() => undefined) }
+    if (current !== revision.current) return
+    if (result) {
+      setPreview(result.value); setDraftVersion(result.value.version); setRefreshing(true)
+      await onRefresh().catch(() => undefined)
+    }
+    if (current === revision.current) { pending.current = false; setRefreshing(false) }
   }
   async function apply() {
-    if (!preview || !confirmed || !reason.trim()) return
+    if (pending.current || reading || mutation.stale || state.scope.archived || !preview || !confirmed || !reason.trim() || preview.mapping_required?.length || preview.issues?.length) return
+    const current = revision.current
+    pending.current = true
     const body = { confirm: true as const, reason }
     const result = await mutation.run({ batch: preview.id, ...body }, preview.version, (request_id, expected_version) => auditCalendar.applyImport(preview.id, { ...body, request_id, expected_version }))
+    if (current !== revision.current) return
     if (result) {
-      setSource(null); setPreview(null); setMapping([]); setReason(''); setConfirmed(false); setFileName(''); setNotice('Импорт подтверждён сервером.')
-      try { await onRefresh(); const result = await auditCalendar.imports(); setBatches(Array.isArray(result) ? result : result.items) } catch (e) { setNotice(`Импорт сохранён. ${errorText(e)}`) }
+      clearDraft(); setNotice('Импорт подтверждён сервером.'); setRefreshing(true)
+      const savedRevision = revision.current
+      try { await onRefresh() } catch (e) { if (savedRevision === revision.current) setNotice(`Импорт сохранён. ${errorText(e)}`) }
+      if (savedRevision !== revision.current) return
+      void loadBatches()
     }
+    pending.current = false; setRefreshing(false)
+  }
+  async function reloadPreview() {
+    if (pending.current) return
+    const current = revision.current
+    pending.current = true; setRefreshing(true); setPreview(null); setConfirmed(false)
+    try {
+      const refreshed = await onRefresh() as CalendarState
+      if (current === revision.current) { setDraftVersion(refreshed.scope.version); mutation.rebase() }
+    } catch (e) { if (current === revision.current) mutation.setError(errorText(e)) }
+    finally { if (current === revision.current) { pending.current = false; setRefreshing(false) } }
   }
   return <section aria-label="Импорт источника"><header className="ac-section-head"><h2>Импорт источника</h2><Upload size={20} /></header>
-    <div className="ac-import-form"><label>JSON V5<input type="file" accept=".json,application/json" disabled={mutation.busy || state.scope.archived} onChange={e => void readFile(e.target.files?.[0])} /></label>{fileName && <p>{fileName}</p>}
-      {source !== null && <><h3>Сопоставление учётных записей</h3>{mapping.map((row, index) => <div className="ac-mapping-row" key={index}><label>Код в источнике<input autoComplete="off" disabled={mutation.busy} value={row.source} onChange={e => { setMapping(list => list.map((m, i) => i === index ? { ...m, source: e.target.value } : m)); setPreview(null) }} /></label><label>Сотрудник DPMS<select disabled={mutation.busy} value={row.user} onChange={e => { setMapping(list => list.map((m, i) => i === index ? { ...m, user: e.target.value } : m)); setPreview(null) }}><option value="">Выберите явно</option>{state.members.filter(m => m.active).map(m => <option key={m.user_id} value={m.user_id}>{m.full_name} · {m.code}</option>)}</select></label><button className="ac-icon" type="button" disabled={mutation.busy} title="Удалить сопоставление" aria-label="Удалить сопоставление" onClick={() => { setMapping(list => list.filter((_, i) => i !== index)); setPreview(null) }}><X size={16} /></button></div>)}<div className="ac-actions"><button type="button" disabled={mutation.busy} onClick={() => { setMapping(rows => [...rows, { source: '', user: '' }]); setPreview(null) }}><Plus size={16} />Сопоставление</button><button type="button" className="ac-primary" disabled={mutation.busy || mutation.stale} onClick={() => void makePreview()}>Предварительный просмотр</button><button type="button" disabled={mutation.busy} onClick={() => { setSource(null); setPreview(null); setMapping([]); setFileName(''); mutation.setError('') }}>Отменить загрузку</button></div></>}
+    <fieldset disabled={refreshing}>
+    <div className="ac-import-form"><label>JSON V5<input type="file" accept=".json,application/json" disabled={mutation.busy || state.scope.archived} onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; void readFile(file) }} /></label>{fileName && <p>{fileName}</p>}{reading && <p role="status">Чтение файла…</p>}
+      {source !== null && <><h3>Сопоставление учётных записей</h3>{mapping.map((row, index) => <div className="ac-mapping-row" key={index}><label>Код в источнике<input autoComplete="off" disabled={mutation.busy} value={row.source} onChange={e => { setMapping(list => list.map((m, i) => i === index ? { ...m, source: e.target.value } : m)); setPreview(null) }} /></label><label>Сотрудник DPMS<select disabled={mutation.busy} value={row.user} onChange={e => { setMapping(list => list.map((m, i) => i === index ? { ...m, user: e.target.value } : m)); setPreview(null) }}><option value="">Выберите явно</option>{state.members.filter(m => m.active).map(m => <option key={m.user_id} value={m.user_id}>{m.full_name} · {m.code}</option>)}</select></label><button className="ac-icon" type="button" disabled={mutation.busy} title="Удалить сопоставление" aria-label="Удалить сопоставление" onClick={() => { setMapping(list => list.filter((_, i) => i !== index)); setPreview(null) }}><X size={16} /></button></div>)}<div className="ac-actions"><button type="button" disabled={mutation.busy} onClick={() => { setMapping(rows => [...rows, { source: '', user: '' }]); setPreview(null) }}><Plus size={16} />Сопоставление</button><button type="button" className="ac-primary" disabled={mutation.busy || mutation.stale} onClick={() => void makePreview()}>Предварительный просмотр</button><button type="button" disabled={mutation.busy} onClick={clearDraft}>Отменить загрузку</button></div></>}
       {source !== null && <><label className="ac-check"><input type="checkbox" disabled={mutation.busy} checked={bootstrap} onChange={e => { setBootstrap(e.target.checked); setPreview(null) }} />Первичное восстановление истории в пустом контуре</label>{bootstrap && <><p className="ac-warning">Сервер проверит пустоту контура. Будут восстановлены baseline и исторические нормы источника. Составы новых групп задаются явно; G21 остаётся с неизвестным составом.</p>{groupMapping.map((row, index) => <div className="ac-form-grid" key={index}><label>Код группы<input disabled={mutation.busy} maxLength={40} value={row.code} onChange={e => { setGroupMapping(list => list.map((g, i) => i === index ? { ...g, code: e.target.value } : g)); setPreview(null) }} /></label>{(['auditor_id', 'tech_id'] as const).map(key => <label key={key}>{key === 'auditor_id' ? 'Аудитор группы' : 'Техспециалист группы'}<select disabled={mutation.busy} value={row[key]} onChange={e => { setGroupMapping(list => list.map((g, i) => i === index ? { ...g, [key]: e.target.value } : g)); setPreview(null) }}><option value="">Выберите явно</option>{state.members.filter(m => m.active && m.role === (key === 'auditor_id' ? 'auditor' : 'tech')).map(m => <option key={m.user_id} value={m.user_id}>{m.full_name}</option>)}</select></label>)}<button type="button" disabled={mutation.busy} onClick={() => { setGroupMapping(list => list.filter((_, i) => i !== index)); setPreview(null) }}>Удалить состав</button></div>)}<button type="button" disabled={mutation.busy} onClick={() => { setGroupMapping(list => [...list, { code: '', auditor_id: '', tech_id: '' }]); setPreview(null) }}><Plus size={16} />Состав группы</button></>}</>}
     </div>
-    {mutation.error && <p role="alert" className="ac-error">{mutation.error}</p>}{mutation.stale && <button type="button" onClick={async () => { try { const refreshed = await onRefresh() as CalendarState; setDraftVersion(refreshed.scope.version); mutation.rebase(); setPreview(null) } catch (e) { mutation.setError(errorText(e)) } }}><RefreshCw size={16} />Перечитать данные и повторить preview</button>}{notice && <p role="status">{notice}</p>}
+    {mutation.error && <p role="alert" className="ac-error">{mutation.error}</p>}{mutation.stale && <button type="button" disabled={refreshing} onClick={() => void reloadPreview()}><RefreshCw size={16} />Перечитать данные и повторить preview</button>}{notice && <p role="status">{notice}</p>}
     {preview && <div className="ac-import-preview"><h3>Preview · {preview.status}</h3><dl className="ac-details"><dt>Пакет</dt><dd>{preview.id}</dd><dt>SHA-256</dt><dd>{preview.source_sha256}</dd></dl><pre>{JSON.stringify(preview.summary, null, 2)}</pre>{preview.mapping_required?.length > 0 && <div className="ac-warning"><strong>Требуется сопоставление</strong><pre>{JSON.stringify(preview.mapping_required, null, 2)}</pre></div>}{preview.issues?.length > 0 && <div className="ac-warning"><strong>Замечания</strong><pre>{JSON.stringify(preview.issues, null, 2)}</pre></div>}<details><summary>Строки источника ({preview.rows?.length || 0})</summary><pre>{JSON.stringify(preview.rows, null, 2)}</pre></details><label>Основание переноса<textarea disabled={mutation.busy} required maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} /></label><label className="ac-check"><input type="checkbox" disabled={mutation.busy} checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />Подтверждаю источник, горизонт истории и сопоставление</label><p className="ac-warning">Применение добавит сведения в общий контур. Оригинал источника и история будут сохранены.</p><button type="button" className="ac-primary" disabled={mutation.busy || mutation.stale || !confirmed || !reason.trim() || !!preview.mapping_required?.length || !!preview.issues?.length || state.scope.archived} onClick={() => void apply()}><Check size={16} />Применить импорт</button></div>}
-    <h3>Пакеты импорта</h3>{batches.length ? <div className="ac-table-wrap"><table><thead><tr><th>Пакет</th><th>Статус</th><th>Контрольная сумма</th></tr></thead><tbody>{batches.map(b => <tr key={b.id}><td>{b.id}</td><td>{b.status}</td><td>{b.source_sha256}</td></tr>)}</tbody></table></div> : <p className="ac-empty">Импортированных пакетов нет.</p>}
+    </fieldset>
+    <h3>Пакеты импорта</h3>
+    {listLoading && <p role="status">Загрузка пакетов…</p>}
+    {listError && <div className="ac-error" role="alert">{listError}<button type="button" disabled={listLoading} onClick={() => void loadBatches()}>Повторить загрузку пакетов</button></div>}
+    {!listLoading && !listError && batches && (batches.length ? <div className="ac-table-wrap"><table><thead><tr><th>Пакет</th><th>Статус</th><th>Контрольная сумма</th></tr></thead><tbody>{batches.map(b => <tr key={b.id}><td>{b.id}</td><td>{b.status}</td><td>{b.source_sha256}</td></tr>)}</tbody></table></div> : <p className="ac-empty">Импортированных пакетов нет.</p>)}
   </section>
 }
 

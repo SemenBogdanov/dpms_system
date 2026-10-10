@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import type {
   ActivityEvent,
@@ -217,7 +217,7 @@ function ActivityTable({ events }: { events: ActivityEvent[] }) {
 }
 
 export function ReportsPage() {
-  const [period, setPeriod] = useState(currentPeriodIso())
+  const [period, setPeriod] = useState('')
   const [report, setReport] = useState<PeriodReport | null>(null)
   const [history, setHistory] = useState<PeriodHistoryItem[]>([])
   const [users, setUsers] = useState<User[]>([])
@@ -235,6 +235,14 @@ export function ReportsPage() {
   const [error, setError] = useState<string | null>(null)
   const [summaryError, setSummaryError] = useState<string | null>(null)
   const [scorecardError, setScorecardError] = useState<string | null>(null)
+  const reportRequest = useRef(0)
+  const reportPending = useRef(false)
+  const exportRequest = useRef(0)
+  const exportPending = useRef(false)
+  const summaryRequest = useRef(0)
+  const summaryPending = useRef(false)
+  const scorecardRequest = useRef(0)
+  const scorecardPending = useRef(false)
 
   useEffect(() => {
     api.get<PeriodHistoryItem[]>('/api/admin/period-history').then(setHistory).catch(() => setHistory([]))
@@ -248,27 +256,77 @@ export function ReportsPage() {
       .catch(() => setUsers([]))
   }, [])
 
+  useLayoutEffect(() => {
+    reportRequest.current += 1
+    exportRequest.current += 1
+    reportPending.current = false
+    exportPending.current = false
+    setReport(null)
+    setError(null)
+    setLoading(false)
+    setExportTasksLoading(false)
+    return () => {
+      reportRequest.current += 1
+      exportRequest.current += 1
+    }
+  }, [period])
+
+  useLayoutEffect(() => {
+    summaryRequest.current += 1
+    summaryPending.current = false
+    setEmployeeSummary(null)
+    setSummaryError(null)
+    setSummaryLoading(false)
+    return () => { summaryRequest.current += 1 }
+  }, [selectedUserId, summaryStartDate, summaryEndDate])
+
+  useLayoutEffect(() => {
+    scorecardRequest.current += 1
+    scorecardPending.current = false
+    setScorecard(null)
+    setScorecardError(null)
+    setScorecardLoading(false)
+    return () => { scorecardRequest.current += 1 }
+  }, [scorecardStartDate, scorecardEndDate])
+
   const loadReport = useCallback(() => {
+    if (reportPending.current) return
+    reportPending.current = true
+    const revision = ++reportRequest.current
     const p = period || new Date().toISOString().slice(0, 7)
     setLoading(true)
     setError(null)
+    setReport(null)
     api
       .get<PeriodReport>(`/api/reports/${p}`)
-      .then(setReport)
+      .then((result) => {
+        if (reportRequest.current !== revision) return
+        if (result.period !== p) throw new Error('Период отчёта не совпадает с выбранным')
+        setReport(result)
+      })
       .catch((e) => {
+        if (reportRequest.current !== revision) return
         setError(e instanceof Error ? e.message : 'Ошибка')
         setReport(null)
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (reportRequest.current === revision) {
+          reportPending.current = false
+          setLoading(false)
+        }
+      })
   }, [period])
 
   const currentPeriod = period || currentPeriodIso()
 
   const loadEmployeeSummary = useCallback(() => {
+    if (summaryPending.current) return
     if (!selectedUserId) {
       setSummaryError('Выберите сотрудника')
       return
     }
+    const revision = ++summaryRequest.current
+    summaryPending.current = true
     setSummaryLoading(true)
     setSummaryError(null)
     api
@@ -277,15 +335,24 @@ export function ReportsPage() {
         start_date: summaryStartDate,
         end_date: summaryEndDate,
       })
-      .then(setEmployeeSummary)
+      .then((result) => { if (summaryRequest.current === revision) setEmployeeSummary(result) })
       .catch((e) => {
+        if (summaryRequest.current !== revision) return
         setSummaryError(e instanceof Error ? e.message : 'Ошибка')
         setEmployeeSummary(null)
       })
-      .finally(() => setSummaryLoading(false))
+      .finally(() => {
+        if (summaryRequest.current === revision) {
+          summaryPending.current = false
+          setSummaryLoading(false)
+        }
+      })
   }, [selectedUserId, summaryEndDate, summaryStartDate])
 
   const loadScorecard = useCallback(() => {
+    if (scorecardPending.current) return
+    const revision = ++scorecardRequest.current
+    scorecardPending.current = true
     setScorecardLoading(true)
     setScorecardError(null)
     api
@@ -293,16 +360,22 @@ export function ReportsPage() {
         start_date: scorecardStartDate,
         end_date: scorecardEndDate,
       })
-      .then(setScorecard)
+      .then((result) => { if (scorecardRequest.current === revision) setScorecard(result) })
       .catch((e) => {
+        if (scorecardRequest.current !== revision) return
         setScorecardError(e instanceof Error ? e.message : 'Ошибка')
         setScorecard(null)
       })
-      .finally(() => setScorecardLoading(false))
+      .finally(() => {
+        if (scorecardRequest.current === revision) {
+          scorecardPending.current = false
+          setScorecardLoading(false)
+        }
+      })
   }, [scorecardEndDate, scorecardStartDate])
 
   const handleExport = () => {
-    if (!report) return
+    if (!report || report.period !== currentPeriod || reportPending.current) return
     const header = 'ФИО,Лига,% Выполнения,Задач завершено\n'
     const body = report.team_members
         .map((m) => `${m.full_name},${m.league},${Number(m.percent).toFixed(1)},${m.tasks_completed}`)
@@ -317,10 +390,15 @@ export function ReportsPage() {
   }
 
   const handleExportTasks = () => {
+    if (!report || report.period !== currentPeriod || reportPending.current || exportPending.current) return
+    const revision = ++exportRequest.current
+    exportPending.current = true
     setExportTasksLoading(true)
     api
       .get<TasksExport>('/api/tasks/export', { period: currentPeriod })
       .then((data) => {
+        if (exportRequest.current !== revision) return
+        if (data.period !== currentPeriod) throw new Error('Период выгрузки не совпадает с выбранным')
         const header = 'Название,Категория,Сложность,Оценка (Q),Исполнитель,Начало,Завершение,Время (ч),Валидатор,Статус\n'
         const body = data.rows
           .map((r) =>
@@ -347,8 +425,15 @@ export function ReportsPage() {
         URL.revokeObjectURL(url)
         toast.success(`Выгружено задач: ${data.total_tasks}`)
       })
-      .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка выгрузки'))
-      .finally(() => setExportTasksLoading(false))
+      .catch((e) => {
+        if (exportRequest.current === revision) toast.error(e instanceof Error ? e.message : 'Ошибка выгрузки')
+      })
+      .finally(() => {
+        if (exportRequest.current === revision) {
+          exportPending.current = false
+          setExportTasksLoading(false)
+        }
+      })
   }
     /*
     const by_league: Record<string, Array<{ full_name: string; league: string; mpw: number; earned: number; percent: number; karma: number; in_progress_q: number; is_at_risk: boolean }>> = { A: [], B: [], C: [] }
@@ -375,6 +460,7 @@ export function ReportsPage() {
         <h1 className="text-2xl font-semibold text-slate-900">Отчёты за период</h1>
         <div className="flex flex-wrap items-center gap-3">
           <select
+            aria-label="Период отчёта"
             value={period}
             onChange={(e) => setPeriod(e.target.value)}
             className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
@@ -392,19 +478,18 @@ export function ReportsPage() {
           >
             {loading ? '...' : 'Сформировать'}
           </button>
-          {report && (
-            <button
-              type="button"
-              onClick={handleExport}
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              📊 Экспорт CSV
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={!report || report.period !== currentPeriod || loading}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            📊 Экспорт CSV
+          </button>
           <button
             type="button"
             onClick={handleExportTasks}
-            disabled={exportTasksLoading}
+            disabled={exportTasksLoading || loading || !report || report.period !== currentPeriod}
             className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
             {exportTasksLoading ? '...' : '📋 Выгрузить задачи (CSV)'}
@@ -412,7 +497,7 @@ export function ReportsPage() {
         </div>
       </div>
 
-      {error && <p className="text-red-600">{error}</p>}
+      {error && <p role="alert" className="text-red-600">{error}</p>}
 
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -594,6 +679,7 @@ export function ReportsPage() {
 
       {report && (
         <>
+          <h2 className="text-lg font-semibold text-slate-900">Отчёт за {report.period}</h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <MetricCard title="Ёмкость" value={Number(report.total_capacity).toFixed(0)} subtitle="Q" />
             <MetricCard title="Заработано" value={Number(report.total_earned).toFixed(1)} subtitle="Q" />
@@ -602,6 +688,7 @@ export function ReportsPage() {
 
           <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <h2 className="mb-3 font-medium text-slate-800">Команда</h2>
+            <div role="region" aria-label="Команда за период" tabIndex={0} className="overflow-x-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50">
@@ -637,6 +724,7 @@ export function ReportsPage() {
                 })}
               </tbody>
             </table>
+            </div>
           </section>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { FileSpreadsheet, Lock, Pencil, Search } from 'lucide-react'
@@ -11,7 +11,7 @@ import { QBadge } from '@/components/QBadge'
 import { SkeletonTable } from '@/components/Skeleton'
 import { DeadlineBadge } from '@/components/DeadlineBadge'
 import { TaskDetailModal } from '@/components/TaskDetailModal'
-import { BugfixModal } from '@/components/BugfixModal'
+import { BugfixModal, useTaskDialogProtection } from '@/components/BugfixModal'
 import { TaskImportModal } from '@/components/TaskImportModal'
 
 const complexityStyles: Record<string, string> = {
@@ -67,7 +67,7 @@ type RowItem = (QueueTaskResponse & { status?: TaskStatus }) | Task
 
 export function QueuePage() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const requestedTaskId = searchParams.get('task')
   const { user: currentUser } = useAuth()
   const [tasks, setTasks] = useState<QueueTaskResponse[]>([])
@@ -77,6 +77,13 @@ export function QueuePage() {
   const [confirmPull, setConfirmPull] = useState<QueueTaskResponse | Task | null>(null)
   const [myTasks, setMyTasks] = useState<Task[]>([])
   const [detailTask, setDetailTask] = useState<Task | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState('')
+  const [detailRevision, setDetailRevision] = useState(0)
+  const queueGeneration = useRef(0)
+  const archiveGeneration = useRef(0)
+  const [archiveError, setArchiveError] = useState('')
+  const [archiveLoading, setArchiveLoading] = useState(false)
   const [deadlineTrackers, setDeadlineTrackers] = useState<DeadlineTracker[]>([])
   const [trackerBusyId, setTrackerBusyId] = useState<string | null>(null)
   const [users, setUsers] = useState<User[]>([])
@@ -103,15 +110,20 @@ export function QueuePage() {
   const [editBusy, setEditBusy] = useState(false)
   const [importModalOpen, setImportModalOpen] = useState(false)
   const canSetCriticalPriority = currentUser?.role === 'admin'
+  const editDialog = useTaskDialogProtection(Boolean(editTask), editBusy, Boolean(editTask && (editTitle !== editTask.title || editDescription !== (editTask.description || '') || editPriority !== editTask.priority || editTags !== (editTask.tags || []).join(', '))), () => setEditTask(null))
+  const editInFlight = useRef(false)
+  const bugfixInFlight = useRef(false)
+  const deadlinePending = useRef(new Set<string>())
 
   const loadQueue = useCallback(() => {
     if (!currentUser) return
-    setLoading(true)
+    const generation = ++queueGeneration.current
+    setLoading(true); setError(null)
     api
       .get<QueueTaskResponse[]>('/api/queue')
-      .then(setTasks)
-      .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка'))
-      .finally(() => setLoading(false))
+      .then((data) => { if (generation === queueGeneration.current) setTasks(data) })
+      .catch((e) => { if (generation === queueGeneration.current) setError(e instanceof Error ? e.message : 'Ошибка') })
+      .finally(() => { if (generation === queueGeneration.current) setLoading(false) })
   }, [currentUser])
 
   const loadDeadlineTrackers = useCallback(async () => {
@@ -123,12 +135,14 @@ export function QueuePage() {
     }
   }, [])
 
-  const openDetail = useCallback((id: string) => {
-    api
-      .get<Task>(`/api/tasks/${id}`)
-      .then(setDetailTask)
-      .catch(() => toast.error('Не удалось загрузить задачу'))
-  }, [])
+  const openDetail = useCallback((id: string | null) => {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous)
+      if (id) next.set('task', id)
+      else next.delete('task')
+      return next
+    })
+  }, [setSearchParams])
 
   const loadArchivedTasks = useCallback(() => {
     if (!currentUser) return
@@ -136,7 +150,12 @@ export function QueuePage() {
       currentUser.role === 'executor'
         ? `/api/tasks?assignee_id=${currentUser.id}&status=done`
         : '/api/tasks'
-    api.get<Task[]>(endpoint).then(setAllTasks).catch(() => setAllTasks([]))
+    const generation = ++archiveGeneration.current
+    setArchiveLoading(true); setArchiveError('')
+    api.get<Task[]>(endpoint)
+      .then((data) => { if (generation === archiveGeneration.current) setAllTasks(data) })
+      .catch((cause) => { if (generation === archiveGeneration.current) setArchiveError(cause instanceof Error ? cause.message : 'Не удалось загрузить архив') })
+      .finally(() => { if (generation === archiveGeneration.current) setArchiveLoading(false) })
   }, [currentUser])
 
   useEffect(() => {
@@ -158,8 +177,16 @@ export function QueuePage() {
   }, [])
 
   useEffect(() => {
-    if (requestedTaskId) openDetail(requestedTaskId)
-  }, [openDetail, requestedTaskId])
+    const controller = new AbortController()
+    setDetailError(''); setDetailTask(null); setDetailLoading(Boolean(requestedTaskId))
+    if (requestedTaskId) {
+      void api.get<Task>(`/api/tasks/${requestedTaskId}`, undefined, { signal: controller.signal })
+        .then((task) => { if (!controller.signal.aborted) setDetailTask(task) })
+        .catch((cause) => { if (!controller.signal.aborted) setDetailError(cause instanceof Error ? cause.message : 'Не удалось загрузить задачу') })
+        .finally(() => { if (!controller.signal.aborted) setDetailLoading(false) })
+    }
+    return () => controller.abort()
+  }, [requestedTaskId, detailRevision])
 
   const isTaskInTracker = useCallback((taskId: string) => {
     return deadlineTrackers.some((tracker) => tracker.linked_task_id === taskId && tracker.status !== 'archived')
@@ -185,7 +212,8 @@ export function QueuePage() {
 
   useEffect(() => {
     if (!includeArchived) {
-      setAllTasks([])
+      archiveGeneration.current += 1
+      setArchiveLoading(false); setArchiveError(''); setAllTasks([])
       return
     }
     loadArchivedTasks()
@@ -316,22 +344,22 @@ export function QueuePage() {
 
   const wipCount = myTasks.filter((t) => t.status === 'in_progress').length
 
-  if (loading) return <SkeletonTable rows={8} />
-  if (error) return <div className="text-red-600">{error}</div>
+  if (loading && !tasks.length && !requestedTaskId) return <SkeletonTable rows={8} />
 
   const handleOpenBugfix = (task: Task) => {
-    setDetailTask(null)
+    openDetail(null)
     setBugfixParent(task)
     setBugfixTitle(`Баг: ${task.title}`.slice(0, TASK_TITLE_MAX_LENGTH))
     setBugfixDescription('')
   }
 
   const handleCreateBugfix = async () => {
-    if (!bugfixParent || !bugfixTitle.trim()) return
+    if (!bugfixParent || !bugfixTitle.trim() || bugfixInFlight.current) return
     if (bugfixTitle.trim().length > TASK_TITLE_MAX_LENGTH) {
       toast.error(`Название задачи не длиннее ${TASK_TITLE_MAX_LENGTH} символов`)
       return
     }
+    bugfixInFlight.current = true
     setBugfixBusy(true)
     try {
       await api.post('/api/tasks/bugfix', {
@@ -351,6 +379,7 @@ export function QueuePage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось создать баг-фикс')
     } finally {
+      bugfixInFlight.current = false
       setBugfixBusy(false)
     }
   }
@@ -380,11 +409,12 @@ export function QueuePage() {
   }
 
   const handleSaveEdit = async () => {
-    if (!editTask || !editTitle.trim()) return
+    if (!editTask || !editTitle.trim() || editInFlight.current) return
     if (editTitle.trim().length > TASK_TITLE_MAX_LENGTH) {
       toast.error(`Название задачи не длиннее ${TASK_TITLE_MAX_LENGTH} символов`)
       return
     }
+    editInFlight.current = true
     setEditBusy(true)
     try {
       const updated = await api.patch<Task>(`/api/tasks/${editTask.id}`, {
@@ -409,6 +439,7 @@ export function QueuePage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось сохранить заявку')
     } finally {
+      editInFlight.current = false
       setEditBusy(false)
     }
   }
@@ -437,6 +468,10 @@ export function QueuePage() {
 
   return (
     <div className="space-y-6">
+      {error && <div role="alert">{error}<button type="button" onClick={loadQueue}>Повторить загрузку очереди</button></div>}
+      {includeArchived && archiveError && <div role="alert">{archiveError}<button type="button" onClick={loadArchivedTasks}>Повторить загрузку архива</button></div>}
+      {detailLoading && <p role="status">Загрузка задачи...</p>}
+      {detailError && <div role="alert">{detailError}<button type="button" onClick={() => setDetailRevision((value) => value + 1)}>Повторить загрузку задачи</button><button type="button" onClick={() => openDetail(null)}>Закрыть карточку</button></div>}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-semibold text-gray-700">Глобальная очередь</h1>
@@ -495,7 +530,7 @@ export function QueuePage() {
           type="button"
           onClick={() => setActiveTag(null)}
           className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-            activeTag === null ? 'bg-accent text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+            activeTag === null ? 'bg-primary text-primary-foreground' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
           }`}
         >
           Все
@@ -506,7 +541,7 @@ export function QueuePage() {
             type="button"
             onClick={() => setActiveTag(activeTag === tag ? null : tag)}
             className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-              activeTag === tag ? 'bg-accent text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+              activeTag === tag ? 'bg-primary text-primary-foreground' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
             }`}
           >
             {tag}
@@ -526,6 +561,8 @@ export function QueuePage() {
         <div className="rounded-xl border border-gray-200 bg-white p-12 text-center text-gray-500">
           Очередь пуста. Создайте задачу через калькулятор.
         </div>
+      ) : (includeArchived ? archiveLoading || archiveError : loading || error) ? (
+        <p role="status">{loading || archiveLoading ? 'Загрузка задач...' : 'Список не обновлён'}</p>
       ) : sortedTasks.length === 0 ? (
         <div className="rounded-xl border border-gray-200 bg-white p-8 text-center text-gray-500">
           {searchQuery.trim()
@@ -552,22 +589,22 @@ export function QueuePage() {
             </colgroup>
             <thead className="bg-gray-50/50">
               <tr>
-                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-gray-600" onClick={() => handleSort('title')}>
-                  Название {sortField === 'title' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600" aria-sort={sortField === 'title' ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}>
+                  <button type="button" className="min-h-11 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" onClick={() => handleSort('title')}>Название <span aria-hidden="true">{sortField === 'title' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</span></button>
                 </th>
-                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-gray-600" onClick={() => handleSort('status')}>
-                  Статус {sortField === 'status' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600" aria-sort={sortField === 'status' ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}>
+                  <button type="button" className="min-h-11 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" onClick={() => handleSort('status')}>Статус <span aria-hidden="true">{sortField === 'status' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</span></button>
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-600">Тип</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-600">Сложность</th>
-                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-gray-600 min-w-[60px]" onClick={() => handleSort('estimated_q')}>
-                  Q {sortField === 'estimated_q' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600 min-w-[60px]" aria-sort={sortField === 'estimated_q' ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}>
+                  <button type="button" className="min-h-11 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" onClick={() => handleSort('estimated_q')}>Q <span aria-hidden="true">{sortField === 'estimated_q' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</span></button>
                 </th>
-                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-gray-600" onClick={() => handleSort('due_date')}>
-                  Срок {sortField === 'due_date' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600" aria-sort={sortField === 'due_date' ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}>
+                  <button type="button" className="min-h-11 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" onClick={() => handleSort('due_date')}>Срок <span aria-hidden="true">{sortField === 'due_date' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</span></button>
                 </th>
-                <th className="cursor-pointer select-none px-4 py-3 text-left text-xs font-medium text-gray-600" onClick={() => handleSort('priority')}>
-                  Приоритет {sortField === 'priority' ? (sortDir === 'asc' ? '▲' : '▼') : ''}
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-600" aria-sort={sortField === 'priority' ? (sortDir === 'asc' ? 'ascending' : 'descending') : undefined}>
+                  <button type="button" className="min-h-11 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary" onClick={() => handleSort('priority')}>Приоритет <span aria-hidden="true">{sortField === 'priority' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</span></button>
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-600">Мин. лига</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-600">Дата постановки</th>
@@ -831,23 +868,28 @@ export function QueuePage() {
 
       <TaskDetailModal
         task={detailTask}
-        onClose={() => setDetailTask(null)}
+        onClose={() => openDetail(null)}
         users={users}
         isTeamleadOrAdmin={isTeamleadOrAdmin}
         onOpenBugfix={isAdmin ? handleOpenBugfix : undefined}
         onOpenDeadline={(task) => {
-          setDetailTask(null)
+          if (deadlinePending.current.has(task.id)) return
           const hours = prompt('Срок выполнения (часов от сейчас):')
           if (!hours || Number.isNaN(Number(hours))) return
           const dueDate = new Date(Date.now() + Number(hours) * 3600000).toISOString()
+          deadlinePending.current.add(task.id)
           api
-            .patch(`/api/tasks/${task.id}/due-date`, { due_date: dueDate })
-            .then(() => {
+            .patch<Task>(`/api/tasks/${task.id}/due-date`, { due_date: dueDate })
+            .then((updated) => {
               toast.success('Дедлайн установлен')
-              openDetail(task.id)
+              setTasks((previous) => previous.map((row) => row.id === task.id ? { ...row, ...updated, due_date: updated.due_date || dueDate } : row))
+              setAllTasks((previous) => previous.map((row) => row.id === task.id ? { ...row, ...updated, due_date: updated.due_date || dueDate } : row))
+              setDetailTask((current) => current?.id === task.id ? { ...current, ...updated, due_date: updated.due_date || dueDate } : current)
             })
             .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
+            .finally(() => deadlinePending.current.delete(task.id))
         }}
+        onAcceptanceUpdated={() => { loadQueue(); if (includeArchived) loadArchivedTasks(); setDetailRevision((value) => value + 1) }}
         onToggleTracker={handleToggleTracker}
         isInTracker={detailTask ? isTaskInTracker(detailTask.id) : false}
         trackerBusy={detailTask ? trackerBusyId === detailTask.id : false}
@@ -877,9 +919,10 @@ export function QueuePage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
           role="dialog"
           aria-modal="true"
-          onKeyDown={(e) => e.key === 'Escape' && setEditTask(null)}
+          aria-label="Редактировать заявку"
+          onKeyDown={(e) => e.key === 'Escape' && editDialog.requestClose()}
         >
-          <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-lg">
+          <div ref={editDialog.panelRef} tabIndex={-1} className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-6 shadow-lg">
             <h3 className="text-lg font-semibold text-gray-700">Редактировать заявку</h3>
             <p className="mt-1 text-sm text-gray-500">#{editTask.task_number}</p>
             <div className="mt-4 space-y-3">
@@ -889,6 +932,8 @@ export function QueuePage() {
                 </label>
                 <input
                   type="text"
+                  aria-label="Название заявки"
+                  disabled={editBusy}
                   value={editTitle}
                   onChange={(e) => setEditTitle(e.target.value)}
                   maxLength={TASK_TITLE_MAX_LENGTH}
@@ -901,6 +946,8 @@ export function QueuePage() {
               <div>
                 <label className="block text-sm font-medium text-gray-700">Описание</label>
                 <textarea
+                  aria-label="Описание заявки"
+                  disabled={editBusy}
                   value={editDescription}
                   onChange={(e) => setEditDescription(e.target.value)}
                   rows={3}
@@ -911,9 +958,10 @@ export function QueuePage() {
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Приоритет</label>
                   <select
+                    aria-label="Приоритет заявки"
                     value={editPriority}
                     onChange={(e) => setEditPriority(e.target.value as 'low' | 'medium' | 'high' | 'critical')}
-                    disabled={!canSetCriticalPriority && editPriority === 'critical'}
+                    disabled={editBusy || (!canSetCriticalPriority && editPriority === 'critical')}
                     className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                   >
                     {(canSetCriticalPriority || editPriority === 'critical') && (
@@ -935,7 +983,9 @@ export function QueuePage() {
                   <label className="block text-sm font-medium text-gray-700">Теги</label>
                   <input
                     type="text"
-                    value={editTags}
+                    aria-label="Теги заявки"
+                  disabled={editBusy}
+                  value={editTags}
                     onChange={(e) => setEditTags(e.target.value)}
                     className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
                     placeholder="через запятую"
@@ -946,7 +996,7 @@ export function QueuePage() {
             <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setEditTask(null)}
+                onClick={editDialog.requestClose}
                 className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 Отмена

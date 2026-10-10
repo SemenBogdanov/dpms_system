@@ -193,7 +193,7 @@ function EntityLinkModal({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="w-full rounded-t-lg bg-white p-4 shadow-2xl sm:max-w-xl sm:rounded-lg"
+        className="max-h-[calc(100dvh-1.5rem)] w-full overflow-y-auto rounded-t-lg bg-white p-4 shadow-2xl sm:max-w-xl sm:rounded-lg"
       >
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -267,6 +267,7 @@ export function DeadlineTrackersPage() {
   const [revision, setRevision] = useState(0)
   const [paging, setPaging] = useState({ key: '', index: 0 })
   const [hasMore, setHasMore] = useState(false)
+  const [pageRetry, setPageRetry] = useState(0)
   const [organizationRevision, setOrganizationRevision] = useState(0)
   const [editor, setEditor] = useState<{ tracker: DeadlineTracker | null; initial: TrackerForm } | null>(null)
   const [manager, setManager] = useState<'groups' | 'categories' | null>(null)
@@ -276,6 +277,7 @@ export function DeadlineTrackersPage() {
   const [targetLoading, setTargetLoading] = useState(false)
   const [targetRevision, setTargetRevision] = useState(0)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [targetToClear, setTargetToClear] = useState<string | null>(null)
   const [readError, setReadError] = useState('')
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({})
@@ -298,6 +300,13 @@ export function DeadlineTrackersPage() {
       return next
     }, { replace })
   }, [setSearchParams])
+
+  useEffect(() => {
+    if (!targetToClear) return
+    // Wait for the history dialog to unmount and release its busy navigation guard.
+    if (requestedTrackerId === targetToClear) updateQuery('tracker', null, true)
+    setTargetToClear(null)
+  }, [requestedTrackerId, targetToClear, updateQuery])
 
   useEffect(() => { setSearchInput(search) }, [search])
   useEffect(() => {
@@ -326,7 +335,7 @@ export function DeadlineTrackersPage() {
       if (!controller.signal.aborted && generation === listGeneration.current) setLoading(false)
     })
     return () => controller.abort()
-  }, [categoryFilter, filter, pageIndex, revision, search])
+  }, [categoryFilter, filter, pageIndex, pageRetry, revision, search])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -363,7 +372,7 @@ export function DeadlineTrackersPage() {
   }, [])
 
   useEffect(() => {
-    if (!requestedTrackerId) { setTarget(null); setTargetError(''); setHistoryOpen(false); return }
+    if (!requestedTrackerId) { setTarget(null); setTargetError(''); setTargetLoading(false); setHistoryOpen(false); return }
     const controller = new AbortController()
     setTargetLoading(true); setTargetError(''); setReadError(''); setTarget(null)
     // A deep link is not limited by the current list, group visibility, or its 300-row cap.
@@ -392,7 +401,7 @@ export function DeadlineTrackersPage() {
       const changed = await action()
       setTrackers((previous) => changed ? previous.map((item) => item.id === id ? changed : item) : previous.filter((item) => item.id !== id))
       if (changed) setTarget((current) => current?.id === id ? changed : current)
-      else if (activeTarget.current === id) { setTarget(null); setHistoryOpen(false); updateQuery('tracker', null, true) }
+      else if (activeTarget.current === id) { setTarget(null); setHistoryOpen(false); setTargetToClear(id) }
       setRevision((value) => value + 1)
       window.dispatchEvent(new Event('dpms:attention-refresh'))
       toast.success(message)
@@ -402,7 +411,7 @@ export function DeadlineTrackersPage() {
       toast.error(messageText)
       setRevision((value) => value + 1)
     } finally { pending.current.delete(id); setBusyIds(new Set(pending.current)) }
-  }, [updateQuery])
+  }, [])
 
   const patchTracker = (tracker: DeadlineTracker, patch: DeadlineTrackerUpdate, message: string) => {
     if (patch.status === 'archived' && !window.confirm('Архивировать трекер? Новые напоминания поступать не будут.')) return
@@ -424,6 +433,7 @@ export function DeadlineTrackersPage() {
     try {
       const fresh = await deadlineTrackers.get(tracker.id)
       setHistoryOpen(false)
+      if (activeTarget.current === tracker.id) setTargetToClear(tracker.id)
       setEditor({ tracker: fresh, initial: formFromTracker(fresh) })
       void markRead(fresh.id)
     } catch (error) { toast.error(error instanceof Error ? error.message : 'Трекер недоступен') }
@@ -521,7 +531,7 @@ export function DeadlineTrackersPage() {
             {tracker.personal_task_key && <span className="inline-flex shrink-0 items-center gap-1 text-xs text-sky-700 dark:text-sky-300"><Link2 className="h-3 w-3" aria-hidden="true" />{tracker.personal_task_key}</span>}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-            <span className="break-words">{categoryName(tracker)}</span><span aria-hidden="true">/</span><span>{statusLabel[tracker.status]}</span>
+            <span className="min-w-0 [overflow-wrap:anywhere]">{categoryName(tracker)}</span><span aria-hidden="true">/</span><span>{statusLabel[tracker.status]}</span>
             <span className="inline-flex items-center gap-1">{tracker.recurrence && <Repeat2 className="h-3 w-3 text-sky-600" aria-hidden="true" />}{tracker.recurrence ? 'Периодический' : sourceLabel(tracker)}</span>
           </div>
           {tracker.recurrence && !state.noCurrentOccurrence && <p className="mt-1 break-words text-xs tabular-nums text-sky-700 dark:text-sky-300">Ближайший срок: {formatDate(due, tracker.recurrence.timezone)} · {tracker.recurrence.timezone}</p>}
@@ -558,7 +568,7 @@ export function DeadlineTrackersPage() {
       <div className="grid w-full grid-cols-4 sm:w-auto"><Metric label="активно" value={stats.active} /><Metric label="пауза" value={stats.paused} /><Metric label="просрочено" value={stats.overdue} tone={stats.overdue ? 'danger' : 'muted'} /><Metric label="закрыто" value={stats.done} tone="ok" /></div>
     </header>
     <div className="flex flex-wrap items-center gap-2">
-      <button type="button" aria-label="Новый трекер" title="Новый трекер" className={cn(trackerButton, 'w-11 bg-primary text-primary-foreground hover:bg-primary/90 dark:text-primary-foreground sm:w-auto')} onClick={() => { setEditor({ tracker: null, initial: newTrackerForm() }); loadSources() }} disabled={organizationLoading || Boolean(organizationError)}><Plus className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="hidden sm:inline">Новый трекер</span></button>
+      <button type="button" aria-label="Новый трекер" title="Новый трекер" className={cn(trackerButton, 'w-11 bg-primary text-primary-foreground hover:bg-primary/90 dark:hover:bg-primary/90 dark:text-primary-foreground sm:w-auto')} onClick={() => { setEditor({ tracker: null, initial: newTrackerForm() }); loadSources() }} disabled={organizationLoading || Boolean(organizationError)}><Plus className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="hidden sm:inline">Новый трекер</span></button>
       <button type="button" aria-label={compactView ? 'Полный вид' : 'Компактный вид'} title={compactView ? 'Полный вид' : 'Компактный вид'} className={cn(trackerButton, 'w-11 sm:w-auto')} onClick={() => updateQuery('view', compactView ? 'full' : 'compact')} disabled={Boolean(requestedTrackerId)}><List className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="hidden sm:inline">{compactView ? 'Полный вид' : 'Компактный вид'}</span></button>
       <button type="button" aria-label="Группы" title="Группы" className={cn(trackerButton, 'w-11 sm:w-auto')} disabled={organizationLoading || Boolean(organizationError)} onClick={() => setManager('groups')}><FolderCog className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="hidden sm:inline">Группы</span></button>
       <button type="button" aria-label="Категории" title="Категории" className={cn(trackerButton, 'w-11 sm:w-auto')} disabled={organizationLoading || Boolean(organizationError)} onClick={() => setManager('categories')}><Tags className="h-4 w-4 shrink-0" aria-hidden="true" /><span className="hidden sm:inline">Категории</span></button>
@@ -575,7 +585,7 @@ export function DeadlineTrackersPage() {
       <div className="flex flex-wrap gap-1" role="group" aria-label="Статус трекеров">{filterOptions.map((item) => <button key={item.value} type="button" aria-pressed={filter === item.value} className={cn(trackerButton, 'border-transparent', filter === item.value && 'border-primary/30 bg-primary/10 text-primary dark:text-primary')} onClick={() => updateQuery('status', item.value)}>{item.label}</button>)}</div>
     </section>
     {organizationError && <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-rose-700 dark:text-rose-300">{organizationError}<button type="button" className={trackerButton} onClick={() => setOrganizationRevision((value) => value + 1)}>Повторить загрузку групп</button></div>}
-    {loadError && <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-rose-700 dark:text-rose-300">{loadError}<button type="button" className={trackerButton} onClick={() => setRevision((value) => value + 1)}>Повторить загрузку трекеров</button></div>}
+    {loadError && <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-rose-700 dark:text-rose-300">{loadError}<button type="button" className={trackerButton} disabled={loading} onClick={() => setPageRetry((value) => value + 1)}>Повторить загрузку трекеров</button></div>}
     {(loading || targetLoading) && <p role="status" className="text-sm text-slate-500">Загрузка трекеров...</p>}
     {targetError && <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-rose-700 dark:text-rose-300">{targetError}<button type="button" className={trackerButton} onClick={() => setTargetRevision((value) => value + 1)}>Повторить открытие трекера</button><button type="button" className={trackerButton} onClick={() => updateQuery('tracker', null)}>Закрыть ссылку</button></div>}
     <div className="space-y-5">{sections.map(({ group, rows, collapsed }) => <section key={group?.id || 'ungrouped'} className="min-w-0 space-y-2" aria-label={group?.name || 'Без группы'}>
@@ -592,9 +602,9 @@ export function DeadlineTrackersPage() {
         <span className="text-xs tabular-nums text-slate-500">{rows.length}{group?.is_archived ? ' · Архив' : ''}</span>
       </div>
       {group && rowErrors['group-' + group.id] && <p role="alert" className="text-sm text-rose-700 dark:text-rose-300">{rowErrors['group-' + group.id]}</p>}
-      {!collapsed && <div className="grid min-w-0 gap-2">{rows.map(renderTracker)}{!rows.length && !loading && <p className="py-2 text-sm text-slate-500">Нет трекеров под текущий фильтр.</p>}</div>}
+      {!collapsed && <div className="grid min-w-0 gap-2">{rows.map(renderTracker)}{!rows.length && !loading && !loadError && <p className="py-2 text-sm text-slate-500">Нет трекеров под текущий фильтр.</p>}</div>}
     </section>)}</div>
-    {hasMore && <button type="button" className={trackerButton} disabled={loading} onClick={() => setPaging({ key: queryKey, index: pageIndex + 1 })}>Загрузить еще трекеры</button>}
+    {hasMore && <button type="button" className={trackerButton} disabled={loading || Boolean(loadError)} onClick={() => setPaging({ key: queryKey, index: pageIndex + 1 })}>Загрузить еще трекеры</button>}
     {editor && <TrackerEditor initial={editor.initial} editing={Boolean(editor.tracker)} groups={groups} categories={categories} personalTasks={personalTasks} sourceError={sourceError} onRetrySources={loadSources}
       linkedSource={editor.tracker && (editor.tracker.personal_task_id || editor.tracker.linked_task_id) ? {
         label: sourceLabel(editor.tracker) + ': ' + (editor.tracker.source_title || editor.tracker.personal_task_title || editor.tracker.title),

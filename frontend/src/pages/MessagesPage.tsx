@@ -101,10 +101,20 @@ export function MessagesPage() {
   const [loadError, setLoadError] = useState('')
   const [detail, setDetail] = useState<MessageThreadDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState('')
+  const threadSession = useMemo(() => ({ id: threadId }), [threadId])
+  const currentThread = useRef(threadSession)
+  currentThread.current = threadSession
+  const detailRequest = useRef(0)
+  const overviewRequest = useRef(0)
+  const mounted = useRef(true)
 
   const [contacts, setContacts] = useState<Contact[]>([])
   const [ownedNotes, setOwnedNotes] = useState<QuickNote[]>([])
   const [optionsLoaded, setOptionsLoaded] = useState(false)
+  const [contactsError, setContactsError] = useState('')
+  const [notesError, setNotesError] = useState('')
+  const optionsRequest = useRef(0)
   const [composeOpen, setComposeOpen] = useState(false)
   const [compose, setCompose] = useState<ComposeForm>(emptyCompose)
   const [composeError, setComposeError] = useState('')
@@ -113,12 +123,19 @@ export function MessagesPage() {
   const composeSubmitting = useRef(false)
   const composePanelRef = useProtectedModal<HTMLFormElement>(composeOpen)
 
-  const [replyBody, setReplyBody] = useState('')
-  const [replyNoteId, setReplyNoteId] = useState('')
-  const [replyBusy, setReplyBusy] = useState(false)
-  const [replyError, setReplyError] = useState('')
-  const replyRequestId = useRef(newRequestId())
-  const replySubmitting = useRef(false)
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, { body: string; noteId: string }>>({})
+  const [replyErrors, setReplyErrors] = useState<Record<string, string>>({})
+  const [replyPending, setReplyPending] = useState(new Set<string>())
+  const replySubmitting = useRef(new Set<string>())
+  const replyRequests = useRef(new Map<string, { payload: string; id: string }>())
+  const replyBody = threadId ? replyDrafts[threadId]?.body ?? '' : ''
+  const replyNoteId = threadId ? replyDrafts[threadId]?.noteId ?? '' : ''
+  const replyError = threadId ? replyErrors[threadId] ?? '' : ''
+  const replyBusy = Boolean(threadId && replyPending.has(threadId))
+  const editReply = (changes: Partial<{ body: string; noteId: string }>) => {
+    if (!threadId || replySubmitting.current.has(threadId)) return
+    setReplyDrafts(current => ({ ...current, [threadId]: { body: replyBody, noteId: replyNoteId, ...changes } }))
+  }
 
   const acceptedContacts = useMemo(
     () => contacts.filter((contact) => contact.status === 'accepted').map(otherContact),
@@ -148,6 +165,8 @@ export function MessagesPage() {
   }
 
   const loadOverview = useCallback(async () => {
+    if (!mounted.current) return
+    const request = ++overviewRequest.current
     setLoadError('')
     try {
       const [nextThreads, nextDirect, nextImportant] = await Promise.all([
@@ -161,49 +180,76 @@ export function MessagesPage() {
           unread_only: 'true',
         }),
       ])
+      if (request !== overviewRequest.current) return
       setThreads(nextThreads)
       setDirectItems(nextDirect)
       setImportantItems(nextImportant)
     } catch (error) {
+      if (request !== overviewRequest.current) return
       setLoadError(errorText(error, 'Не удалось загрузить сообщения'))
     } finally {
-      setLoading(false)
+      if (request === overviewRequest.current) setLoading(false)
     }
   }, [])
 
   const loadOptions = useCallback(async () => {
-    if (optionsLoaded) return
-    try {
-      const [nextContacts, nextNotes] = await Promise.all([
-        api.get<Contact[]>('/api/contacts'),
-        api.get<QuickNote[]>('/api/quick-notes', { limit: '300' }),
-      ])
-      setContacts(nextContacts)
-      setOwnedNotes(nextNotes)
-      setOptionsLoaded(true)
-    } catch (error) {
-      setComposeError(errorText(error, 'Не удалось загрузить контакты и заметки'))
-    }
-  }, [optionsLoaded])
+    if (!mounted.current) return
+    const request = ++optionsRequest.current
+    setContactsError('')
+    setNotesError('')
+    await Promise.all([
+      api.get<Contact[]>('/api/contacts').then(data => {
+        if (request !== optionsRequest.current) return
+        setContacts(data)
+        setOptionsLoaded(true)
+      }).catch(error => {
+        if (request !== optionsRequest.current) return
+        setOptionsLoaded(false)
+        setContactsError(errorText(error, 'Не удалось загрузить контакты'))
+      }),
+      api.get<QuickNote[]>('/api/quick-notes', { limit: '300' }).then(data => {
+        if (request === optionsRequest.current) setOwnedNotes(data)
+      }).catch(error => {
+        if (request === optionsRequest.current) setNotesError(errorText(error, 'Не удалось загрузить заметки'))
+      }),
+    ])
+  }, [])
 
   const loadThread = useCallback(async (id: string) => {
+    const session = currentThread.current
+    if (session.id !== id) return
+    const request = ++detailRequest.current
+    const current = () => mounted.current && currentThread.current === session && request === detailRequest.current
     setDetailLoading(true)
-    setReplyError('')
+    setDetailError('')
     try {
       const nextDetail = await api.get<MessageThreadDetail>(`/api/messages/threads/${id}`)
+      if (!current()) return
+      if (nextDetail.id !== id) throw new Error('Ответ не соответствует выбранной переписке')
       setDetail(nextDetail)
       if (nextDetail.unread_count > 0) {
         await api.post(`/api/messages/threads/${id}/read`, {})
-        setDetail((current) => current ? { ...current, unread_count: 0 } : current)
+        if (!current()) return
+        setDetail((value) => value?.id === id ? { ...value, unread_count: 0 } : value)
         await refreshAttention()
-        void loadOverview()
+        if (current()) void loadOverview()
       }
     } catch (error) {
-      setReplyError(errorText(error, 'Не удалось открыть переписку'))
+      if (current()) setDetailError(errorText(error, 'Не удалось открыть переписку'))
     } finally {
-      setDetailLoading(false)
+      if (current()) setDetailLoading(false)
     }
   }, [loadOverview, refreshAttention])
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      detailRequest.current += 1
+      overviewRequest.current += 1
+      optionsRequest.current += 1
+    }
+  }, [])
 
   useEffect(() => {
     void loadOverview()
@@ -220,13 +266,14 @@ export function MessagesPage() {
 
   const composeRecipient = searchParams.get('compose')
   useEffect(() => {
-    if (!composeRecipient) return
+    if (!composeRecipient || composeSubmitting.current) return
     setCompose((current) => ({ ...current, recipientId: composeRecipient }))
     setComposeOpen(true)
     void loadOptions()
   }, [composeRecipient, loadOptions])
 
   const openCompose = () => {
+    if (composeSubmitting.current) return
     setCompose(emptyCompose)
     setComposeError('')
     composeRequestId.current = newRequestId()
@@ -235,6 +282,8 @@ export function MessagesPage() {
   }
 
   const closeCompose = () => {
+    if (composeSubmitting.current) return
+    if ((compose.subject.trim() || compose.body.trim()) && !window.confirm('Закрыть без сохранения письма?')) return
     setComposeOpen(false)
     setComposeError('')
     setCompose(emptyCompose)
@@ -284,11 +333,15 @@ export function MessagesPage() {
         quick_note_id: compose.quickNoteId || null,
         request_id: composeRequestId.current,
       })
-      closeCompose()
-      await Promise.all([loadOverview(), refreshAttention()])
+      if (!mounted.current) return
+      setComposeOpen(false)
+      setCompose(emptyCompose)
+      composeRequestId.current = newRequestId()
       navigate(`/messages/${created.id}`)
+      void loadOverview()
+      void refreshAttention()
     } catch (error) {
-      setComposeError(errorText(error, 'Не удалось отправить письмо'))
+      if (mounted.current) setComposeError(errorText(error, 'Не удалось отправить письмо'))
     } finally {
       composeSubmitting.current = false
       setComposeBusy(false)
@@ -297,42 +350,49 @@ export function MessagesPage() {
 
   const submitReply = async (event: FormEvent) => {
     event.preventDefault()
-    if (!detail || replySubmitting.current) return
+    if (!threadId || !detail || detail.id !== threadId || detailLoading || !canReply || replySubmitting.current.has(threadId)) return
+    if (window.location.pathname.replace(/\/$/, '') !== `/messages/${threadId}`) return
+    const id = threadId
+    const session = currentThread.current
+    const current = () => currentThread.current === session
+    const setError = (value: string) => setReplyErrors(errors => ({ ...errors, [id]: value }))
     const body = replyBody.trim()
     if (!body) {
-      setReplyError('Введите текст ответа')
+      setError('Введите текст ответа')
       return
     }
 
-    replySubmitting.current = true
-    setReplyBusy(true)
-    setReplyError('')
+    replySubmitting.current.add(id)
+    setReplyPending(new Set(replySubmitting.current))
+    setError('')
+    const payload = JSON.stringify([body, replyNoteId])
+    if (replyRequests.current.get(id)?.payload !== payload) replyRequests.current.set(id, { payload, id: newRequestId() })
     try {
-      await api.post(`/api/messages/threads/${detail.id}/posts`, {
+      await api.post(`/api/messages/threads/${id}/posts`, {
         body,
         quick_note_id: replyNoteId || null,
-        request_id: replyRequestId.current,
+        request_id: replyRequests.current.get(id)!.id,
       })
-      setReplyBody('')
-      setReplyNoteId('')
-      replyRequestId.current = newRequestId()
+      if (!mounted.current) return
+      setReplyDrafts(drafts => ({ ...drafts, [id]: { body: '', noteId: '' } }))
+      replyRequests.current.delete(id)
       await Promise.all([
-        loadThread(detail.id),
+        current() ? loadThread(id) : Promise.resolve(),
         loadOverview(),
         refreshAttention(),
       ])
     } catch (error) {
-      setReplyError(errorText(error, 'Не удалось отправить ответ'))
+      setError(errorText(error, 'Не удалось отправить ответ'))
     } finally {
-      replySubmitting.current = false
-      setReplyBusy(false)
+      replySubmitting.current.delete(id)
+      setReplyPending(new Set(replySubmitting.current))
     }
   }
 
   const otherParticipants = (thread: MessageThread) =>
     thread.participants.filter((participant) => participant.user_id !== user?.id)
 
-  const canReply = detail
+  const canReply = optionsLoaded && detail?.id === threadId && detail
     ? otherParticipants(detail).every((participant) =>
         acceptedContacts.some((contact) => contact.id === participant.user_id),
       )
@@ -425,7 +485,13 @@ export function MessagesPage() {
     )
   }
 
-  const threadPanel = detailLoading ? (
+  const threadPanel = detailError ? (
+    <div className="space-y-3 p-5" role="alert">
+      <p>{detailError}</p>
+      <button type="button" onClick={() => threadId && void loadThread(threadId)}>Повторить</button>
+      <Link className="block text-primary" to="/messages">К списку сообщений</Link>
+    </div>
+  ) : detailLoading || (threadId && detail?.id !== threadId) ? (
     <div className="flex min-h-[360px] items-center justify-center text-sm text-slate-500">
       Загрузка переписки…
     </div>
@@ -489,16 +555,18 @@ export function MessagesPage() {
       </div>
 
       <form onSubmit={submitReply} className="border-t border-slate-200 p-4 sm:p-5">
+        <fieldset disabled={replyBusy} className="min-w-0">
         {!canReply ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            Контакт больше не активен. История переписки доступна только для чтения.
+            {contactsError || (!optionsLoaded ? 'Загрузка контактов…' : 'Контакт больше не активен. История переписки доступна только для чтения.')}
+            {contactsError && <button type="button" onClick={() => void loadOptions()}>Повторить</button>}
           </div>
         ) : (
           <>
             <textarea
               name="reply_body"
               value={replyBody}
-              onChange={(event) => setReplyBody(event.target.value)}
+              onChange={(event) => editReply({ body: event.target.value })}
               rows={3}
               maxLength={20_000}
               className="w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-base leading-6 outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
@@ -512,7 +580,7 @@ export function MessagesPage() {
                 <select
                   name="reply_quick_note_id"
                   value={replyNoteId}
-                  onChange={(event) => setReplyNoteId(event.target.value)}
+                  onChange={(event) => editReply({ noteId: event.target.value })}
                   className="min-h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
                   autoComplete="off"
                 >
@@ -534,6 +602,8 @@ export function MessagesPage() {
           </>
         )}
         {replyError && <p className="mt-2 text-sm text-rose-600" role="alert">{replyError}</p>}
+        {notesError && <p role="alert">Заметки недоступны: {notesError} <button type="button" onClick={() => void loadOptions()}>Повторить загрузку заметок</button></p>}
+        </fieldset>
       </form>
     </div>
   ) : (
@@ -612,6 +682,7 @@ export function MessagesPage() {
       {loadError && (
         <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700" role="alert">
           {loadError}
+          <button type="button" onClick={() => void loadOverview()}>Повторить</button>
         </div>
       )}
 
@@ -642,7 +713,7 @@ export function MessagesPage() {
                   )}
                   {threads.length > 0 ? (
                     threads.map(renderThreadRow)
-                  ) : directItems.length === 0 ? (
+                  ) : directItems.length === 0 && !loadError ? (
                     <div className="p-8 text-center text-sm text-slate-500">
                       Новых обращений и переписок пока нет.
                     </div>
@@ -667,11 +738,11 @@ export function MessagesPage() {
             <div className="grid gap-2 lg:grid-cols-2">
               {importantItems.map((item) => renderAttentionItem(item))}
             </div>
-          ) : (
+          ) : !loadError ? (
             <div className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
               Важных непросмотренных событий нет.
             </div>
-          )}
+          ) : null}
         </section>
       )}
 
@@ -704,7 +775,7 @@ export function MessagesPage() {
               </button>
             </div>
 
-            <div className="mt-4 space-y-3">
+            <fieldset disabled={composeBusy} className="mt-4 min-w-0 space-y-3">
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-slate-600">Получатель</span>
                 <select
@@ -763,9 +834,10 @@ export function MessagesPage() {
                   ))}
                 </select>
               </label>
-            </div>
+            </fieldset>
 
             {composeError && <p className="mt-3 text-sm text-rose-600" role="alert">{composeError}</p>}
+            {(contactsError || notesError) && <p role="alert">{contactsError || `Заметки недоступны: ${notesError}`} <button type="button" onClick={() => void loadOptions()}>Повторить</button></p>}
             {!optionsLoaded && !composeError && (
               <p className="mt-3 text-sm text-slate-500">Загрузка контактов и заметок…</p>
             )}

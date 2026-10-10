@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Archive, ArrowDown, ArrowUp, ChevronDown, ChevronRight, Folder, Pencil, Plus, RotateCcw, Save, Share2, Trash2 } from 'lucide-react'
 import { noteGroupsApi, type NoteGroup } from '@/api/noteGroups'
 import { NoteContextLinks } from './NoteContextLinks'
@@ -10,15 +10,17 @@ export function NoteGroupsPanel({ groups, view, onView, onChanged, onShare }: {
   const [editing, setEditing] = useState<NoteGroup | 'new' | null>(null)
   const [title, setTitle] = useState('')
   const [busy, setBusy] = useState(false)
+  const submitting = useRef(false)
   const [error, setError] = useState('')
   const [showArchived, setShowArchived] = useState(false)
   const current = typeof editing === 'object' && editing ? groups.find(group => group.id === editing.id) ?? editing : null
   const change = async (action: () => Promise<unknown>) => {
-    if (busy) return
+    if (submitting.current) return
+    submitting.current = true
     setBusy(true); setError('')
     try { await action(); await onChanged() }
     catch (error) { setError(error instanceof Error ? error.message : 'Не удалось изменить группу') }
-    finally { setBusy(false) }
+    finally { submitting.current = false; setBusy(false) }
   }
   const reorder = (id: string, offset: number) => {
     const next = [...groups]
@@ -29,9 +31,9 @@ export function NoteGroupsPanel({ groups, view, onView, onChanged, onShare }: {
   }
   return <section aria-label="Группы заметок" className="space-y-2 border-y border-slate-200 py-3 text-slate-900 dark:border-slate-700 dark:text-slate-100">
     <div className="flex flex-wrap items-center gap-2">
-      <button type="button" className={noteControl} aria-pressed={view === 'all'} onClick={() => onView('all')}>Все</button>
-      <button type="button" className={noteControl} aria-pressed={view === 'ungrouped'} onClick={() => onView('ungrouped')}>Без группы</button>
-      <button type="button" className={noteControl} onClick={() => { setTitle(''); setEditing('new'); setError('') }} title="Создать группу" aria-label="Создать группу"><Plus className="h-4 w-4" /></button>
+      <button type="button" className={`${noteControl} ${view === 'all' ? 'bg-primary font-semibold text-primary-foreground ring-2 ring-primary' : ''}`} aria-pressed={view === 'all'} onClick={() => onView('all')}>Все</button>
+      <button type="button" className={`${noteControl} ${view === 'ungrouped' ? 'bg-primary font-semibold text-primary-foreground ring-2 ring-primary' : ''}`} aria-pressed={view === 'ungrouped'} onClick={() => onView('ungrouped')}>Без группы</button>
+      <button type="button" disabled={busy} className={noteControl} onClick={() => { if (submitting.current) return; setTitle(''); setEditing('new'); setError('') }} title="Создать группу" aria-label="Создать группу"><Plus className="h-4 w-4" /></button>
       <label className="flex min-h-11 items-center gap-2 text-sm"><input className="h-4 w-4 shrink-0" type="checkbox" checked={showArchived} onChange={event => setShowArchived(event.target.checked)} />Архив групп</label>
     </div>
     <ul className="divide-y divide-slate-200 dark:divide-slate-700">{groups.filter(group => showArchived || !group.archived || group.id === view).map(group => <li key={group.id} className="flex min-w-0 flex-wrap items-center gap-1 py-1">
@@ -40,7 +42,7 @@ export function NoteGroupsPanel({ groups, view, onView, onChanged, onShare }: {
       <button type="button" className={`flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-sm ${view === group.id ? 'bg-primary/10 font-semibold text-primary' : ''}`} aria-pressed={view === group.id} onClick={() => onView(group.id)}>
         <Folder className="h-4 w-4 shrink-0" /><span className="min-w-0 break-words">{group.title}{group.archived ? ' (архив)' : ''}</span><span className="shrink-0 text-xs tabular-nums">{group.note_count}</span>
       </button>
-      <button type="button" className={noteControl} title="Настроить группу" aria-label={`Настроить группу: ${group.title}`} onClick={() => { setTitle(group.title); setEditing(group); setError('') }}><Pencil className="h-4 w-4" /></button>
+      <button type="button" disabled={busy} className={noteControl} title="Настроить группу" aria-label={`Настроить группу: ${group.title}`} onClick={() => { if (submitting.current) return; setTitle(group.title); setEditing(group); setError('') }}><Pencil className="h-4 w-4" /></button>
     </li>)}</ul>
     {error && !editing && <p role="alert" className="text-sm text-red-600">{error}</p>}
     {editing && <NoteGroupDialog title={current ? 'Настройки группы' : 'Новая группа'} dirty={title !== (current?.title ?? '')} busy={busy} onClose={() => setEditing(null)}>

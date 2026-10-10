@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import type { CatalogItem } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
@@ -12,7 +12,9 @@ export function CatalogPage() {
   const { user: currentUser } = useAuth()
   const [items, setItems] = useState<CatalogItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [error] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const request = useRef(0)
+  const mounted = useRef(false)
 
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [complexityFilter, setComplexityFilter] = useState<string>('all')
@@ -22,23 +24,36 @@ export function CatalogPage() {
   const [modalItem, setModalItem] = useState<CatalogItem | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
 
-  const loadItems = useCallback(() => {
+  const loadItems = useCallback(async () => {
+    const revision = ++request.current
+    setLoading(true)
+    setError(null)
     const params: Record<string, string> = {}
     if (categoryFilter !== 'all') params.category = categoryFilter
     if (complexityFilter !== 'all') params.complexity = complexityFilter
     if (activeFilter === 'active') params.is_active = 'true'
     else if (activeFilter === 'inactive') params.is_active = 'false'
     if (search.trim()) params.search = search.trim()
-    api
-      .get<CatalogItem[]>('/api/catalog', params)
-      .then(setItems)
-      .catch(() => setItems([]))
+    try {
+      const result = await api.get<CatalogItem[]>('/api/catalog', params)
+      if (request.current === revision) setItems(result)
+    } catch (e) {
+      if (request.current === revision) setError(e instanceof Error ? e.message : 'Ошибка загрузки каталога')
+    } finally {
+      if (request.current === revision) setLoading(false)
+    }
   }, [categoryFilter, complexityFilter, activeFilter, search])
 
-  useEffect(() => {
-    setLoading(true)
-    loadItems()
-    setLoading(false)
+  const reloadItems = useRef(loadItems)
+  useLayoutEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
+  useLayoutEffect(() => {
+    reloadItems.current = loadItems
+    setItems([])
+    void loadItems()
+    return () => { request.current += 1 }
   }, [loadItems])
 
   const canEdit = currentUser?.role === 'admin'
@@ -53,25 +68,18 @@ export function CatalogPage() {
     setModalOpen(true)
   }
 
-  const handleSave = (payload: CreateEditPayload) => {
+  const handleSave = async (payload: CreateEditPayload): Promise<void> => {
     if (modalItem) {
-      api
-        .patch<CatalogItem>(`/api/catalog/${modalItem.id}`, payload)
-        .then(() => {
-          toast.success('Операция обновлена')
-          loadItems()
-        })
-        .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
+      await api.patch<CatalogItem>(`/api/catalog/${modalItem.id}`, payload)
+      if (!mounted.current) return
+      toast.success('Операция обновлена')
     } else {
-      api
-        .post<CatalogItem>('/api/catalog', { ...payload, is_active: true })
-        .then(() => {
-          toast.success('Операция добавлена')
-          loadItems()
-        })
-        .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
+      await api.post<CatalogItem>('/api/catalog', { ...payload, is_active: true })
+      if (!mounted.current) return
+      toast.success('Операция добавлена')
     }
-    setModalOpen(false)
+    // A refresh failure must not turn a confirmed write into a retryable create.
+    void reloadItems.current()
   }
 
   const handleDeactivate = (item: CatalogItem) => {
@@ -79,8 +87,9 @@ export function CatalogPage() {
     api
       .delete(`/api/catalog/${item.id}`)
       .then(() => {
+        if (!mounted.current) return
         toast.success('Операция деактивирована')
-        loadItems()
+        void reloadItems.current()
       })
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
   }
@@ -89,15 +98,12 @@ export function CatalogPage() {
     api
       .patch<CatalogItem>(`/api/catalog/${item.id}`, { is_active: true })
       .then(() => {
+        if (!mounted.current) return
         toast.success('Операция восстановлена')
-        loadItems()
+        void reloadItems.current()
       })
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
   }
-
-  if (loading && items.length === 0)
-    return <div className="text-slate-500">Загрузка...</div>
-  if (error) return <div className="text-red-600">{error}</div>
 
   return (
     <div className="space-y-6">
@@ -109,6 +115,7 @@ export function CatalogPage() {
 
       <div className="flex flex-wrap items-center gap-3">
         <select
+          aria-label="Категория"
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}
           className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
@@ -122,6 +129,7 @@ export function CatalogPage() {
         </select>
 
         <select
+          aria-label="Сложность"
           value={complexityFilter}
           onChange={(e) => setComplexityFilter(e.target.value)}
           className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
@@ -134,6 +142,7 @@ export function CatalogPage() {
         </select>
 
         <select
+          aria-label="Статус операций"
           value={activeFilter}
           onChange={(e) => setActiveFilter(e.target.value)}
           className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
@@ -144,6 +153,7 @@ export function CatalogPage() {
         </select>
 
         <input
+          aria-label="Поиск по названию"
           type="text"
           placeholder="Поиск по названию"
           value={search}
@@ -162,7 +172,14 @@ export function CatalogPage() {
         )}
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      {loading && <p role="status" className="text-slate-500">Загрузка каталога...</p>}
+      {error && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-600">
+          <span>{error}{items.length > 0 ? ' Показаны ранее загруженные данные.' : ''}</span>
+          <button type="button" onClick={() => void loadItems()} className="rounded border px-3 py-2">Повторить загрузку каталога</button>
+        </div>
+      )}
+      <div role="region" aria-label="Операции каталога" tabIndex={0} className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
         <table className="min-w-full divide-y divide-slate-200">
           <thead className="bg-slate-50">
             <tr>
@@ -257,7 +274,7 @@ export function CatalogPage() {
             ))}
           </tbody>
         </table>
-        {items.length === 0 && (
+        {items.length === 0 && !loading && !error && (
           <p className="p-6 text-center text-slate-500">Нет операций</p>
         )}
       </div>

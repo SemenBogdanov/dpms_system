@@ -1635,7 +1635,14 @@
       gap: 6px;
     }
 
-    #graphsDialog { width: min(720px, calc(100vw - 32px)); }
+    #graphsDialog {
+      width: min(720px, calc(100vw - 32px));
+      max-height: min(720px, calc(100dvh - 32px));
+    }
+    #graphsDialog[open] { display: flex; flex-direction: column; }
+    #graphsDialog .dialog-header,
+    #graphsDialog .dialog-actions { flex-shrink: 0; }
+    #graphsDialogBody { min-height: 0; max-height: none; }
 
     #hierarchyDialog { width: min(700px, calc(100vw - 32px)); }
     #shortcutDialog { width: min(680px, calc(100vw - 32px)); }
@@ -2443,8 +2450,13 @@
       let storageWriteBlocked = storedWorkspaceResult.status === 'invalid';
       let hostBridgeReady = false;
       let serverGraphSummaries = new Map();
+      let serverGraphListState = 'idle';
+      let serverGraphListError = '';
+      let serverGraphListSequence = 0;
+      let serverGraphListMutation = 0;
       const bridgeRequests = new Map();
       const publishingGraphIds = new Set();
+      const deletingServerGraphIds = new Set();
       const serverDownloadsInFlight = new Set();
       const corruptStorageRaw = storedWorkspaceResult.raw || '';
       syncUiFromActiveView();
@@ -3151,19 +3163,32 @@
         });
       }
 
-      async function refreshServerGraphs({ quiet = true } = {}) {
+      async function refreshServerGraphs() {
         if (!hostBridgeReady) return;
+        const sequence = ++serverGraphListSequence;
+        const mutation = serverGraphListMutation;
+        serverGraphListState = 'loading';
+        serverGraphListError = '';
+        if (document.getElementById('graphsDialog').open) renderGraphManager();
         try {
           const summaries = await requestHost('list');
-          serverGraphSummaries = new Map((Array.isArray(summaries) ? summaries : []).map((item) => [item.client_id, item]));
-          if (document.getElementById('graphsDialog').open) renderGraphManager();
+          if (sequence !== serverGraphListSequence) return;
+          if (mutation !== serverGraphListMutation) return refreshServerGraphs();
+          if (!Array.isArray(summaries)) throw new Error('Некорректный ответ хранилища графов');
+          serverGraphSummaries = new Map(summaries.map((item) => [item.client_id, item]));
+          serverGraphListState = 'loaded';
         } catch (error) {
-          if (!quiet) toast(error?.message || 'Не удалось получить графы из системы', 'error');
+          if (sequence !== serverGraphListSequence) return;
+          if (mutation !== serverGraphListMutation) return refreshServerGraphs();
+          serverGraphListState = 'error';
+          serverGraphListError = String(error?.message || 'Не удалось получить графы из системы').slice(0, 300);
         }
+        if (document.getElementById('graphsDialog').open) renderGraphManager();
       }
 
       function rememberServerDocument(document) {
         if (!document?.client_id) return;
+        serverGraphListMutation += 1;
         serverGraphSummaries.set(document.client_id, {
           client_id: document.client_id,
           title: document.title,
@@ -4674,6 +4699,9 @@
       }
 
       function renderEdges() {
+        const focused = document.activeElement;
+        const focusedEdge = refs.edges.contains(focused) ? focused.closest('[data-edge-id]') : null;
+        const focusedPoint = focused?.getAttribute('data-edge-point');
         const metrics = degreeMetrics();
         const focus = focusNeighborhood();
         const compact = isSemanticCompact();
@@ -4717,6 +4745,13 @@
             </g>
           `;
         }).join('');
+        if (focusedEdge) {
+          const edge = refs.edges.querySelector(`[data-edge-id="${CSS.escape(focusedEdge.dataset.edgeId)}"]`);
+          const points = edge?.querySelectorAll('[data-edge-point]');
+          const target = focusedPoint !== null && points?.length
+            ? points[Math.min(Number(focusedPoint), points.length - 1)] : edge;
+          target?.focus({ preventScroll: true });
+        }
       }
 
       function renderScaleControl(nodes, label = 'Ручной размер') {
@@ -5506,6 +5541,9 @@
       }
 
       function renderGraphManager() {
+        const focused = refs.graphsDialogBody.contains(document.activeElement) ? document.activeElement : null;
+        const focusAttribute = focused?.getAttributeNames().find((name) => name.startsWith('data-'));
+        const focusValue = focusAttribute ? focused.getAttribute(focusAttribute) : null;
         const localRows = workspace.graphs.map((item) => {
           const active = item.id === graph.id;
           const metadata = graphStorage(item.id);
@@ -5519,7 +5557,7 @@
             </div>
             <div class="graph-list-actions">
               <button class="text-button" type="button" data-graph-open="${escapeHtml(item.id)}" ${active ? 'disabled' : ''}>Открыть</button>
-              <button class="icon-button" type="button" data-graph-publish="${escapeHtml(item.id)}" aria-label="${metadata.revision ? 'Обновить снимок' : 'Опубликовать'} ${escapeHtml(item.title)}" title="${metadata.revision ? 'Обновить снимок в DPMS' : 'Отправить снимок в DPMS'}" ${publishing || !hostBridgeReady ? 'disabled' : ''}><svg class="icon" aria-hidden="true"><use href="#i-upload"></use></svg></button>
+              <button class="icon-button" type="button" data-graph-publish="${escapeHtml(item.id)}" aria-label="${metadata.revision ? 'Обновить снимок' : 'Опубликовать'} ${escapeHtml(item.title)}" title="${metadata.revision ? 'Обновить снимок в DPMS' : 'Отправить снимок в DPMS'}" ${publishing || deletingServerGraphIds.has(item.id) || !hostBridgeReady ? 'disabled' : ''}><svg class="icon" aria-hidden="true"><use href="#i-upload"></use></svg></button>
               <button class="icon-button" type="button" data-graph-duplicate="${escapeHtml(item.id)}" aria-label="Дублировать граф ${escapeHtml(item.title)}" title="Дублировать"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg></button>
               <button class="icon-button danger" type="button" data-graph-delete="${escapeHtml(item.id)}" aria-label="Удалить граф ${escapeHtml(item.title)}" title="Удалить" ${workspace.graphs.length === 1 ? 'disabled' : ''}><svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg></button>
             </div>
@@ -5535,28 +5573,38 @@
             </div>
             <div class="graph-list-actions">
               <button class="text-button" type="button" data-server-graph-open="${escapeHtml(summary.client_id)}" ${serverDownloadsInFlight.has(summary.client_id) ? 'disabled' : ''}>${serverDownloadsInFlight.has(summary.client_id) ? 'Скачиваем…' : 'Скачать копию'}</button>
-              <button class="icon-button danger" type="button" data-server-graph-delete="${escapeHtml(summary.client_id)}" data-server-revision="${summary.revision}" aria-label="Удалить облачный снимок ${escapeHtml(summary.title)}" title="Удалить снимок из DPMS"><svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg></button>
+              <button class="icon-button danger" type="button" data-server-graph-delete="${escapeHtml(summary.client_id)}" data-server-revision="${summary.revision}" aria-label="Удалить облачный снимок ${escapeHtml(summary.title)}" title="Удалить снимок из DPMS" ${deletingServerGraphIds.has(summary.client_id) || publishingGraphIds.has(summary.client_id) ? 'disabled' : ''} aria-busy="${deletingServerGraphIds.has(summary.client_id)}"><svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg></button>
             </div>
+            ${deletingServerGraphIds.has(summary.client_id) ? '<span class="graph-list-meta" role="status">Удаляем снимок…</span>' : ''}
           </li>`;
         });
         refs.graphsDialogBody.innerHTML = `
           <div class="graph-list-section-title"><span>На этом устройстве</span><span>${localRows.length}</span></div>
           <ul class="graph-list">${localRows.join('')}</ul>
-          <div class="graph-list-section-title"><span>Снимки в DPMS</span><span>${serverRows.length}</span></div>
-          ${hostBridgeReady ? `<ul class="graph-list">${serverRows.join('') || '<li class="graph-list-meta" style="padding:12px 0">Облачных снимков пока нет.</li>'}</ul>` : '<p class="graph-list-meta">Серверное хранилище доступно внутри DPMS.</p>'}`;
+          <div class="graph-list-section-title"><span>Снимки в DPMS</span><span>${serverGraphListState === 'loaded' || serverRows.length ? serverRows.length : ''}</span></div>
+          ${hostBridgeReady ? `
+            ${serverGraphListState === 'loading' || serverGraphListState === 'idle' ? '<p class="graph-list-meta" role="status">Загружаем список снимков…</p>' : ''}
+            ${serverGraphListState === 'error' ? `<p class="field-message" role="alert">Не удалось загрузить облачные снимки. ${escapeHtml(serverGraphListError)}${serverRows.length ? ' Показан ранее загруженный список.' : ''}</p>` : ''}
+            <button class="text-button" type="button" data-server-graphs-refresh ${serverGraphListState === 'loading' ? 'disabled' : ''}>${serverGraphListState === 'error' ? 'Повторить загрузку снимков' : 'Обновить список снимков'}</button>
+            <ul class="graph-list">${serverRows.join('') || (serverGraphListState === 'loaded' ? '<li class="graph-list-meta" style="padding:12px 0">Облачных снимков пока нет.</li>' : '')}</ul>` : '<p class="graph-list-meta">Серверное хранилище доступно внутри DPMS.</p>'}`;
+        if (focusAttribute) {
+          refs.graphsDialogBody.querySelector(`[${focusAttribute}="${CSS.escape(focusValue)}"]`)?.focus({ preventScroll: true });
+        }
       }
 
-      function openGraphManager() {
+      function openGraphManager(event) {
         flushPendingEdit();
         saveGraph({ markChanged: false });
         renderGraphManager();
+        // WebKit does not focus pointer-activated buttons before native dialog opening.
+        if (event?.currentTarget instanceof HTMLElement) event.currentTarget.focus({ preventScroll: true });
         document.getElementById('graphsDialog').showModal();
         refreshServerGraphs();
       }
 
       async function publishGraph(id) {
         const source = workspace.graphs.find((item) => item.id === id);
-        if (!source || !hostBridgeReady || publishingGraphIds.has(id)) return;
+        if (!source || !hostBridgeReady || publishingGraphIds.has(id) || deletingServerGraphIds.has(id)) return;
         if (source.id === graph.id) {
           flushPendingEdit();
           if (!saveGraph()) return;
@@ -5663,32 +5711,49 @@
 
       async function deleteServerGraph(id, revision) {
         const summary = serverGraphSummaries.get(id);
-        if (!summary || !confirm(`Удалить облачный снимок «${summary.title}»? Локальные графы останутся на устройстве.`)) return;
+        if (!summary || deletingServerGraphIds.has(id) || publishingGraphIds.has(id)) return;
+        if (Number(revision) !== summary.revision) {
+          renderGraphManager();
+          toast('Снимок изменился. Проверьте обновлённый список перед удалением.', 'error');
+          return;
+        }
+        deletingServerGraphIds.add(id);
+        const source = workspace.graphs.find((item) => item.id === id);
+        const sourceFingerprint = source ? JSON.stringify(source) : null;
         const metadata = workspace.storage?.[id];
         const previousMetadata = metadata ? deepClone(metadata) : null;
-        if (metadata) {
-          setGraphStorage(id, localStorageMetadata());
-          if (!persistWorkspace()) {
-            workspace.storage[id] = previousMetadata;
-            renderGraphManager();
-            renderStorageControl();
-            toast('Удаление отменено: браузер не сохранил локальный статус.', 'error');
-            return;
-          }
-        }
+        let pendingMetadata = null;
         try {
-          await requestHost('delete', { clientId: id, baseRevision: Number(revision) || summary.revision });
-          serverGraphSummaries.delete(id);
+          if (!confirm(`Удалить облачный снимок «${summary.title}»? Локальные графы останутся на устройстве.`)) return;
+          if (metadata) {
+            pendingMetadata = setGraphStorage(id, localStorageMetadata());
+            if (!persistWorkspace()) {
+              workspace.storage[id] = previousMetadata;
+              toast('Удаление отменено: браузер не сохранил локальный статус.', 'error');
+              return;
+            }
+          }
           renderGraphManager();
           renderStorageControl();
-          toast('Облачный снимок удалён');
+          await requestHost('delete', { clientId: id, baseRevision: summary.revision });
+          serverGraphListMutation += 1;
+          if (serverGraphSummaries.get(id)?.revision === summary.revision) serverGraphSummaries.delete(id);
+          toast(`Облачный снимок «${summary.title}» удалён`);
         } catch (error) {
-          if (previousMetadata) {
+          const currentSource = workspace.graphs.find((item) => item.id === id);
+          if (previousMetadata && currentSource && source && workspace.storage?.[id] === pendingMetadata) {
+            if (previousMetadata.publishState === 'published' && JSON.stringify(currentSource) !== sourceFingerprint) {
+              previousMetadata.publishState = 'changed';
+            }
             workspace.storage[id] = previousMetadata;
             persistWorkspace();
-            renderStorageControl();
           }
+          if (error?.serverDocument) rememberServerDocument(error.serverDocument);
           toast(error?.message || 'Не удалось удалить облачный снимок', 'error');
+        } finally {
+          deletingServerGraphIds.delete(id);
+          if (document.getElementById('graphsDialog').open) renderGraphManager();
+          renderStorageControl();
         }
       }
 
@@ -6767,6 +6832,23 @@
         document.getElementById('togglePanelsButton').addEventListener('click', togglePanels);
         document.getElementById('graphManagerButton').addEventListener('click', openGraphManager);
         refs.storageButton.addEventListener('click', openGraphManager);
+        const graphsDialog = document.getElementById('graphsDialog');
+        window.addEventListener('keydown', (event) => {
+          if (event.key !== 'Tab' || !graphsDialog.open || event.defaultPrevented) return;
+          const buttons = [...graphsDialog.querySelectorAll('button:not(:disabled)')]
+            .filter((button) => button.getClientRects().length && getComputedStyle(button).visibility !== 'hidden');
+          const first = buttons[0];
+          const last = buttons.at(-1);
+          // A native modal only isolates its own document, not the parent DPMS shell.
+          const outside = !graphsDialog.contains(document.activeElement);
+          if (event.shiftKey && (document.activeElement === first || outside)) {
+            event.preventDefault();
+            last?.focus();
+          } else if (!event.shiftKey && (document.activeElement === last || outside)) {
+            event.preventDefault();
+            first?.focus();
+          }
+        });
         document.getElementById('helpButton').addEventListener('click', () => {
           renderShortcutUi();
           document.getElementById('helpDialog').showModal();
@@ -6856,6 +6938,7 @@
           render();
         });
         refs.graphsDialogBody.addEventListener('click', (event) => {
+          if (event.target.closest('[data-server-graphs-refresh]')) refreshServerGraphs();
           const openButton = event.target.closest('[data-graph-open]');
           const serverOpenButton = event.target.closest('[data-server-graph-open]');
           const publishButton = event.target.closest('[data-graph-publish]');

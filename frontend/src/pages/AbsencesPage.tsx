@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, Pencil, Plus, Trash2, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
@@ -83,30 +83,59 @@ export function AbsencesPage() {
   const [editingHoliday, setEditingHoliday] = useState<GlobalHoliday | null>(null)
   const [holidayForm, setHolidayForm] = useState(emptyHolidayForm)
   const [savingHoliday, setSavingHoliday] = useState(false)
+  const savingRef = useRef(false)
+  const savingHolidayRef = useRef(false)
+  const absenceSequence = useRef(0)
+  const holidaySequence = useRef(0)
+  const [absenceError, setAbsenceError] = useState<string | null>(null)
+  const [holidayError, setHolidayError] = useState<string | null>(null)
+  const [holidaysLoading, setHolidaysLoading] = useState(true)
 
   const { start, end, days } = useMemo(() => monthRange(period), [period])
+  const scope = JSON.stringify([start, end, userFilter])
+  const currentScope = useRef(scope)
+  currentScope.current = scope
+  const holidayScope = JSON.stringify([start, end])
+  const currentHolidayScope = useRef(holidayScope)
+  currentHolidayScope.current = holidayScope
 
   const loadUsers = useCallback(() => {
     api.get<User[]>('/api/users', { is_active: 'true' }).then(setUsers).catch(() => setUsers([]))
   }, [])
 
   const loadAbsences = useCallback(() => {
+    if (currentScope.current !== scope) return
+    const sequence = ++absenceSequence.current
+    const isCurrent = () => sequence === absenceSequence.current && currentScope.current === scope
     setLoading(true)
+    setAbsenceError(null)
+    setAbsences([])
     const params: Record<string, string> = { from: start, to: end }
     if (userFilter) params.user_id = userFilter
     api
       .get<UserAbsence[]>('/api/absences', params)
-      .then(setAbsences)
-      .catch((error) => toast.error(error instanceof Error ? error.message : 'Ошибка загрузки отсутствий'))
-      .finally(() => setLoading(false))
-  }, [start, end, userFilter])
+      .then((value) => { if (isCurrent()) setAbsences(value) })
+      .catch((error) => { if (isCurrent()) setAbsenceError(error instanceof Error ? error.message : 'Ошибка загрузки отсутствий') })
+      .finally(() => { if (isCurrent()) setLoading(false) })
+  }, [start, end, userFilter, scope])
 
   const loadHolidays = useCallback(() => {
+    if (currentHolidayScope.current !== holidayScope) return
+    const sequence = ++holidaySequence.current
+    const isCurrent = () => sequence === holidaySequence.current && currentHolidayScope.current === holidayScope
+    setHolidaysLoading(true)
+    setHolidayError(null)
+    setHolidays([])
     api
       .get<GlobalHoliday[]>('/api/absences/holidays', { from: start, to: end })
-      .then(setHolidays)
-      .catch((error) => toast.error(error instanceof Error ? error.message : 'Ошибка загрузки праздников'))
-  }, [start, end])
+      .then((value) => { if (isCurrent()) setHolidays(value) })
+      .catch((error) => { if (isCurrent()) setHolidayError(error instanceof Error ? error.message : 'Ошибка загрузки праздников') })
+      .finally(() => { if (isCurrent()) setHolidaysLoading(false) })
+  }, [start, end, holidayScope])
+  const refreshAbsences = useRef(loadAbsences)
+  const refreshHolidays = useRef(loadHolidays)
+  refreshAbsences.current = loadAbsences
+  refreshHolidays.current = loadHolidays
 
   useEffect(() => {
     loadUsers()
@@ -114,10 +143,12 @@ export function AbsencesPage() {
 
   useEffect(() => {
     loadAbsences()
+    return () => { absenceSequence.current += 1 }
   }, [loadAbsences])
 
   useEffect(() => {
     loadHolidays()
+    return () => { holidaySequence.current += 1 }
   }, [loadHolidays])
 
   const absencesByDay = useMemo(() => {
@@ -141,14 +172,17 @@ export function AbsencesPage() {
   const today = new Date().toISOString().slice(0, 10)
   const activeToday = absences.filter((absence) => absence.start_date <= today && absence.end_date >= today)
   const activeHolidayToday = holidays.filter((holiday) => holiday.date === today)
+  const metricsReady = !loading && !holidaysLoading && !absenceError && !holidayError
 
   const openCreate = () => {
+    if (savingRef.current) return
     setEditing(null)
     setForm({ ...emptyForm, user_id: userFilter || users[0]?.id || '', start_date: start, end_date: start })
     setFormOpen(true)
   }
 
   const openEdit = (absence: UserAbsence) => {
+    if (savingRef.current) return
     setEditing(absence)
     setForm({
       user_id: absence.user_id,
@@ -161,31 +195,36 @@ export function AbsencesPage() {
     setFormOpen(true)
   }
 
-  const closeForm = () => {
+  const resetForm = () => {
     setFormOpen(false)
     setEditing(null)
     setForm(emptyForm)
   }
+  const closeForm = () => { if (!savingRef.current) resetForm() }
 
   const openCreateHoliday = () => {
+    if (savingHolidayRef.current) return
     setEditingHoliday(null)
     setHolidayForm({ ...emptyHolidayForm, date: start })
     setHolidayFormOpen(true)
   }
 
   const openEditHoliday = (holiday: GlobalHoliday) => {
+    if (savingHolidayRef.current) return
     setEditingHoliday(holiday)
     setHolidayForm({ date: holiday.date, name: holiday.name })
     setHolidayFormOpen(true)
   }
 
-  const closeHolidayForm = () => {
+  const resetHolidayForm = () => {
     setHolidayFormOpen(false)
     setEditingHoliday(null)
     setHolidayForm(emptyHolidayForm)
   }
+  const closeHolidayForm = () => { if (!savingHolidayRef.current) resetHolidayForm() }
 
   const handleSubmit = async () => {
+    if (savingRef.current) return
     if (!form.user_id || !form.start_date || !form.end_date) {
       toast.error('Заполните сотрудника и даты')
       return
@@ -198,6 +237,7 @@ export function AbsencesPage() {
       affects_plan: form.affects_plan,
       comment: form.comment.trim() || null,
     }
+    savingRef.current = true
     setSaving(true)
     try {
       if (editing) {
@@ -207,16 +247,18 @@ export function AbsencesPage() {
         await api.post<UserAbsence>('/api/absences', payload)
         toast.success('Отсутствие добавлено')
       }
-      closeForm()
-      loadAbsences()
+      resetForm()
+      refreshAbsences.current()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Ошибка сохранения')
     } finally {
+      savingRef.current = false
       setSaving(false)
     }
   }
 
   const handleHolidaySubmit = async () => {
+    if (savingHolidayRef.current) return
     if (!holidayForm.date || !holidayForm.name.trim()) {
       toast.error('Заполните дату и название праздника')
       return
@@ -225,6 +267,7 @@ export function AbsencesPage() {
       date: holidayForm.date,
       name: holidayForm.name.trim(),
     }
+    savingHolidayRef.current = true
     setSavingHoliday(true)
     try {
       if (editingHoliday) {
@@ -234,12 +277,13 @@ export function AbsencesPage() {
         await api.post<GlobalHoliday>('/api/absences/holidays', payload)
         toast.success('Праздничный день добавлен')
       }
-      closeHolidayForm()
-      loadHolidays()
-      loadAbsences()
+      resetHolidayForm()
+      refreshHolidays.current()
+      refreshAbsences.current()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Ошибка сохранения праздника')
     } finally {
+      savingHolidayRef.current = false
       setSavingHoliday(false)
     }
   }
@@ -249,7 +293,7 @@ export function AbsencesPage() {
     try {
       await api.delete(`/api/absences/${absence.id}`)
       toast.success('Отсутствие удалено')
-      loadAbsences()
+      refreshAbsences.current()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Ошибка удаления')
     }
@@ -260,8 +304,8 @@ export function AbsencesPage() {
     try {
       await api.delete(`/api/absences/holidays/${holiday.id}`)
       toast.success('Праздничный день удален')
-      loadHolidays()
-      loadAbsences()
+      refreshHolidays.current()
+      refreshAbsences.current()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Ошибка удаления праздника')
     }
@@ -272,13 +316,14 @@ export function AbsencesPage() {
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Отсутствия</h1>
-          <p className="mt-1 text-sm text-slate-500">{totalWorkingDays} раб. дн. исключено из плана за период</p>
+          <p className="mt-1 text-sm text-slate-500">{metricsReady ? `${totalWorkingDays} раб. дн. исключено из плана за период` : loading || holidaysLoading ? 'Загрузка итогов периода…' : 'Итоги периода недоступны'}</p>
         </div>
         {canEdit && (
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={openCreate}
+              disabled={saving}
               className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
@@ -287,6 +332,7 @@ export function AbsencesPage() {
             <button
               type="button"
               onClick={openCreateHoliday}
+              disabled={savingHoliday}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
               <CalendarDays className="h-4 w-4" aria-hidden="true" />
@@ -321,15 +367,22 @@ export function AbsencesPage() {
             </select>
           </label>
           <div className="flex flex-wrap gap-2 text-sm">
-            <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">Отсутствий: {absences.length}</span>
-            <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">Праздников: {holidays.length}</span>
-            <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">Сегодня: {activeToday.length + activeHolidayToday.length}</span>
+            <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">Отсутствий: {!loading && !absenceError ? absences.length : '—'}</span>
+            <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">Праздников: {!holidaysLoading && !holidayError ? holidays.length : '—'}</span>
+            <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700">Сегодня: {metricsReady ? activeToday.length + activeHolidayToday.length : '—'}</span>
           </div>
         </div>
       </section>
 
+      {(absenceError || holidayError) && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-red-200 p-3 text-sm text-red-700">
+          <span>{absenceError || holidayError}</span>
+          <button type="button" onClick={() => { loadAbsences(); loadHolidays() }} className="rounded border border-current px-3 py-2">Повторить</button>
+        </div>
+      )}
       {holidayFormOpen && (
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-labelledby="holiday-form-title">
+          <fieldset disabled={savingHoliday} className="min-w-0">
           <div className="flex items-center justify-between gap-3">
             <h2 id="holiday-form-title" className="font-medium text-slate-800">
               {editingHoliday ? 'Редактирование праздника' : 'Новый праздничный день'}
@@ -367,11 +420,13 @@ export function AbsencesPage() {
               </button>
             </div>
           </div>
+          </fieldset>
         </section>
       )}
 
       {formOpen && (
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-labelledby="absence-form-title">
+          <fieldset disabled={saving} className="min-w-0">
           <div className="flex items-center justify-between gap-3">
             <h2 id="absence-form-title" className="font-medium text-slate-800">
               {editing ? 'Редактирование отсутствия' : 'Новое отсутствие'}
@@ -453,6 +508,7 @@ export function AbsencesPage() {
               {saving ? 'Сохранение...' : 'Сохранить'}
             </button>
           </div>
+          </fieldset>
         </section>
       )}
 
@@ -498,8 +554,8 @@ export function AbsencesPage() {
         <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" aria-labelledby="absence-list-title">
           <h2 id="absence-list-title" className="font-medium text-slate-800">Список</h2>
           <div className="mt-4 space-y-3">
-            {loading && <p className="text-sm text-slate-500">Загрузка...</p>}
-            {!loading && absences.length === 0 && holidays.length === 0 && <p className="text-sm text-slate-500">Нет отсутствий</p>}
+            {(loading || holidaysLoading) && <p className="text-sm text-slate-500">Загрузка...</p>}
+            {metricsReady && absences.length === 0 && holidays.length === 0 && <p className="text-sm text-slate-500">Нет отсутствий</p>}
             {!loading && holidays.map((holiday) => (
               <article key={holiday.id} className="rounded-lg border border-slate-200 p-3">
                 <div className="flex items-start justify-between gap-3">
@@ -543,7 +599,7 @@ export function AbsencesPage() {
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                   <span>{absence.working_days} раб. дн.</span>
                   {!absence.affects_plan && <span>не влияет на план</span>}
-                  {absence.comment && <span className="truncate">{absence.comment}</span>}
+                  {absence.comment && <span className="break-words [overflow-wrap:anywhere]">{absence.comment}</span>}
                 </div>
                 {canEdit && (
                   <div className="mt-3 flex justify-end gap-2">

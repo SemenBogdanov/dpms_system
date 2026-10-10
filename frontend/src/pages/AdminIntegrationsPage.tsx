@@ -41,6 +41,7 @@ import type {
   AuditSynologyPreview,
 } from '@/api/types'
 import { cn } from '@/lib/utils'
+import { useProtectedModal } from '@/hooks/useProtectedModal'
 
 
 type IntegrationTab = 'synology' | 'ai'
@@ -88,47 +89,14 @@ function ProtectedDialog({
   title,
   children,
   onClose,
+  busy,
 }: {
   title: string
   children: React.ReactNode
   onClose: () => void
+  busy: boolean
 }) {
-  const dialogRef = useRef<HTMLElement>(null)
-
-  useEffect(() => {
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const frame = requestAnimationFrame(() => dialogRef.current?.focus())
-    return () => {
-      cancelAnimationFrame(frame)
-      previousFocus?.focus()
-    }
-  }, [])
-
-  function handleKeyDown(event: React.KeyboardEvent<HTMLElement>) {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      return
-    }
-    if (event.key !== 'Tab' || !dialogRef.current) return
-    const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
-    ))
-    if (focusable.length === 0) {
-      event.preventDefault()
-      dialogRef.current.focus()
-      return
-    }
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    const active = document.activeElement
-    if (event.shiftKey && active === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && active === last) {
-      event.preventDefault()
-      first.focus()
-    }
-  }
+  const dialogRef = useProtectedModal<HTMLElement>()
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3" role="presentation">
@@ -138,15 +106,15 @@ function ProtectedDialog({
         aria-modal="true"
         aria-labelledby="integration-dialog-title"
         tabIndex={-1}
-        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto overscroll-contain rounded-lg border border-border bg-background shadow-xl"
+        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border bg-background shadow-xl"
         onClick={(event) => event.stopPropagation()}
-        onKeyDown={handleKeyDown}
       >
-        <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-background px-4 py-3">
+        <header className="flex shrink-0 items-center justify-between border-b border-border bg-background px-4 py-3">
           <h2 id="integration-dialog-title" className="text-base font-semibold text-foreground">{title}</h2>
           <button
             type="button"
             onClick={onClose}
+            disabled={busy}
             className="inline-flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
             aria-label="Закрыть"
           >
@@ -202,12 +170,24 @@ export function AdminIntegrationsPage() {
   const [aiKey, setAiKey] = useState('')
   const [aiEnabled, setAiEnabled] = useState(true)
   const [showAiKey, setShowAiKey] = useState(false)
-  const [aiBusy, setAiBusy] = useState(false)
+  const aiRevision = useRef(0)
+  const aiFormContext = useRef<{ id: string | null; version: number | null; edited: boolean }>({
+    id: null, version: null, edited: false,
+  })
+  const aiPendingRef = useRef(new Set<string>())
+  const [aiPending, setAiPending] = useState<Set<string>>(new Set())
+  const aiActionId = selectedAiProviderId ?? 'new'
+  const aiBusy = aiPending.has(aiActionId)
+  const aiDirty = aiDisplayName !== (aiConfig?.display_name ?? 'ИИ-провайдер')
+    || aiUrl !== (aiConfig?.base_url ?? '') || aiModel !== (aiConfig?.model_name ?? '')
+    || Boolean(aiKey) || aiEnabled !== (aiConfig?.configured ? aiConfig.enabled : true)
   const [auditSkills, setAuditSkills] = useState<AuditAtomizationSkillVersion[]>([])
   const [skillFile, setSkillFile] = useState<File | null>(null)
   const [skillBusy, setSkillBusy] = useState(false)
 
   function applyAIForm(config: AIProviderConfig | null) {
+    aiRevision.current += 1
+    aiFormContext.current = { id: config?.id ?? null, version: config?.config_version ?? null, edited: false }
     setAiConfig(config)
     setSelectedAiProviderId(config?.id ?? null)
     setAiCreating(config === null)
@@ -218,17 +198,23 @@ export function AdminIntegrationsPage() {
     setAiEnabled(config?.configured ? config.enabled : true)
   }
 
-  async function reloadAIProviders(preferredId?: string | null) {
-    const result = await api.get<AIProviderConfigList>('/api/admin/integrations/ai/providers')
-    setAiProviders(result.items)
-    setAiAllowlistReady(result.allowed_origins_configured)
-    setAiEncryptionReady(result.encryption_key_configured)
-    const selected = result.items.find((item) => item.id === preferredId)
-      ?? result.items.find((item) => item.id === selectedAiProviderId)
-      ?? result.items[0]
-      ?? null
-    applyAIForm(selected)
-    return result
+  function canApplyAiResult(revision: number, config: AIProviderConfig | null) {
+    const current = aiFormContext.current
+    // A pristine reopened profile still owns its pending result; a different draft does not.
+    return revision === aiRevision.current || Boolean(config?.id
+      && current.id === config.id && current.version === config.config_version && !current.edited)
+  }
+
+  function beginAiAction() {
+    if (aiPendingRef.current.has(aiActionId)) return false
+    aiPendingRef.current.add(aiActionId)
+    setAiPending(new Set(aiPendingRef.current))
+    return true
+  }
+
+  function finishAiAction(id: string) {
+    aiPendingRef.current.delete(id)
+    setAiPending(new Set(aiPendingRef.current))
   }
 
   useEffect(() => {
@@ -275,7 +261,11 @@ export function AdminIntegrationsPage() {
       .finally(() => {
         if (!cancelled) setLoading(false)
       })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      aiRevision.current += 1
+      aiFormContext.current = { id: null, version: null, edited: true }
+    }
   }, [])
 
   useEffect(() => {
@@ -571,7 +561,8 @@ export function AdminIntegrationsPage() {
 
   async function handleSaveAi(event: React.FormEvent) {
     event.preventDefault()
-    setAiBusy(true)
+    if (!beginAiAction()) return
+    const revision = aiRevision.current
     try {
       const payload = {
         display_name: aiDisplayName,
@@ -584,38 +575,61 @@ export function AdminIntegrationsPage() {
       const result = aiCreating || !selectedAiProviderId
         ? await api.post<AIProviderConfig>('/api/admin/integrations/ai/providers', payload)
         : await api.put<AIProviderConfig>(`/api/admin/integrations/ai/providers/${selectedAiProviderId}`, payload)
-      await reloadAIProviders(result.id)
-      toast.success('Профиль ИИ проверен и сохранен')
+      setAiProviders((current) => current.some((item) => item.id === result.id)
+        ? current.map((item) => item.id === result.id ? result : item)
+        : [...current, result])
+      if (canApplyAiResult(revision, aiConfig)) {
+        applyAIForm(result)
+        toast.success('Профиль ИИ проверен и сохранен')
+      }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось сохранить ИИ-провайдера')
+      if (canApplyAiResult(revision, aiConfig)) {
+        if (revision !== aiRevision.current) {
+          setAiDisplayName(aiDisplayName)
+          setAiUrl(aiUrl)
+          setAiModel(aiModel)
+          setAiKey(aiKey)
+          setAiEnabled(aiEnabled)
+          aiRevision.current += 1
+          aiFormContext.current.edited = true
+        }
+        toast.error(error instanceof Error ? error.message : 'Не удалось сохранить ИИ-провайдера')
+      }
     } finally {
-      setAiBusy(false)
+      finishAiAction(aiActionId)
     }
   }
 
   async function handleTestAi() {
-    if (!selectedAiProviderId) return
-    setAiBusy(true)
+    if (!selectedAiProviderId || !aiConfig || aiDirty || !beginAiAction()) return
+    const revision = aiRevision.current
+    const version = aiConfig.config_version
+    const updateTest = (config: AIProviderConfig, patch: Partial<AIProviderConfig>) =>
+      config.id === selectedAiProviderId && config.config_version === version ? { ...config, ...patch } : config
     try {
       const result = await api.post<AIProviderTestResult>(`/api/admin/integrations/ai/providers/${selectedAiProviderId}/test`, {})
-      setAiConfig((current) => current ? {
-        ...current,
+      if (!result.ok) throw new Error(result.message)
+      const patch: Partial<AIProviderConfig> = {
         last_test_status: 'ok',
         last_tested_at: result.tested_at,
-        last_verified_config_version: current.config_version,
-        ready_for_use: current.enabled,
+        last_verified_config_version: version,
+        ready_for_use: aiConfig.enabled,
         last_error_code: null,
-      } : current)
-      toast.success(result.message)
-    } catch (error) {
-      try {
-        await reloadAIProviders(selectedAiProviderId)
-      } catch {
-        // Keep the original provider error as the actionable message.
       }
-      toast.error(error instanceof Error ? error.message : 'Проверка ИИ-провайдера завершилась ошибкой')
+      setAiProviders((current) => current.map((config) => updateTest(config, patch)))
+      if (canApplyAiResult(revision, aiConfig)) {
+        setAiConfig((current) => current ? updateTest(current, patch) : current)
+        toast.success(result.message)
+      }
+    } catch (error) {
+      const patch: Partial<AIProviderConfig> = { last_test_status: 'error', ready_for_use: false }
+      setAiProviders((current) => current.map((config) => updateTest(config, patch)))
+      if (canApplyAiResult(revision, aiConfig)) {
+        setAiConfig((current) => current ? updateTest(current, patch) : current)
+        toast.error(error instanceof Error ? error.message : 'Проверка ИИ-провайдера завершилась ошибкой')
+      }
     } finally {
-      setAiBusy(false)
+      finishAiAction(aiActionId)
     }
   }
 
@@ -961,7 +975,7 @@ export function AdminIntegrationsPage() {
             <button
               type="button"
               onClick={() => applyAIForm(null)}
-              disabled={aiBusy}
+              disabled={aiPending.has('new')}
               className="inline-flex min-h-10 items-center gap-2 rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
             >
               <Plus className="h-4 w-4" />
@@ -994,13 +1008,14 @@ export function AdminIntegrationsPage() {
             </div>
           )}
         </section>
-        <form onSubmit={handleSaveAi} className="space-y-5 rounded-lg border border-border bg-background p-5 shadow-sm">
+        <form onSubmit={handleSaveAi} onChange={() => { aiRevision.current += 1; aiFormContext.current.edited = true }} className="rounded-lg border border-border bg-background p-5 shadow-sm">
+          <fieldset disabled={aiBusy} className="min-w-0 space-y-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex items-center gap-2">
               <BrainCircuit className="h-5 w-5 text-primary" />
               <h2 className="font-semibold text-foreground">{aiCreating ? 'Новое OpenAI-compatible подключение' : 'Параметры подключения'}</h2>
             </div>
-            {aiConfig?.configured && (
+            {aiConfig?.configured && !aiDirty && (
               <span className={cn(
                 'rounded px-2 py-1 text-xs font-medium',
                 aiConfig.ready_for_use
@@ -1047,7 +1062,7 @@ export function AdminIntegrationsPage() {
             <IntegrationStatus ok={aiEncryptionReady}>Ключ интеграций {aiEncryptionReady ? 'настроен' : 'не настроен на backend'}</IntegrationStatus>
           </div>
           <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4">
-            <button type="button" onClick={handleTestAi} disabled={aiBusy || aiCreating || !aiConfig?.configured} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
+            <button type="button" onClick={handleTestAi} disabled={aiBusy || aiDirty || aiCreating || !aiConfig?.configured} className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
               {aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               Повторить проверку
             </button>
@@ -1056,6 +1071,7 @@ export function AdminIntegrationsPage() {
               {aiCreating ? 'Проверить и создать' : 'Проверить и сохранить'}
             </button>
           </div>
+          </fieldset>
         </form>
 
         <section className="rounded-lg border border-border bg-background shadow-sm" aria-labelledby="audit-skills-title">
@@ -1180,18 +1196,18 @@ export function AdminIntegrationsPage() {
       )}
 
       {preview && (
-        <ProtectedDialog title="Подтверждение импорта" onClose={() => {
+        <ProtectedDialog title="Подтверждение импорта" busy={previewBusy} onClose={() => {
           if (!previewBusy) {
             closePreview()
           }
         }}>
-          <div className="space-y-4 p-4">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-md border border-border bg-muted/40 p-3"><div className="text-xs text-muted-foreground">Документов</div><div className="mt-1 text-xl font-semibold text-foreground">{preview.file_count}</div></div>
               <div className="rounded-md border border-border bg-muted/40 p-3"><div className="text-xs text-muted-foreground">Общий объем</div><div className="mt-1 text-xl font-semibold text-foreground">{formatBytes(preview.total_size_bytes)}</div></div>
             </div>
             <label className="block text-sm font-medium text-foreground">Цифровой продукт
-              <input value={digitalProduct} onChange={(event) => setDigitalProduct(event.target.value)} placeholder="Можно заполнить позднее" className="mt-1 h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm" />
+              <input disabled={previewBusy} value={digitalProduct} onChange={(event) => setDigitalProduct(event.target.value)} placeholder="Можно заполнить позднее" className="mt-1 h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm" />
             </label>
             <ul className="max-h-64 divide-y divide-border overflow-y-auto rounded-md border border-border">
               {preview.items.map((item) => (
@@ -1202,7 +1218,8 @@ export function AdminIntegrationsPage() {
                 </li>
               ))}
             </ul>
-            <div className="flex justify-end gap-2 border-t border-border pt-4">
+          </div>
+            <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-border p-4">
               <button type="button" onClick={() => {
                 closePreview()
               }} disabled={previewBusy} className="min-h-11 rounded-md border border-border px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">Отмена</button>
@@ -1211,7 +1228,6 @@ export function AdminIntegrationsPage() {
                 Импортировать
               </button>
             </div>
-          </div>
         </ProtectedDialog>
       )}
     </div>

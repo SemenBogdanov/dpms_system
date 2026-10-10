@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import type { CalibrationReportNew } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
@@ -18,22 +18,30 @@ export function CalibrationPage() {
   const [activeTab, setActiveTab] = useState<'tasks' | 'estimators' | 'popularity'>('tasks')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const request = useRef(0)
 
   const canView = currentUser?.role === 'admin'
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     if (!canView) return
+    const revision = ++request.current
     setLoading(true)
+    setError(null)
     const params = period ? { period } : undefined
-    api
-      .get<CalibrationReportNew>('/api/dashboard/calibration', params)
-      .then(setData)
-      .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка'))
-      .finally(() => setLoading(false))
+    try {
+      const result = await api.get<CalibrationReportNew>('/api/dashboard/calibration', params)
+      if (request.current === revision) setData(result)
+    } catch (e) {
+      if (request.current === revision) setError(e instanceof Error ? e.message : 'Ошибка загрузки калибровки')
+    } finally {
+      if (request.current === revision) setLoading(false)
+    }
   }, [canView, period])
 
-  useEffect(() => {
-    load()
+  useLayoutEffect(() => {
+    setData(null)
+    void load()
+    return () => { request.current += 1 }
   }, [load])
 
   if (!canView) {
@@ -44,10 +52,6 @@ export function CalibrationPage() {
       </div>
     )
   }
-
-  if (loading && !data) return <div className="text-slate-500">Загрузка...</div>
-  if (error) return <div className="text-red-600">{error}</div>
-  if (!data) return null
 
   return (
     <div className="space-y-6">
@@ -66,6 +70,14 @@ export function CalibrationPage() {
         </label>
       </div>
 
+      {loading && <p role="status" className="text-slate-500">Загрузка калибровки...</p>}
+      {error && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-600">
+          <span>{error}</span>
+          <button type="button" onClick={() => void load()} className="rounded border px-3 py-2">Повторить загрузку калибровки</button>
+        </div>
+      )}
+      {data && <>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <MetricCard title="Точность оценок" value={`${data.overall_accuracy_pct}%`} />
         <MetricCard title="Задач проанализировано" value={data.total_tasks_analyzed} />
@@ -75,7 +87,7 @@ export function CalibrationPage() {
         />
       </div>
 
-      <div className="flex gap-1 border-b border-slate-200 pb-2">
+      <div className="flex flex-wrap gap-1 border-b border-slate-200 pb-2">
         {[
           { key: 'tasks' as const, label: 'По задачам' },
           { key: 'estimators' as const, label: 'По оценщикам' },
@@ -97,7 +109,7 @@ export function CalibrationPage() {
       </div>
 
       {activeTab === 'tasks' && (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div role="region" aria-label="Калибровка по задачам" tabIndex={0} className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50">
               <tr>
@@ -145,7 +157,7 @@ export function CalibrationPage() {
       )}
 
       {activeTab === 'estimators' && (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div role="region" aria-label="Калибровка по оценщикам" tabIndex={0} className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50">
               <tr>
@@ -193,7 +205,7 @@ export function CalibrationPage() {
       )}
 
       {activeTab === 'popularity' && (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div role="region" aria-label="Популярность операций" tabIndex={0} className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
           {data.widget_popularity.length === 0 ? (
             <p className="p-6 text-center text-slate-500">
               Нет данных за период. Задачи с декомпозицией из калькулятора появятся после создания.
@@ -229,6 +241,7 @@ export function CalibrationPage() {
           )}
         </div>
       )}
+      </>}
     </div>
   )
 }

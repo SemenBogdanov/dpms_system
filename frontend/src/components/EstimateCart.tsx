@@ -32,9 +32,9 @@ const CATEGORY_LABEL: Record<string, string> = {
   proactive: 'Проактивные',
 }
 const CATEGORY_BADGE_CLASS: Record<string, string> = {
-  widget: 'bg-blue-100 text-blue-800',
+  widget: 'bg-blue-100 text-blue-700',
   etl: 'bg-amber-100 text-amber-800',
-  api: 'bg-emerald-100 text-emerald-800',
+  api: 'bg-emerald-100 text-emerald-700',
   docs: 'bg-slate-100 text-slate-700',
   proactive: 'bg-violet-100 text-violet-800',
 }
@@ -91,7 +91,7 @@ export function EstimateCart({
                 {rows.map(({ catalog, quantity }) => (
                   <tr key={catalog.id} className="border-t border-slate-100">
                     <td className="px-2 py-1.5">
-                      <span className="truncate">{catalog.name}</span>
+                      <span className="block max-w-xs whitespace-normal break-words [overflow-wrap:anywhere]">{catalog.name}</span>
                       <span
                         className={cn(
                           'ml-1 inline rounded px-1.5 py-0.5 text-xs',
@@ -106,6 +106,7 @@ export function EstimateCart({
                     </td>
                     <td className="px-2 py-1.5 text-center">
                       <input
+                        aria-label={`Количество: ${catalog.name}`}
                         type="number"
                         min={1}
                         max={50}
@@ -150,7 +151,7 @@ export function EstimateCart({
               <LeagueBadge league={maxLeague} />
             </div>
           </div>
-          <div className="mt-4 flex gap-2">
+          <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="button"
               onClick={onCalculate}
@@ -162,7 +163,7 @@ export function EstimateCart({
             <button
               type="button"
               onClick={onCreateTask}
-              disabled={!calculated || isEmpty}
+              disabled={!calculated || isEmpty || loading}
               className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             >
               Создать задачу

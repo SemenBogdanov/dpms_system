@@ -10,12 +10,13 @@ export function UsageTracker() {
   const userId = user?.id
   useEffect(() => {
     if (!userId || !section) return
+    let active = true
     const record = () => {
-      if (document.visibilityState === 'visible') void recordSectionVisit(userId, section)
+      if (document.visibilityState === 'visible') void recordSectionVisit(userId, section, () => active)
     }
     record()
     document.addEventListener('visibilitychange', record)
-    return () => document.removeEventListener('visibilitychange', record)
+    return () => { active = false; document.removeEventListener('visibilitychange', record) }
   }, [userId, section])
   return null
 }

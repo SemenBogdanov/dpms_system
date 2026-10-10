@@ -55,7 +55,9 @@ type Errors = Partial<Record<Field | '_form', string>>
 
 // BrowserRouter has no data-router blocker. Keep this guard local to the form;
 // restore cancelled browser Back/Forward before the router observes popstate.
-function useFormNavigationProtection(protectedDraft: boolean, busy: React.MutableRefObject<boolean>, requestDiscard: (leave: () => void) => void) {
+// Shared with task dialogs to preserve the existing BrowserRouter guard contract.
+// eslint-disable-next-line react-refresh/only-export-components
+export function useFormNavigationProtection(protectedDraft: boolean, busy: React.MutableRefObject<boolean>, requestDiscard: (leave: () => void) => void) {
   const { navigator } = useContext(UNSAFE_NavigationContext)
   useEffect(() => {
     if (!protectedDraft) return
@@ -259,7 +261,7 @@ export function PersonalTaskForm({ task, quickNotes, statusLabels, priorityLabel
           return next
         })
       },
-      className: cn('min-h-11 w-full min-w-0 max-w-full rounded-lg border bg-surface px-3 py-2 text-base font-normal text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary sm:text-sm', error ? 'border-rose-500' : 'border-border'),
+      className: cn('min-h-11 w-full min-w-0 max-w-full rounded-lg border bg-surface px-3 py-2 text-base font-normal text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary sm:text-sm', error ? '!border-rose-500' : 'border-border'),
     }
     return (
       <div className="min-w-0 space-y-1">

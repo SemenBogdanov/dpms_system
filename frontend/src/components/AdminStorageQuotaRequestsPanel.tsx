@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Database, RefreshCcw, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
@@ -24,16 +24,22 @@ export function AdminStorageQuotaRequestsPanel() {
   const [drafts, setDrafts] = useState<Record<string, DecisionDraft>>({})
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [busyId, setBusyId] = useState<string | null>(null)
+  const pendingRef = useRef(new Set<string>())
+  const resolvedRef = useRef(new Set<string>())
+  const loadRevision = useRef(0)
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set())
 
   const load = useCallback(async () => {
     if (user?.role !== 'admin') return
+    const revision = ++loadRevision.current
     setLoading(true)
     setLoadError(null)
     try {
       const data = await api.get<AdminStorageQuotaRequest[]>('/api/storage-quota/admin/requests', { status: 'pending' })
-      setRequests(data)
-      setDrafts((current) => Object.fromEntries(data.map((request) => [
+      if (revision !== loadRevision.current) return
+      const pending = data.filter((request) => !resolvedRef.current.has(request.id))
+      setRequests(pending)
+      setDrafts((current) => Object.fromEntries(pending.map((request) => [
         request.id,
         current[request.id] ?? {
           approvedMiB: String(Math.round(request.requested_limit_bytes / MIB)),
@@ -42,14 +48,16 @@ export function AdminStorageQuotaRequestsPanel() {
         },
       ])))
     } catch (error) {
+      if (revision !== loadRevision.current) return
       setLoadError(error instanceof Error ? error.message : 'Не удалось загрузить заявки')
     } finally {
-      setLoading(false)
+      if (revision === loadRevision.current) setLoading(false)
     }
   }, [user?.role])
 
   useEffect(() => {
     void load()
+    return () => { loadRevision.current += 1 }
   }, [load])
 
   if (user?.role !== 'admin') return null
@@ -62,6 +70,7 @@ export function AdminStorageQuotaRequestsPanel() {
   }
 
   const decide = async (request: AdminStorageQuotaRequest, decision: 'approved' | 'rejected') => {
+    if (pendingRef.current.has(request.id) || resolvedRef.current.has(request.id)) return
     const draft = drafts[request.id]
     if (!draft || draft.comment.trim().length < 3) {
       updateDraft(request.id, { error: 'Для решения нужен комментарий минимум в 3 символа' })
@@ -77,7 +86,8 @@ export function AdminStorageQuotaRequestsPanel() {
       updateDraft(request.id, { error: 'Лимит должен быть выше текущего и не больше запрошенного' })
       return
     }
-    setBusyId(request.id)
+    pendingRef.current.add(request.id)
+    setBusyIds(new Set(pendingRef.current))
     updateDraft(request.id, { error: null })
     try {
       await api.post(`/api/storage-quota/admin/requests/${request.id}/decision`, {
@@ -85,6 +95,7 @@ export function AdminStorageQuotaRequestsPanel() {
         comment: draft.comment.trim(),
         approved_limit_bytes: decision === 'approved' ? approvedLimitBytes : null,
       })
+      resolvedRef.current.add(request.id)
       setRequests((current) => current.filter((item) => item.id !== request.id))
       toast.success(decision === 'approved' ? 'Лимит увеличен' : 'Заявка отклонена')
     } catch (error) {
@@ -93,7 +104,8 @@ export function AdminStorageQuotaRequestsPanel() {
         await load()
       }
     } finally {
-      setBusyId(null)
+      pendingRef.current.delete(request.id)
+      setBusyIds(new Set(pendingRef.current))
     }
   }
 
@@ -137,7 +149,7 @@ export function AdminStorageQuotaRequestsPanel() {
         {requests.map((request) => {
           const draft = drafts[request.id] ?? { approvedMiB: '', comment: '', error: null }
           return (
-            <article key={request.id} className="rounded-lg border border-slate-200 p-4">
+            <article key={request.id} className="min-w-0 rounded-lg border border-slate-200 p-4" aria-busy={busyIds.has(request.id)}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <h3 className="truncate font-medium text-slate-900">{request.user_name}</h3>
@@ -152,7 +164,7 @@ export function AdminStorageQuotaRequestsPanel() {
                 <div className="rounded-md bg-slate-50 p-2"><span className="block text-slate-400">Сейчас</span><strong>{formatMiB(request.current_limit_bytes)}</strong></div>
                 <div className="rounded-md bg-sky-50 p-2 text-sky-800"><span className="block text-sky-500">Запрошено</span><strong>{formatMiB(request.requested_limit_bytes)}</strong></div>
               </div>
-              <p className="mt-3 whitespace-pre-wrap text-sm text-slate-600">{request.reason}</p>
+              <p className="mt-3 whitespace-pre-wrap [overflow-wrap:anywhere] text-sm text-slate-600">{request.reason}</p>
               <div className="mt-4 grid gap-3 sm:grid-cols-[150px_minmax(0,1fr)]">
                 <label className="text-xs font-medium text-slate-600">
                   Одобрить, МиБ
@@ -161,6 +173,7 @@ export function AdminStorageQuotaRequestsPanel() {
                     min={Math.floor(request.current_limit_bytes / MIB) + 1}
                     max={Math.floor(request.requested_limit_bytes / MIB)}
                     value={draft.approvedMiB}
+                    disabled={busyIds.has(request.id)}
                     onChange={(event) => updateDraft(request.id, { approvedMiB: event.target.value, error: null })}
                     className="mt-1 min-h-11 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   />
@@ -171,6 +184,7 @@ export function AdminStorageQuotaRequestsPanel() {
                     type="text"
                     maxLength={1000}
                     value={draft.comment}
+                    disabled={busyIds.has(request.id)}
                     onChange={(event) => updateDraft(request.id, { comment: event.target.value, error: null })}
                     className="mt-1 min-h-11 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                     placeholder="Почему лимит изменен или отклонен"
@@ -182,7 +196,7 @@ export function AdminStorageQuotaRequestsPanel() {
                 <button
                   type="button"
                   onClick={() => void decide(request, 'rejected')}
-                  disabled={busyId === request.id}
+                  disabled={busyIds.has(request.id)}
                   className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
                 >
                   <X className="h-4 w-4" />
@@ -191,7 +205,7 @@ export function AdminStorageQuotaRequestsPanel() {
                 <button
                   type="button"
                   onClick={() => void decide(request, 'approved')}
-                  disabled={busyId === request.id}
+                  disabled={busyIds.has(request.id)}
                   className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
                 >
                   <Check className="h-4 w-4" />

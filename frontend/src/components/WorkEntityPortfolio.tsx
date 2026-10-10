@@ -71,7 +71,7 @@ function HealthIcon({ health }: { health: WorkEntityHealth }) {
     return <AlertTriangle className="h-3.5 w-3.5" />
   }
   if (health.key === 'paused') return <PauseCircle className="h-3.5 w-3.5" />
-  if (health.key === 'draft') return <CircleDashed className="h-3.5 w-3.5" />
+  if (health.key === 'draft' || health.key === 'unknown') return <CircleDashed className="h-3.5 w-3.5" />
   if (health.key === 'archived') return <Archive className="h-3.5 w-3.5" />
   if (health.key === 'watch') return <Clock3 className="h-3.5 w-3.5" />
   return <CheckCircle2 className="h-3.5 w-3.5" />
@@ -94,7 +94,7 @@ export function WorkEntityHealthBadge({ health }: { health: WorkEntityHealth }) 
   return (
     <span
       className={cn(
-        'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs font-semibold',
+        'inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-semibold',
         healthStyles[health.tone],
       )}
       title={health.detail}
@@ -108,10 +108,12 @@ export function WorkEntityHealthBadge({ health }: { health: WorkEntityHealth }) 
 type WorkEntityPortfolioProps = {
   entities: WorkEntity[]
   loading: boolean
+  overdueById: Record<string, number>
+  onRefresh: () => void
   onSelect: (entityId: string) => void
 }
 
-export function WorkEntityPortfolio({ entities, loading, onSelect }: WorkEntityPortfolioProps) {
+export function WorkEntityPortfolio({ entities, loading, overdueById, onSelect, onRefresh }: WorkEntityPortfolioProps) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<PortfolioFilter>('all')
 
@@ -119,9 +121,9 @@ export function WorkEntityPortfolio({ entities, loading, onSelect }: WorkEntityP
     () =>
       entities.map((entity) => ({
         entity,
-        health: getWorkEntityHealth(entity),
+        health: getWorkEntityHealth(entity, overdueById[entity.id] ?? null),
       })),
-    [entities],
+    [entities, overdueById],
   )
 
   const counters = useMemo(
@@ -140,7 +142,7 @@ export function WorkEntityPortfolio({ entities, loading, onSelect }: WorkEntityP
       const matchesFilter =
         filter === 'all' ||
         (filter === 'attention' &&
-          ['escalation', 'overdue', 'paused', 'watch'].includes(health.key)) ||
+          ['escalation', 'overdue', 'paused', 'watch', 'unknown'].includes(health.key)) ||
         (filter === 'escalation' && health.key === 'escalation') ||
         entity.status === filter
       if (!matchesFilter) return false
@@ -169,7 +171,8 @@ export function WorkEntityPortfolio({ entities, loading, onSelect }: WorkEntityP
   ]
 
   return (
-    <section className="overflow-hidden rounded-lg border border-slate-200 bg-white" aria-label="Обзор проектов и целей">
+    <section className="overflow-x-auto rounded-lg border border-slate-200 bg-white" aria-label="Обзор проектов и целей">
+      <button type="button" onClick={onRefresh} disabled={loading} className="m-3 text-sm text-primary underline">Обновить сводку</button>
       <div className="grid grid-cols-2 border-b border-slate-200 sm:grid-cols-4">
         {metrics.map((metric, index) => (
           <button
@@ -221,7 +224,7 @@ export function WorkEntityPortfolio({ entities, loading, onSelect }: WorkEntityP
         </select>
       </div>
 
-      <div className="hidden grid-cols-[minmax(240px,1.4fr)_120px_170px_minmax(140px,0.7fr)_180px_140px_20px] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[11px] font-semibold uppercase text-slate-500 lg:grid">
+      <div className="hidden grid-cols-[minmax(240px,1.4fr)_120px_170px_minmax(140px,0.7fr)_180px_140px_20px] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2 text-[11px] font-semibold uppercase text-slate-500 lg:grid lg:min-w-[1114px]">
         <span>Проект или цель</span>
         <span>Статус</span>
         <span>Сигнал</span>
@@ -268,7 +271,7 @@ export function WorkEntityPortfolio({ entities, loading, onSelect }: WorkEntityP
                 key={entity.id}
                 type="button"
                 onClick={() => onSelect(entity.id)}
-                className="group grid w-full min-w-0 grid-cols-2 gap-3 px-4 py-4 text-left transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary lg:grid-cols-[minmax(240px,1.4fr)_120px_170px_minmax(140px,0.7fr)_180px_140px_20px] lg:items-center"
+                className="group grid w-full min-w-0 grid-cols-2 gap-3 px-4 py-4 text-left transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary lg:grid-cols-[minmax(240px,1.4fr)_120px_170px_minmax(140px,0.7fr)_180px_140px_20px] lg:items-center lg:min-w-[1114px]"
                 aria-label={`Открыть ${entityTypeLabels[entity.entity_type].toLocaleLowerCase('ru')} ${entity.title}. Статус: ${statusLabels[entity.status]}. Сигнал: ${health.label}`}
               >
                 <span className="col-span-2 min-w-0 lg:col-span-1">

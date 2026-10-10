@@ -109,6 +109,8 @@ import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
 import { AuditLegacyImport } from '@/components/audit/AuditLegacyImport'
 import { AuditAtomProvenance } from '@/components/audit/AuditAtomProvenance'
+import { useProtectedModal } from '@/hooks/useProtectedModal'
+import { useAuditNavigationGuard } from '@/hooks/useAuditNavigationGuard'
 
 type UnknownRecord = Record<string, unknown>
 type DetailTab = 'materials' | 'atoms' | 'history'
@@ -553,9 +555,10 @@ function alphaResultTone(result: string | null): string {
   }
 }
 
-function isEditableKeyboardTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false
-  return Boolean(target.closest('input, textarea, select, button, a, [contenteditable="true"]'))
+function isEditableKeyboardTarget(target: EventTarget | null, surface: HTMLElement): boolean {
+  if (!(target instanceof Element)) return false
+  const control = target.closest('input, textarea, select, button, a, summary, label, audio, video, iframe, object, embed, [contenteditable]:not([contenteditable="false"]), [role], [tabindex]')
+  return Boolean(control && control !== surface && surface.contains(control))
 }
 
 function formatAuditEventType(type: string): string {
@@ -1034,59 +1037,24 @@ function DialogShell({
 }: DialogShellProps) {
   const titleId = useId()
   const descriptionId = useId()
-  const dialogRef = useRef<HTMLDivElement>(null)
-  const previousFocusRef = useRef<HTMLElement | null>(null)
+  const dialogRef = useProtectedModal<HTMLDivElement>(open, { onEscape: () => onRequestClose('escape') })
 
   useEffect(() => {
     if (!open) return
-    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
     const focusTimer = window.setTimeout(() => {
       const initialElement = initialFocusRef?.current
       if (initialElement) {
         initialElement.focus()
         return
       }
-      const firstFocusable = dialogRef.current?.querySelector<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      )
-      firstFocusable?.focus()
     }, 0)
 
     return () => {
       window.clearTimeout(focusTimer)
-      document.body.style.overflow = previousOverflow
-      previousFocusRef.current?.focus()
     }
   }, [open, initialFocusRef])
 
   if (!open) return null
-
-  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      onRequestClose('escape')
-      return
-    }
-    if (event.key !== 'Tab') return
-
-    const focusable = Array.from(
-      dialogRef.current?.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      ) ?? []
-    )
-    if (focusable.length === 0) return
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault()
-      first.focus()
-    }
-  }
 
   return (
     <div
@@ -1096,6 +1064,7 @@ function DialogShell({
       <div
         ref={dialogRef}
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-labelledby={titleId}
         aria-describedby={description ? descriptionId : undefined}
@@ -1103,7 +1072,6 @@ function DialogShell({
           'flex max-h-[calc(100dvh-1.5rem)] w-full flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-2xl sm:max-h-[calc(100dvh-3rem)]',
           sizeClassName
         )}
-        onKeyDown={handleKeyDown}
       >
         <div className="flex items-start justify-between gap-4 border-b border-border px-4 py-4 sm:px-5">
           <div className="min-w-0">
@@ -1120,6 +1088,7 @@ function DialogShell({
             type="button"
             onClick={() => onRequestClose('close-button')}
             disabled={busy}
+            tabIndex={0}
             className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md border border-border bg-surface-soft text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
             aria-label="Закрыть диалог"
             title="Закрыть"
@@ -1613,6 +1582,11 @@ export function AuditPage() {
   const [assignmentIndex, setAssignmentIndex] = useState<AuditAssignment[]>([])
   const [assignmentsLoading, setAssignmentsLoading] = useState(false)
   const [assignmentsError, setAssignmentsError] = useState<string | null>(null)
+  const [assignmentsLoadedContext, setAssignmentsLoadedContext] = useState<string | null>(null)
+  const assignmentsRequestRef = useRef(0)
+  const assignmentContext = `${workspaceView}:${assignmentRangeStart}:${assignmentRangeEnd}`
+  const assignmentContextRef = useRef(assignmentContext)
+  assignmentContextRef.current = assignmentContext
   const [assignmentDialogOpen, setAssignmentDialogOpen] = useState(false)
   const [assignmentTargetDate, setAssignmentTargetDate] = useState('')
   const [assignmentTargetUserId, setAssignmentTargetUserId] = useState('')
@@ -1676,6 +1650,11 @@ export function AuditPage() {
   const [importChecksum, setImportChecksum] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const importFileInputRef = useRef<HTMLInputElement>(null)
+  const importRequestRef = useRef(0)
+  const importBusyRef = useRef(false)
+  const importCommittingRef = useRef(false)
+  const importSelectionRef = useRef<{ file: File | null; caseId: string | null }>({ file: null, caseId: null })
+  const [importVerifiedSelection, setImportVerifiedSelection] = useState<{ file: File; caseId: string | null } | null>(null)
 
   const [documentDialogOpen, setDocumentDialogOpen] = useState(false)
   const [documentFiles, setDocumentFiles] = useState<File[]>([])
@@ -1733,6 +1712,8 @@ export function AuditPage() {
   const [comparisonDrafts, setComparisonDrafts] = useState<EditableAIModelComparisonDraft[]>([])
   const [comparisonBusy, setComparisonBusy] = useState(false)
   const [comparisonError, setComparisonError] = useState<string | null>(null)
+  const comparisonRequestRef = useRef(0)
+  const comparisonBusyRef = useRef(false)
 
   const loadStatistics = useCallback(async (days: number) => {
     const requestId = ++statisticsRequestRef.current
@@ -1793,6 +1774,9 @@ export function AuditPage() {
   }, [])
 
   const loadAssignments = useCallback(async () => {
+    if (assignmentContextRef.current !== assignmentContext) return []
+    const requestId = ++assignmentsRequestRef.current
+    const isCurrent = () => requestId === assignmentsRequestRef.current && assignmentContextRef.current === assignmentContext
     setAssignmentsLoading(true)
     setAssignmentsError(null)
     try {
@@ -1803,18 +1787,22 @@ export function AuditPage() {
         }),
         api.get<AuditAssignment[]>('/api/audit/assignments/index'),
       ])
+      if (!isCurrent()) return []
       setAssignments(result.items)
       setAssignmentIndex(index)
+      setAssignmentsLoadedContext(assignmentContext)
       return result.items
     } catch (error) {
+      if (!isCurrent()) return []
       setAssignments([])
       setAssignmentIndex([])
+      setAssignmentsLoadedContext(assignmentContext)
       setAssignmentsError(error instanceof Error ? error.message : 'Не удалось загрузить назначения')
       return []
     } finally {
-      setAssignmentsLoading(false)
+      if (isCurrent()) setAssignmentsLoading(false)
     }
-  }, [assignmentRangeEnd, assignmentRangeStart])
+  }, [assignmentContext, assignmentRangeEnd, assignmentRangeStart])
 
   const loadTeamCandidates = useCallback(async () => {
     try {
@@ -1892,6 +1880,7 @@ export function AuditPage() {
 
   useEffect(() => {
     if (workspaceView === 'assignments') void loadAssignments()
+    return () => { assignmentsRequestRef.current += 1 }
   }, [loadAssignments, workspaceView])
 
   useEffect(() => {
@@ -1903,6 +1892,34 @@ export function AuditPage() {
     return fromUrl || null
   }, [searchParams])
   const detail = loadedDetail?.id === selectedCaseId ? loadedDetail : null
+  const selectedCaseRef = useRef(selectedCaseId)
+  selectedCaseRef.current = selectedCaseId
+
+  useEffect(() => {
+    comparisonRequestRef.current += 1
+    comparisonBusyRef.current = false
+    setComparisonBusy(false)
+    setComparisonDialogOpen(false)
+    setModelComparison(null)
+    setComparisonDrafts([])
+    setComparisonError(null)
+    importRequestRef.current += 1
+    importBusyRef.current = false
+    importCommittingRef.current = false
+    importSelectionRef.current = { file: null, caseId: null }
+    setImportDialogOpen(false)
+    setImportFile(null)
+    setImportPreview(null)
+    setImportVerifiedSelection(null)
+    setImportChecksum(null)
+    setImportError(null)
+    setImportPreviewing(false)
+    setImportCommitting(false)
+    return () => {
+      comparisonRequestRef.current += 1
+      importRequestRef.current += 1
+    }
+  }, [selectedCaseId])
 
   const loadModelWorkspace = useCallback(async (caseId: string) => {
     const requestId = ++modelWorkspaceRequestRef.current
@@ -2087,6 +2104,9 @@ export function AuditPage() {
       (canManage || selectedCaseSummary.responsibleUserId === user?.id)
   )
   const comparisonReadOnly = !canEditSelectedAtoms || modelComparison?.status === 'committed' || modelComparison?.review_only !== true
+  const comparisonDirty = !comparisonReadOnly && JSON.stringify(comparisonDrafts) !== JSON.stringify(
+    modelComparison?.drafts.map((draft) => ({ ...draft, included: draft.review_status !== 'rejected' })) ?? []
+  )
   const selectedModelAtomCount = useMemo(() => {
     const selected = new Set(selectedModelRegistryIds)
     return modelRegistries.reduce(
@@ -2392,6 +2412,11 @@ export function AuditPage() {
     [assignmentCaseIds, assignmentInitialCaseIds]
   )
 
+  useAuditNavigationGuard(
+    (Boolean(atomReviewMode) && atomReviewFormDirty) || (comparisonDialogOpen && comparisonDirty),
+    (Boolean(atomReviewMode) && atomReviewBusy) || (comparisonDialogOpen && comparisonBusy)
+  )
+
   useEffect(() => {
     const hasUnsavedDialog =
       (caseDialogOpen && caseFormDirty) ||
@@ -2401,7 +2426,9 @@ export function AuditPage() {
       (materialDialogOpen && materialDirty) ||
       (deleteCaseDialogOpen && deleteCaseDirty) ||
       (aiAtomizationDialogOpen && aiAtomizationDirty) ||
-      (assignmentDialogOpen && assignmentDirty)
+      (assignmentDialogOpen && assignmentDirty) ||
+      (Boolean(atomReviewMode) && (atomReviewFormDirty || atomReviewBusy)) ||
+      (comparisonDialogOpen && (comparisonDirty || comparisonBusy))
     if (!hasUnsavedDialog) return
 
     const protectUnsavedChanges = (event: BeforeUnloadEvent) => {
@@ -2410,7 +2437,7 @@ export function AuditPage() {
     }
     window.addEventListener('beforeunload', protectUnsavedChanges)
     return () => window.removeEventListener('beforeunload', protectUnsavedChanges)
-  }, [aiAtomizationDialogOpen, aiAtomizationDirty, assignmentDialogOpen, assignmentDirty, atomDialogOpen, atomFormDirty, caseDialogOpen, caseFormDirty, deleteCaseDialogOpen, deleteCaseDirty, documentDialogOpen, documentDirty, importDialogOpen, importDirty, materialDialogOpen, materialDirty])
+  }, [aiAtomizationDialogOpen, aiAtomizationDirty, assignmentDialogOpen, assignmentDirty, atomDialogOpen, atomFormDirty, atomReviewMode, atomReviewFormDirty, atomReviewBusy, comparisonDialogOpen, comparisonDirty, comparisonBusy, caseDialogOpen, caseFormDirty, deleteCaseDialogOpen, deleteCaseDirty, documentDialogOpen, documentDirty, importDialogOpen, importDirty, materialDialogOpen, materialDirty])
 
   const setWorkspaceView = (view: WorkspaceView) => {
     const nextParams = new URLSearchParams(searchParams)
@@ -2493,9 +2520,12 @@ export function AuditPage() {
 
   const closeImportDialog = (reason: 'escape' | 'backdrop' | 'close-button' | 'cancel') => {
     void reason
-    if (importPreviewing || importCommitting) return
+    if (importBusyRef.current) return
     if (importDirty && !requestDiscard('Импорт еще не завершен. Закрыть окно и потерять загруженный файл?')) return
     setImportDialogOpen(false)
+    importRequestRef.current += 1
+    importSelectionRef.current = { file: null, caseId: null }
+    setImportVerifiedSelection(null)
     setImportFile(null)
     setImportPreview(null)
     setImportChecksum(null)
@@ -2913,6 +2943,8 @@ export function AuditPage() {
   }
 
   const showModelComparison = (comparison: AuditAIModelComparison) => {
+    if (comparisonBusyRef.current || comparison.case_id !== selectedCaseRef.current) return
+    comparisonRequestRef.current += 1
     setModelComparison(comparison)
     setComparisonDrafts(comparison.drafts.map((draft) => ({
       ...draft,
@@ -2923,25 +2955,35 @@ export function AuditPage() {
   }
 
   const runModelComparison = async (registryIds = selectedModelRegistryIds) => {
-    if (!selectedCaseId || registryIds.length < 1 || comparisonBusy) return
+    if (!selectedCaseId || selectedCaseId !== selectedCaseRef.current || registryIds.length < 1 || comparisonBusyRef.current) return
     const selected = modelRegistries.filter((registry) => registryIds.includes(registry.id))
     if (selected.length > 1 && selected.some((registry) => !registry.document_id || !registry.document_sha256
       || registry.document_id !== selected[0].document_id || registry.document_sha256 !== selected[0].document_sha256)) {
       setModelWorkspaceError('Для сравнения выберите реестры одного документа с одинаковым SHA-256.')
       return
     }
+    const requestId = ++comparisonRequestRef.current
+    const isCurrent = () => requestId === comparisonRequestRef.current && selectedCaseRef.current === selectedCaseId
+    comparisonBusyRef.current = true
     setComparisonBusy(true)
     setComparisonError(null)
     try {
       const result = await api.post<AuditAIModelComparison>(`/api/audit/cases/${selectedCaseId}/model-comparisons`, {
         registry_ids: registryIds,
       })
+      if (!isCurrent()) return
       setModelComparisons((current) => [result, ...current.filter((item) => item.id !== result.id)])
+      comparisonBusyRef.current = false
+      setComparisonBusy(false)
       showModelComparison(result)
     } catch (error) {
+      if (!isCurrent()) return
       setModelWorkspaceError(error instanceof Error ? error.message : 'Не удалось подготовить сравнение')
     } finally {
-      setComparisonBusy(false)
+      if (isCurrent()) {
+        comparisonBusyRef.current = false
+        setComparisonBusy(false)
+      }
     }
   }
 
@@ -2950,16 +2992,17 @@ export function AuditPage() {
     field: K,
     value: EditableAIModelComparisonDraft[K]
   ) => {
+    if (comparisonBusyRef.current || comparisonReadOnly || modelComparison?.case_id !== selectedCaseRef.current) return
     setComparisonDrafts((current) => current.map((draft) => (
       draft.id === draftId ? { ...draft, [field]: value } : draft
     )))
   }
 
   const closeComparisonDialog = () => {
-    if (comparisonBusy) return
-    const initialDrafts = modelComparison?.drafts.map((draft) => ({ ...draft, included: draft.review_status !== 'rejected' })) ?? []
-    if (!comparisonReadOnly && JSON.stringify(initialDrafts) !== JSON.stringify(comparisonDrafts)
+    if (comparisonBusyRef.current) return
+    if (comparisonDirty
       && !requestDiscard('Изменения сравнения не сохранены. Закрыть окно?')) return
+    comparisonRequestRef.current += 1
     setComparisonDialogOpen(false)
     setModelComparison(null)
     setComparisonDrafts([])
@@ -2967,7 +3010,7 @@ export function AuditPage() {
   }
 
   const commitModelComparison = async () => {
-    if (!selectedCaseId || !modelComparison || comparisonBusy || comparisonReadOnly) return
+    if (!selectedCaseId || !modelComparison || modelComparison.case_id !== selectedCaseRef.current || comparisonBusyRef.current || comparisonReadOnly) return
     const included = comparisonDrafts.filter((draft) => draft.included)
     if (included.length === 0) {
       setComparisonError('Выберите хотя бы одно предложение для сохранения сравнения')
@@ -2977,6 +3020,9 @@ export function AuditPage() {
       setComparisonError('У каждого выбранного атома должны быть название и цифровой продукт')
       return
     }
+    const requestId = ++comparisonRequestRef.current
+    const isCurrent = () => requestId === comparisonRequestRef.current && selectedCaseRef.current === selectedCaseId
+    comparisonBusyRef.current = true
     setComparisonBusy(true)
     setComparisonError(null)
     try {
@@ -2996,20 +3042,27 @@ export function AuditPage() {
           })),
         }
       )
+      if (!isCurrent()) return
       setComparisonDialogOpen(false)
       setModelComparison(null)
       setComparisonDrafts([])
       await Promise.all([loadCases(), loadCaseBundle(selectedCaseId), loadModelWorkspace(selectedCaseId)])
+      if (!isCurrent()) return
       setDetailTab('atoms')
       toast.success('Сравнение сохранено. Генеральный реестр не изменен.')
     } catch (error) {
+      if (!isCurrent()) return
       setComparisonError(error instanceof Error ? error.message : 'Не удалось сохранить сравнение')
     } finally {
-      setComparisonBusy(false)
+      if (isCurrent()) {
+        comparisonBusyRef.current = false
+        setComparisonBusy(false)
+      }
     }
   }
 
   const openAssignmentCell = (scheduledDate: string, assigneeId: string) => {
+    if (assignmentsLoading || assignmentsError || assignmentsLoadedContext !== assignmentContext) return
     const currentIds = (assignmentsByCell.get(`${scheduledDate}:${assigneeId}`) ?? [])
       .map((item) => item.case_id)
     setAssignmentTargetDate(scheduledDate)
@@ -3116,6 +3169,10 @@ export function AuditPage() {
   }
 
   const openImportDialog = (targetCaseId: string | null = null) => {
+    if (importBusyRef.current) return
+    importRequestRef.current += 1
+    importSelectionRef.current = { file: null, caseId: targetCaseId }
+    setImportVerifiedSelection(null)
     setImportTargetCaseId(targetCaseId)
     setImportFile(null)
     setImportPreview(null)
@@ -3264,7 +3321,9 @@ export function AuditPage() {
         : atom.status === 'ready' && !atom.alphaResult)
       .map((atom) => atom.id)
     if (queueIds.length === 0) {
-      toast.success(mode === 'draft' ? 'Все черновики уже проверены' : 'Альфа-проверка уже заполнена')
+      const remaining = reviewDetail.atoms.filter((atom) => mode === 'draft'
+        ? atom.status === 'draft' : atom.status === 'ready' && !atom.alphaResult).length
+      toast.success(`${atomSourceFilter === 'all' ? 'В очереди договора' : 'В очереди выбранного источника'} нет ${mode === 'draft' ? 'непроверенных черновиков' : 'атомов без альфа-проверки'}. Осталось по всему договору: ${remaining}.`)
       return
     }
     const firstAtom = reviewDetail.atoms.find((atom) => atom.id === queueIds[0]) ?? null
@@ -3479,9 +3538,9 @@ export function AuditPage() {
   }
 
   const handleAtomReviewKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (!atomReviewMode || atomReviewBusy) return
+    if (!atomReviewMode || atomReviewBusy || event.defaultPrevented || event.nativeEvent.isComposing || event.repeat) return
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
-      if (isEditableKeyboardTarget(event.target)) return
+      if (isEditableKeyboardTarget(event.target, event.currentTarget)) return
       event.preventDefault()
       void undoLastAtomReviewDecision()
       return
@@ -3494,7 +3553,7 @@ export function AuditPage() {
       }
       return
     }
-    if (isEditableKeyboardTarget(event.target) || atomReviewComplete) return
+    if (isEditableKeyboardTarget(event.target, event.currentTarget) || atomReviewComplete) return
     if (event.key === ' ' || event.key === 'ArrowRight') {
       event.preventDefault()
       acceptCurrentReviewAtom()
@@ -3652,7 +3711,13 @@ export function AuditPage() {
   }
 
   const handleImportFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    if (importCommittingRef.current) return
     const nextFile = event.target.files?.[0] ?? null
+    importRequestRef.current += 1
+    importBusyRef.current = false
+    importSelectionRef.current = { file: nextFile, caseId: importTargetCaseId }
+    setImportPreviewing(false)
+    setImportVerifiedSelection(null)
     setImportFile(nextFile)
     setImportPreview(null)
     setImportChecksum(null)
@@ -3660,20 +3725,32 @@ export function AuditPage() {
   }
 
   const previewImport = async () => {
-    if (!importFile || importPreviewing || importCommitting) return
+    if (!importFile || importBusyRef.current) return
+    const selection = importSelectionRef.current
+    if (selection.file !== importFile || selection.caseId !== importTargetCaseId) return
+    const requestId = ++importRequestRef.current
+    const isCurrent = () => requestId === importRequestRef.current && importSelectionRef.current === selection && selectedCaseRef.current === selectedCaseId
+    importBusyRef.current = true
     setImportPreviewing(true)
+    setImportPreview(null)
+    setImportChecksum(null)
+    setImportVerifiedSelection(null)
     setImportError(null)
     try {
       const checksum = await sha256(importFile)
-      setImportChecksum(checksum)
+      if (!isCurrent()) return
       const formData = new FormData()
       formData.append('file', importFile)
       const endpoint = importTargetCaseId
         ? `/api/audit/cases/${importTargetCaseId}/imports/preview`
         : '/api/audit/imports/preview'
       const payload = await api.upload<unknown>(endpoint, formData)
+      if (!isCurrent()) return
       const preview = normalizeImportPreview(payload, checksum)
       if (!preview) throw new Error('Предпросмотр импорта не распознан')
+      if (preview.expectedSha256 && preview.expectedSha256 !== checksum) throw new Error('SHA-256 предпросмотра не совпадает с выбранным файлом. Повторите проверку.')
+      setImportChecksum(checksum)
+      setImportVerifiedSelection({ file: importFile, caseId: importTargetCaseId })
       setImportPreview(preview)
       if (preview.hasErrors) {
         toast.error(`Найдено строк с ошибками: ${preview.errorRows}`)
@@ -3683,21 +3760,32 @@ export function AuditPage() {
         toast.success(`Готово к импорту: ${preview.validRows} строк`)
       }
     } catch (error) {
+      if (!isCurrent()) return
       const message = error instanceof Error ? error.message : 'Не удалось проверить Excel'
       setImportError(message)
       toast.error(message)
     } finally {
-      setImportPreviewing(false)
+      if (isCurrent()) {
+        importBusyRef.current = false
+        setImportPreviewing(false)
+      }
     }
   }
 
   const commitImport = async () => {
-    if (!importFile || !importPreview || importPreview.hasErrors || importCommitting) return
-    const expectedSha = importChecksum ?? importPreview.expectedSha256
+    if (!importFile || !importPreview || importPreview.hasErrors || importPreview.validRows === 0 || importBusyRef.current
+      || importVerifiedSelection?.file !== importFile || importVerifiedSelection.caseId !== importTargetCaseId) return
+    const selection = importSelectionRef.current
+    if (selection.file !== importFile || selection.caseId !== importTargetCaseId) return
+    const expectedSha = importChecksum
     if (!expectedSha) {
       toast.error('Не удалось вычислить SHA-256 файла')
       return
     }
+    const requestId = ++importRequestRef.current
+    const isCurrent = () => requestId === importRequestRef.current && importSelectionRef.current === selection && selectedCaseRef.current === selectedCaseId
+    importBusyRef.current = true
+    importCommittingRef.current = true
     setImportCommitting(true)
     setImportError(null)
     try {
@@ -3709,17 +3797,20 @@ export function AuditPage() {
         ? `/api/audit/cases/${targetCaseId}/imports/commit`
         : '/api/audit/imports/commit'
       const payload = await api.upload<unknown>(endpoint, formData)
+      if (!isCurrent()) return
       const createdCount = isRecord(payload) ? getNumber(payload, 'created_atom_count', 'created_count', 'imported_count', 'count') : null
       const alreadyCommitted = isRecord(payload) && payload.already_committed === true
       await Promise.all([
         loadCases(),
         targetCaseId ? loadCaseBundle(targetCaseId) : Promise.resolve(),
       ])
+      if (!isCurrent()) return
       setImportDialogOpen(false)
       setImportTargetCaseId(null)
       setImportFile(null)
       setImportPreview(null)
       setImportChecksum(null)
+      setImportVerifiedSelection(null)
       setImportError(null)
       if (targetCaseId) setDetailTab('atoms')
       toast.success(
@@ -3730,11 +3821,16 @@ export function AuditPage() {
             : 'Импорт завершен'
       )
     } catch (error) {
+      if (!isCurrent()) return
       const message = error instanceof Error ? error.message : 'Не удалось завершить импорт'
       setImportError(message)
       toast.error(message)
     } finally {
-      setImportCommitting(false)
+      if (isCurrent()) {
+        importBusyRef.current = false
+        importCommittingRef.current = false
+        setImportCommitting(false)
+      }
     }
   }
 
@@ -4342,10 +4438,10 @@ export function AuditPage() {
             </div>
           </div>
 
-          {assignmentsError ? (
-            <div className="m-4 rounded-md border border-rose-500/25 bg-rose-500/10 px-3 py-3 text-sm text-rose-700 dark:text-rose-300">{assignmentsError}</div>
-          ) : teamLoading || assignmentsLoading ? (
+          {teamLoading || assignmentsLoading || assignmentsLoadedContext !== assignmentContext ? (
             <div className="flex min-h-[360px] items-center justify-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Загружаем матрицу</div>
+          ) : assignmentsError ? (
+            <div role="alert" className="m-4 rounded-md border border-rose-500/25 bg-rose-500/10 px-3 py-3 text-sm text-rose-700 dark:text-rose-300">{assignmentsError}</div>
           ) : assignmentTeam.length === 0 ? (
             <div className="px-6 py-14 text-center"><Users className="mx-auto h-8 w-8 text-muted-foreground" /><h3 className="mt-3 font-semibold text-foreground">Список сотрудников не сформирован</h3><p className="mt-1 text-sm text-muted-foreground">Сначала добавьте участников в разделе «Сотрудники».</p></div>
           ) : (
@@ -4944,8 +5040,8 @@ export function AuditPage() {
                                 />
                               ) : null}
                               <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm font-semibold text-foreground">{registry.provider_name}</span>
-                                <span className="block truncate font-mono text-xs text-muted-foreground">{registry.model_name} · конфигурация v{registry.provider_config_version}</span>
+                                <span className="block [overflow-wrap:anywhere] text-sm font-semibold text-foreground">{registry.provider_name}</span>
+                                <span className="block [overflow-wrap:anywhere] font-mono text-xs text-muted-foreground">{registry.model_name} · конфигурация v{registry.provider_config_version}</span>
                                 <span className="mt-1 block break-words text-xs text-muted-foreground">{registry.skill_name ?? registry.skill_slug ?? 'Методика не указана'}{registry.skill_version ? ` · ${formatSkillVersion(registry.skill_version)}` : ''}{registry.skill_sha256 && !registry.skill_version?.startsWith('sha256-') ? ` · SHA ${registry.skill_sha256.slice(0, 12)}` : ''}</span>
                                 <span className="block break-words text-xs text-muted-foreground" title={registry.document_sha256 ?? undefined}>Документ: {registry.document_created_at ? formatDateTime(registry.document_created_at) : 'дата не указана'} · SHA {registry.document_sha256?.slice(0, 12) ?? 'не указан'}</span>
                                 <span className="block break-words text-xs text-muted-foreground">{formatDateTime(registry.created_at)} · В генеральном: {publishedCount}/{registry.atom_count}</span>
@@ -5585,34 +5681,35 @@ export function AuditPage() {
                 type="button"
                 onClick={showPreviousReviewAtom}
                 disabled={atomReviewBusy || atomReviewQueueIds.length === 0}
+                tabIndex={0}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border bg-surface px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
               >
                 <ChevronLeft className="h-4 w-4" aria-hidden="true" />
                 Вернуться к последнему
               </button>
-              <button type="button" onClick={closeAtomReview} className="inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground hover:opacity-90">
+              <button type="button" tabIndex={0} onClick={closeAtomReview} className="inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground hover:opacity-90">
                 Закрыть проверку
               </button>
             </div>
           ) : atomReviewEditOpen ? (
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-              <button type="button" onClick={resetAtomReviewPanels} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-surface px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
+              <button type="button" tabIndex={0} onClick={resetAtomReviewPanels} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-surface px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
                 Отменить изменения
               </button>
-              <button type="button" onClick={saveAtomReviewEdit} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50" aria-keyshortcuts="Control+Enter Meta+Enter">
+              <button type="button" tabIndex={0} onClick={saveAtomReviewEdit} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50" aria-keyshortcuts="Control+Enter Meta+Enter">
                 {atomReviewBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
                 {atomReviewMode === 'draft' ? 'Сохранить и принять' : 'Сохранить ссылку'}
               </button>
             </div>
           ) : atomReviewExceptionOpen ? (
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-              <button type="button" onClick={resetAtomReviewPanels} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-surface px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
+              <button type="button" tabIndex={0} onClick={resetAtomReviewPanels} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-surface px-4 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50">
                 Отмена
               </button>
-              <button type="button" onClick={() => submitAlphaException('needs_clarification')} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center rounded-md border border-amber-500/30 bg-amber-500/10 px-4 text-sm font-medium text-amber-900 hover:bg-amber-500/15 dark:text-amber-200 disabled:opacity-50">
+              <button type="button" tabIndex={0} onClick={() => submitAlphaException('needs_clarification')} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center rounded-md border border-amber-500/30 bg-amber-500/10 px-4 text-sm font-medium text-amber-900 hover:bg-amber-500/15 dark:text-amber-200 disabled:opacity-50">
                 Нужно уточнить
               </button>
-              <button type="button" onClick={() => submitAlphaException('not_present')} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-rose-600 px-4 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-50" aria-keyshortcuts="Control+Enter Meta+Enter">
+              <button type="button" tabIndex={0} onClick={() => submitAlphaException('not_present')} disabled={atomReviewBusy} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-rose-600 px-4 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-50" aria-keyshortcuts="Control+Enter Meta+Enter">
                 {atomReviewBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <X className="h-4 w-4" aria-hidden="true" />}
                 Нет в системе
               </button>
@@ -5623,6 +5720,7 @@ export function AuditPage() {
                 type="button"
                 onClick={showPreviousReviewAtom}
                 disabled={atomReviewBusy || atomReviewIndex === 0}
+                tabIndex={0}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-40"
                 aria-keyshortcuts="ArrowLeft"
                 title="Предыдущий атом"
@@ -5634,6 +5732,7 @@ export function AuditPage() {
                 type="button"
                 onClick={showAtomReviewEdit}
                 disabled={atomReviewBusy}
+                tabIndex={0}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50"
                 aria-keyshortcuts="E"
                 title={atomReviewMode === 'draft' ? 'Исправить атом' : 'Добавить ссылку на элемент'}
@@ -5645,6 +5744,7 @@ export function AuditPage() {
                 type="button"
                 onClick={atomReviewMode === 'draft' ? excludeCurrentReviewAtom : showAtomReviewException}
                 disabled={atomReviewBusy}
+                tabIndex={0}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 text-sm font-medium text-rose-700 hover:bg-rose-500/15 dark:text-rose-300 disabled:opacity-50"
                 aria-keyshortcuts="ArrowDown"
                 title={atomReviewMode === 'draft' ? 'Исключить атом' : 'Зафиксировать отрицательный результат'}
@@ -5656,6 +5756,7 @@ export function AuditPage() {
                 type="button"
                 onClick={acceptCurrentReviewAtom}
                 disabled={atomReviewBusy}
+                tabIndex={0}
                 className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
                 aria-keyshortcuts="Space ArrowRight"
                 title={atomReviewMode === 'draft' ? 'Принять атом и перейти дальше' : 'Подтвердить наличие и перейти дальше'}
@@ -5699,14 +5800,14 @@ export function AuditPage() {
               <div className="flex flex-col gap-2 border-l-2 border-rose-500 bg-rose-500/5 px-3 py-2 text-sm text-rose-700 dark:text-rose-300 sm:flex-row sm:items-center sm:justify-between">
                 <span>{atomReviewError}</span>
                 {selectedCaseId ? (
-                  <button type="button" onClick={() => { setAtomReviewUndo(null); void loadCaseBundle(selectedCaseId) }} className="min-h-10 shrink-0 rounded-md border border-rose-500/30 px-3 font-medium hover:bg-rose-500/10">Обновить данные</button>
+                  <button type="button" tabIndex={0} onClick={() => { setAtomReviewUndo(null); void loadCaseBundle(selectedCaseId) }} className="min-h-10 shrink-0 rounded-md border border-rose-500/30 px-3 font-medium hover:bg-rose-500/10">Обновить данные</button>
                 ) : null}
               </div>
             ) : atomReviewNotice ? (
               <div className="flex flex-col gap-2 border-l-2 border-emerald-500 bg-emerald-500/5 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300 sm:flex-row sm:items-center sm:justify-between">
                 <span>{atomReviewNotice}</span>
                 {atomReviewUndo ? (
-                  <button type="button" onClick={() => void undoLastAtomReviewDecision()} disabled={atomReviewBusy} className="min-h-10 shrink-0 rounded-md border border-emerald-500/30 px-3 font-medium hover:bg-emerald-500/10 disabled:opacity-50" aria-keyshortcuts="Control+Z Meta+Z">
+                  <button type="button" tabIndex={0} onClick={() => void undoLastAtomReviewDecision()} disabled={atomReviewBusy} className="min-h-10 shrink-0 rounded-md border border-emerald-500/30 px-3 font-medium hover:bg-emerald-500/10 disabled:opacity-50" aria-keyshortcuts="Control+Z Meta+Z">
                     Отменить последнее
                   </button>
                 ) : null}
@@ -5718,10 +5819,13 @@ export function AuditPage() {
             <div className="py-12 text-center">
               <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-600 dark:text-emerald-300" aria-hidden="true" />
               <h3 className="mt-4 text-lg font-semibold text-foreground">
-                {atomReviewMode === 'draft' ? 'Черновики разобраны' : 'Альфа-проверка заполнена'}
+                {atomSourceFilter !== 'all' ? 'Очередь выбранного источника проверена' : atomReviewMode === 'draft' ? 'Черновики разобраны' : 'Альфа-проверка заполнена'}
               </h3>
               <p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">
                 Все решения этой сессии сохранены. К предыдущему атому можно вернуться до закрытия окна.
+              </p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Осталось по всему договору: {atomReviewMode === 'draft' ? detail?.atoms.filter((atom) => atom.status === 'draft').length ?? 0 : alphaUnreviewedCount}.
               </p>
             </div>
           ) : atomReviewCurrent ? (
@@ -5850,7 +5954,7 @@ export function AuditPage() {
         }
       >
         <div className="space-y-4">
-          <label className="flex min-h-11 items-center gap-2 rounded-md border border-border bg-surface-soft px-3">
+          <label className="flex min-h-11 items-center gap-2 rounded-md border border-border bg-surface-soft px-3 focus-within:ring-2 focus-within:ring-primary">
             <Search className="h-4 w-4 text-muted-foreground" />
             <span className="sr-only">Поиск договора</span>
             <input value={assignmentQuery} onChange={(event) => setAssignmentQuery(event.target.value)} placeholder="Поиск по коду, продукту или названию" className="min-w-0 flex-1 bg-transparent py-2 text-base text-foreground outline-none placeholder:text-muted-foreground sm:text-sm" />
@@ -6865,7 +6969,11 @@ export function AuditPage() {
             </p>
             {!comparisonReadOnly ? (
               <label className="inline-flex min-h-10 items-center gap-2 text-sm font-medium text-foreground">
-                <input type="checkbox" checked={comparisonDrafts.length > 0 && comparisonDrafts.every((draft) => draft.included)} onChange={(event) => setComparisonDrafts((current) => current.map((draft) => ({ ...draft, included: event.target.checked })))} className="h-5 w-5 rounded border-input text-primary focus:ring-primary" />
+                <input type="checkbox" disabled={comparisonBusy} checked={comparisonDrafts.length > 0 && comparisonDrafts.every((draft) => draft.included)} onChange={(event) => {
+                  if (comparisonBusyRef.current || comparisonReadOnly) return
+                  const included = event.target.checked
+                  setComparisonDrafts((current) => current.map((draft) => ({ ...draft, included })))
+                }} className="h-5 w-5 rounded border-input text-primary focus:ring-primary disabled:opacity-60" />
                 Выбрать все
               </label>
             ) : null}
@@ -6874,7 +6982,7 @@ export function AuditPage() {
             {comparisonDrafts.map((draft, index) => (
               <section key={draft.id} className={cn('px-3 py-4 sm:px-4', !draft.included && 'bg-muted/35 opacity-70')}>
                 <div className="flex items-start gap-3">
-                  <input type="checkbox" checked={draft.included} onChange={(event) => updateComparisonDraft(draft.id, 'included', event.target.checked)} disabled={comparisonReadOnly} className="mt-1 h-5 w-5 shrink-0 rounded border-input text-primary focus:ring-primary disabled:opacity-60" aria-label={`Включить атом ${index + 1} в сравнение`} />
+                  <input type="checkbox" checked={draft.included} onChange={(event) => updateComparisonDraft(draft.id, 'included', event.target.checked)} disabled={comparisonReadOnly || comparisonBusy} className="mt-1 h-5 w-5 shrink-0 rounded border-input text-primary focus:ring-primary disabled:opacity-60" aria-label={`Включить атом ${index + 1} в сравнение`} />
                   <div className="min-w-0 flex-1 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="font-mono text-xs text-muted-foreground">{isSingleModelDraft ? 'Атом' : 'Кандидат'} {index + 1}</span>
@@ -6884,16 +6992,16 @@ export function AuditPage() {
                     </div>
                     <div className="grid gap-3 lg:grid-cols-2">
                       <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground lg:col-span-2">Название атома
-                        <textarea value={draft.title} onChange={(event) => updateComparisonDraft(draft.id, 'title', event.target.value)} rows={2} disabled={!draft.included || comparisonReadOnly} className="min-h-[72px] resize-y rounded-md border border-border bg-surface px-3 py-2 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
+                        <textarea value={draft.title} onChange={(event) => updateComparisonDraft(draft.id, 'title', event.target.value)} rows={2} disabled={!draft.included || comparisonReadOnly || comparisonBusy} className="min-h-[72px] resize-y rounded-md border border-border bg-surface px-3 py-2 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
                       </label>
                       <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">Цифровой продукт
-                        <input value={draft.digital_product} onChange={(event) => updateComparisonDraft(draft.id, 'digital_product', event.target.value)} disabled={!draft.included || comparisonReadOnly} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
+                        <input value={draft.digital_product} onChange={(event) => updateComparisonDraft(draft.id, 'digital_product', event.target.value)} disabled={!draft.included || comparisonReadOnly || comparisonBusy} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
                       </label>
                       <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">Тип объекта
-                        <input value={draft.object_type ?? ''} onChange={(event) => updateComparisonDraft(draft.id, 'object_type', event.target.value)} disabled={!draft.included || comparisonReadOnly} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
+                        <input value={draft.object_type ?? ''} onChange={(event) => updateComparisonDraft(draft.id, 'object_type', event.target.value)} disabled={!draft.included || comparisonReadOnly || comparisonBusy} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
                       </label>
                       <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">Вид работ
-                        <input value={draft.work_type ?? ''} onChange={(event) => updateComparisonDraft(draft.id, 'work_type', event.target.value)} disabled={!draft.included || comparisonReadOnly} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
+                        <input value={draft.work_type ?? ''} onChange={(event) => updateComparisonDraft(draft.id, 'work_type', event.target.value)} disabled={!draft.included || comparisonReadOnly || comparisonBusy} className="min-h-11 rounded-md border border-border bg-surface px-3 text-base text-foreground outline-none focus:border-primary disabled:opacity-60 sm:text-sm" />
                       </label>
                       <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">Пункт источника
                         <input value={draft.source_clause} readOnly className="min-h-11 rounded-md border border-border bg-muted/45 px-3 text-base text-foreground sm:text-sm" />
@@ -6977,7 +7085,7 @@ export function AuditPage() {
               <button
                 type="button"
                 onClick={() => void commitImport()}
-                disabled={!importPreview || importPreview.hasErrors || importPreview.validRows === 0 || importCommitting}
+                disabled={!importPreview || importPreview.hasErrors || importPreview.validRows === 0 || importPreviewing || importCommitting || importVerifiedSelection?.file !== importFile || importVerifiedSelection?.caseId !== importTargetCaseId}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {importCommitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
@@ -7001,6 +7109,7 @@ export function AuditPage() {
                 type="file"
                 accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 onChange={handleImportFileChange}
+                disabled={importCommitting}
                 className="min-h-11 rounded-md border border-border bg-surface px-3 py-2 text-base text-foreground outline-none file:mr-3 file:border-0 file:bg-surface-soft file:px-3 file:py-2 file:text-sm file:font-medium sm:text-sm"
               />
             </label>

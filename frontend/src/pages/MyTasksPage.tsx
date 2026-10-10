@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import type { DeadlineTracker, Purchase, Task, User, RunRate, UserProgress } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
@@ -6,7 +6,7 @@ import { RunRateCard } from '@/components/RunRateCard'
 import { TaskCard } from '@/components/TaskCard'
 import { TaskDetailModal } from '@/components/TaskDetailModal'
 import toast from 'react-hot-toast'
-import { BugfixModal } from '@/components/BugfixModal'
+import { BugfixModal, useTaskDialogProtection } from '@/components/BugfixModal'
 
 type TaskWithComputedTime = Task & {
   is_focused: boolean
@@ -20,8 +20,22 @@ export function MyTasksPage() {
   const [purchaseApprovals, setPurchaseApprovals] = useState<Purchase[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
-  const [error] = useState<string | null>(null)
-  const [busyTaskId, setBusyTaskId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [reviewLoading, setReviewLoading] = useState(true)
+  const [reviewError, setReviewError] = useState('')
+  const pendingTasks = useRef(new Set<string>())
+  const [busyTaskIds, setBusyTaskIds] = useState<Set<string>>(new Set())
+  const taskGeneration = useRef(0)
+  const reviewGeneration = useRef(0)
+  const activeUser = useRef(currentUser?.id)
+  activeUser.current = currentUser?.id
+  const beginTask = (id: string) => {
+    if (pendingTasks.current.has(id)) return false
+    pendingTasks.current.add(id); setBusyTaskIds(new Set(pendingTasks.current)); return true
+  }
+  const endTask = (id: string) => {
+    pendingTasks.current.delete(id); setBusyTaskIds(new Set(pendingTasks.current))
+  }
   const [busyPurchaseId, setBusyPurchaseId] = useState<string | null>(null)
 
   const [submitTaskId, setSubmitTaskId] = useState<string | null>(null)
@@ -50,15 +64,36 @@ export function MyTasksPage() {
 
   const [focusBusyId, setFocusBusyId] = useState<string | null>(null)
   const [trackerBusyId, setTrackerBusyId] = useState<string | null>(null)
+  const approveDialog = useTaskDialogProtection(Boolean(approveTask), Boolean(approveTask && busyTaskIds.has(approveTask.id)), Boolean(approveComment.trim()), () => setApproveTask(null))
+  const rejectDialog = useTaskDialogProtection(Boolean(rejectTask), Boolean(rejectTask && busyTaskIds.has(rejectTask.id)), Boolean(rejectComment.trim()), () => setRejectTask(null))
+  const submitDialog = useTaskDialogProtection(Boolean(submitTaskId), Boolean(submitTaskId && busyTaskIds.has(submitTaskId)), Boolean(submitResultUrl || submitComment || submitBriefRating || submitBriefFeedback), () => setSubmitTaskId(null))
+  const deadlineDialog = useTaskDialogProtection(Boolean(deadlineTask), deadlineBusy, Boolean(deadlineValue), () => setDeadlineTask(null))
+  const bugfixInFlight = useRef(false)
 
   useEffect(() => {
-    api.get<User[]>('/api/users').then(setUsers).catch(() => setUsers([])).finally(() => setLoading(false))
+    api.get<User[]>('/api/users').then(setUsers).catch(() => setUsers([]))
   }, [])
+
+  const loadUserTasks = useCallback(async () => {
+    if (!currentUser) return
+    const generation = ++taskGeneration.current
+    const userId = currentUser.id
+    setLoading(true); setError(null)
+    try {
+      const list = await api.get<Task[]>(`/api/tasks?assignee_id=${userId}`)
+      if (generation === taskGeneration.current && activeUser.current === userId) setTasks(list)
+    } catch (cause) {
+      if (generation === taskGeneration.current && activeUser.current === userId) setError(cause instanceof Error ? cause.message : 'Не удалось загрузить задачи')
+    } finally {
+      if (generation === taskGeneration.current && activeUser.current === userId) setLoading(false)
+    }
+  }, [currentUser])
+
+  useEffect(() => { void loadUserTasks(); return () => { taskGeneration.current += 1 } }, [loadUserTasks])
 
   useEffect(() => {
     if (!currentUser) return
     let cancelled = false
-    api.get<Task[]>(`/api/tasks?assignee_id=${currentUser.id}`).then((list) => !cancelled && setTasks(list)).catch(() => !cancelled && setTasks([]))
     api.get<RunRate>(`/api/users/${currentUser.id}/run-rate`).then((r) => !cancelled && setRunRate(r)).catch(() => !cancelled && setRunRate(null))
     api.get<UserProgress>(`/api/users/${currentUser.id}/progress`).then((p) => !cancelled && setProgress(p)).catch(() => !cancelled && setProgress(null))
     api.get<DeadlineTracker[]>('/api/deadline-trackers?include_archived=true&limit=300').then((list) => !cancelled && setDeadlineTrackers(list)).catch(() => !cancelled && setDeadlineTrackers([]))
@@ -70,6 +105,9 @@ export function MyTasksPage() {
       setReviewTasks([])
       return
     }
+    const generation = ++reviewGeneration.current
+    const userId = currentUser.id
+    setReviewLoading(true); setReviewError('')
     try {
       const ownerTasks = await api.get<Task[]>('/api/tasks', {
         acceptance_owner_id: currentUser.id,
@@ -79,12 +117,14 @@ export function MyTasksPage() {
         const allReviewTasks = await api.get<Task[]>('/api/tasks', { review_inbox: 'true' })
         const taskById = new Map(ownerTasks.map((task) => [task.id, task]))
         allReviewTasks.forEach((task) => taskById.set(task.id, task))
-        setReviewTasks([...taskById.values()])
+        if (generation === reviewGeneration.current && activeUser.current === userId) setReviewTasks([...taskById.values()])
       } else {
-        setReviewTasks(ownerTasks)
+        if (generation === reviewGeneration.current && activeUser.current === userId) setReviewTasks(ownerTasks)
       }
-    } catch {
-      setReviewTasks([])
+    } catch (cause) {
+      if (generation === reviewGeneration.current && activeUser.current === userId) setReviewError(cause instanceof Error ? cause.message : 'Не удалось загрузить приёмку')
+    } finally {
+      if (generation === reviewGeneration.current && activeUser.current === userId) setReviewLoading(false)
     }
   }, [currentUser])
 
@@ -108,8 +148,8 @@ export function MyTasksPage() {
 
   const refreshTasks = useCallback(async () => {
     if (!currentUser) return
-    const [newTasks] = await Promise.all([
-      api.get<Task[]>(`/api/tasks?assignee_id=${currentUser.id}`),
+    await Promise.all([
+      loadUserTasks(),
       loadReviewTasks(),
       api.get<UserProgress>(`/api/users/${currentUser.id}/progress`)
         .then((p) => setProgress(p))
@@ -125,17 +165,16 @@ export function MyTasksPage() {
         .catch(() => setDeadlineTrackers([])),
       loadPurchaseApprovals(),
     ])
-    setTasks(newTasks)
-  }, [currentUser, loadReviewTasks, loadPurchaseApprovals])
+  }, [currentUser, loadUserTasks, loadReviewTasks, loadPurchaseApprovals])
 
   const refreshAfterAcceptance = useCallback(async () => {
     await refreshTasks()
     if (!detailTask) return
     try {
       const updatedTask = await api.get<Task>(`/api/tasks/${detailTask.id}`)
-      setDetailTask(updatedTask)
+      setDetailTask((current) => current?.id === updatedTask.id ? updatedTask : current)
     } catch {
-      setDetailTask(null)
+      toast.error('Не удалось обновить карточку задачи')
     }
   }, [detailTask, refreshTasks])
 
@@ -233,7 +272,7 @@ export function MyTasksPage() {
       toast.error('Поставьте оценку постановки задачи')
       return
     }
-    setBusyTaskId(submitTaskId)
+    if (!beginTask(submitTaskId)) return
     try {
       await api.post('/api/queue/submit', {
         task_id: submitTaskId,
@@ -248,13 +287,12 @@ export function MyTasksPage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось сдать на проверку')
     } finally {
-      setBusyTaskId(null)
+      endTask(submitTaskId)
     }
   }
 
   const handleValidate = async (taskId: string, approved: boolean, comment?: string) => {
-    if (!currentUser) return
-    setBusyTaskId(taskId)
+    if (!currentUser || !beginTask(taskId)) return false
     try {
       await api.post('/api/queue/validate', {
         task_id: taskId,
@@ -262,13 +300,13 @@ export function MyTasksPage() {
         comment: comment || undefined,
       })
       toast.success(approved ? 'Задача принята' : 'Задача возвращена')
-      setRejectTask(null)
-      setRejectComment('')
-      refreshTasks()
+      void refreshTasks()
+      return true
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка')
+      return false
     } finally {
-      setBusyTaskId(null)
+      endTask(taskId)
     }
   }
 
@@ -287,23 +325,27 @@ export function MyTasksPage() {
     setApproveComment('')
   }
 
-  const handleApproveModalOk = () => {
+  const handleApproveModalOk = async () => {
     if (!approveTask || !approveComment.trim()) {
       toast.error('Укажите причину admin override')
       return
     }
-    void handleValidate(approveTask.id, true, approveComment.trim())
-    setApproveTask(null)
-    setApproveComment('')
+    const submitted = approveTask
+    if (await handleValidate(submitted.id, true, approveComment.trim())) {
+      setApproveTask((current) => current === submitted ? null : current)
+    }
   }
 
-  const handleRejectModalOk = () => {
+  const handleRejectModalOk = async () => {
     if (!rejectTask) return
     if (!rejectComment.trim()) {
       toast.error('Укажите причину возврата')
       return
     }
-    handleValidate(rejectTask.id, false, rejectComment.trim())
+    const submitted = rejectTask
+    if (await handleValidate(submitted.id, false, rejectComment.trim())) {
+      setRejectTask((current) => current === submitted ? null : current)
+    }
   }
 
   const handlePurchaseDecision = async (purchaseId: string, approved: boolean) => {
@@ -361,7 +403,8 @@ export function MyTasksPage() {
   }
 
   const handleCreateBugfix = async () => {
-    if (!currentUser || !bugfixParent || !bugfixTitle.trim()) return
+    if (!currentUser || !bugfixParent || !bugfixTitle.trim() || bugfixInFlight.current) return
+    bugfixInFlight.current = true
     setBugfixBusy(true)
     try {
       await api.post('/api/tasks/bugfix', {
@@ -377,6 +420,7 @@ export function MyTasksPage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось создать баг-фикс')
     } finally {
+      bugfixInFlight.current = false
       setBugfixBusy(false)
     }
   }
@@ -389,8 +433,6 @@ export function MyTasksPage() {
     validatorNames[u.id] = u.full_name
   })
 
-  if (loading) return <div className="text-slate-500">Загрузка...</div>
-  if (error) return <div className="text-red-600">{error}</div>
 
   const inProgress = tasksWithComputedTime.filter((t) => t.status === 'in_progress')
   const review = tasksWithComputedTime.filter((t) => t.status === 'review')
@@ -408,6 +450,10 @@ export function MyTasksPage() {
 
   return (
     <div className="space-y-6">
+      {loading && <p role="status" className="text-slate-500">Загрузка задач...</p>}
+      {error && <div role="alert" className="text-sm text-red-600">{error}<button type="button" onClick={() => void loadUserTasks()}>Повторить загрузку задач</button></div>}
+      {reviewLoading && <p role="status">Загрузка приёмки...</p>}
+      {reviewError && <div role="alert" className="text-sm text-red-600">{reviewError}<button type="button" onClick={() => void loadReviewTasks()}>Повторить загрузку приёмки</button></div>}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Q-план</h1>
@@ -508,10 +554,10 @@ export function MyTasksPage() {
                       <button
                         type="button"
                         onClick={() => handleSubmitReview(t.id)}
-                        disabled={busyTaskId === t.id}
+                        disabled={busyTaskIds.has(t.id)}
                         className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                       >
-                        {busyTaskId === t.id ? '...' : 'Сдать'}
+                        {busyTaskIds.has(t.id) ? '...' : 'Сдать'}
                       </button>
                     </div>
                   </div>
@@ -537,7 +583,7 @@ export function MyTasksPage() {
                 </div>
               )
             })}
-            {inProgress.length === 0 && (
+            {!loading && !error && inProgress.length === 0 && (
               <p className="text-sm text-slate-400">Нет задач в работе</p>
             )}
           </div>
@@ -567,7 +613,7 @@ export function MyTasksPage() {
                 )}
               </div>
             ))}
-            {review.length === 0 && (
+            {!loading && !error && review.length === 0 && (
               <p className="text-sm text-slate-400">Нет задач на проверке</p>
             )}
           </div>
@@ -596,7 +642,7 @@ export function MyTasksPage() {
                 )}
               </div>
             ))}
-            {done.length === 0 && (
+            {!loading && !error && done.length === 0 && (
               <p className="text-sm text-slate-400">Нет завершённых задач</p>
             )}
           </div>
@@ -641,7 +687,7 @@ export function MyTasksPage() {
                 onValidate={handleValidate}
                 onApproveClick={handleApproveClick}
                 onRejectClick={handleRejectClick}
-                busyTaskId={busyTaskId}
+                busyTaskId={busyTaskIds.has(t.id) ? t.id : null}
                 currentUserId={currentUser?.id ?? ''}
                 validatorName={validatorNames[t.validator_id ?? '']}
                 onOpenDetail={setDetailTask}
@@ -701,8 +747,8 @@ export function MyTasksPage() {
       )}
 
       {approveTask && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true">
-          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label="Принять по admin override" onKeyDown={(e) => e.key === 'Escape' && approveDialog.requestClose()}>
+          <div ref={approveDialog.panelRef} tabIndex={-1} className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-lg bg-white p-6 shadow-xl [overflow-wrap:anywhere]">
             <h3 className="text-lg font-semibold text-slate-900">Принять по admin override</h3>
             <p className="mt-1 text-sm text-slate-500">#{approveTask.task_number} {approveTask.title}</p>
             <div className="mt-4">
@@ -710,6 +756,8 @@ export function MyTasksPage() {
                 Причина override <span className="text-red-600">*</span>
               </label>
               <textarea
+                aria-label="Причина override"
+                disabled={busyTaskIds.has(approveTask.id)}
                 value={approveComment}
                 onChange={(event) => setApproveComment(event.target.value)}
                 rows={3}
@@ -720,7 +768,8 @@ export function MyTasksPage() {
             <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setApproveTask(null)}
+                disabled={busyTaskIds.has(approveTask.id)}
+                onClick={approveDialog.requestClose}
                 className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Отмена
@@ -728,10 +777,10 @@ export function MyTasksPage() {
               <button
                 type="button"
                 onClick={handleApproveModalOk}
-                disabled={!approveComment.trim() || busyTaskId === approveTask.id}
+                disabled={!approveComment.trim() || busyTaskIds.has(approveTask.id)}
                 className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
               >
-                {busyTaskId === approveTask.id ? '...' : 'Принять'}
+                {busyTaskIds.has(approveTask.id) ? '...' : 'Принять'}
               </button>
             </div>
           </div>
@@ -744,10 +793,13 @@ export function MyTasksPage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
           role="dialog"
           aria-modal="true"
-          onKeyDown={(e) => e.key === 'Escape' && setSubmitTaskId(null)}
+          aria-label="Сдать на проверку"
+          onKeyDown={(e) => e.key === 'Escape' && submitDialog.requestClose()}
         >
           <div
-            className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
+            ref={submitDialog.panelRef}
+            tabIndex={-1}
+            className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-lg bg-white p-6 shadow-xl [overflow-wrap:anywhere]"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold text-slate-900">Сдать на проверку</h3>
@@ -758,6 +810,8 @@ export function MyTasksPage() {
                 </label>
                 <input
                   type="text"
+                  aria-label="Ссылка на результат"
+                  disabled={busyTaskIds.has(submitTaskId)}
                   value={submitResultUrl}
                   onChange={(e) => setSubmitResultUrl(e.target.value)}
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
@@ -769,6 +823,8 @@ export function MyTasksPage() {
                   Комментарий
                 </label>
                 <textarea
+                  aria-label="Комментарий к сдаче"
+                  disabled={busyTaskIds.has(submitTaskId)}
                   value={submitComment}
                   onChange={(e) => setSubmitComment(e.target.value)}
                   rows={2}
@@ -785,6 +841,7 @@ export function MyTasksPage() {
                     <button
                       key={rating}
                       type="button"
+                      disabled={busyTaskIds.has(submitTaskId)}
                       onClick={() => setSubmitBriefRating(rating)}
                       className={`rounded px-1 text-2xl leading-none ${
                         submitBriefRating && rating <= submitBriefRating
@@ -803,6 +860,8 @@ export function MyTasksPage() {
                   Комментарий к постановке
                 </label>
                 <textarea
+                  aria-label="Обратная связь по постановке"
+                  disabled={busyTaskIds.has(submitTaskId)}
                   value={submitBriefFeedback}
                   onChange={(e) => setSubmitBriefFeedback(e.target.value)}
                   rows={2}
@@ -814,7 +873,7 @@ export function MyTasksPage() {
             <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setSubmitTaskId(null)}
+                onClick={submitDialog.requestClose}
                 className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Отмена
@@ -822,10 +881,10 @@ export function MyTasksPage() {
               <button
                 type="button"
                 onClick={handleSubmitModalOk}
-                disabled={!submitBriefRating || busyTaskId === submitTaskId}
+                disabled={!submitBriefRating || busyTaskIds.has(submitTaskId)}
                 className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
               >
-                {busyTaskId === submitTaskId ? '...' : 'Сдать'}
+                {busyTaskIds.has(submitTaskId) ? '...' : 'Сдать'}
               </button>
             </div>
           </div>
@@ -838,10 +897,13 @@ export function MyTasksPage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
           role="dialog"
           aria-modal="true"
-          onKeyDown={(e) => e.key === 'Escape' && setRejectTask(null)}
+          aria-label="Вернуть задачу"
+          onKeyDown={(e) => e.key === 'Escape' && rejectDialog.requestClose()}
         >
           <div
-            className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl"
+            ref={rejectDialog.panelRef}
+            tabIndex={-1}
+            className="max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto rounded-lg bg-white p-6 shadow-xl [overflow-wrap:anywhere]"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold text-slate-900">Вернуть задачу</h3>
@@ -851,6 +913,8 @@ export function MyTasksPage() {
                 Причина возврата <span className="text-red-600">*</span>
               </label>
               <textarea
+                aria-label="Причина возврата"
+                disabled={busyTaskIds.has(rejectTask.id)}
                 value={rejectComment}
                 onChange={(e) => setRejectComment(e.target.value)}
                 rows={3}
@@ -862,7 +926,8 @@ export function MyTasksPage() {
             <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setRejectTask(null)}
+                disabled={busyTaskIds.has(rejectTask.id)}
+                onClick={rejectDialog.requestClose}
                 className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Отмена
@@ -870,7 +935,7 @@ export function MyTasksPage() {
               <button
                 type="button"
                 onClick={handleRejectModalOk}
-                disabled={!rejectComment.trim()}
+                disabled={!rejectComment.trim() || busyTaskIds.has(rejectTask.id)}
                 className="rounded-md border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
               >
                 Вернуть
@@ -886,11 +951,13 @@ export function MyTasksPage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
           role="dialog"
           aria-modal="true"
-          onClick={() => setDeadlineTask(null)}
-          onKeyDown={(e) => e.key === 'Escape' && setDeadlineTask(null)}
+          aria-label="Установить дедлайн"
+          onKeyDown={(e) => e.key === 'Escape' && deadlineDialog.requestClose()}
         >
           <div
-            className="w-full max-w-sm rounded-lg bg-white p-6 shadow-xl"
+            ref={deadlineDialog.panelRef}
+            tabIndex={-1}
+            className="max-h-[calc(100dvh-2rem)] w-full max-w-sm overflow-y-auto rounded-lg bg-white p-6 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-semibold text-slate-900">📅 Установить дедлайн</h3>
@@ -899,6 +966,8 @@ export function MyTasksPage() {
               <label className="block text-sm font-medium text-slate-700">Дата и время</label>
               <input
                 type="datetime-local"
+                aria-label="Дата и время дедлайна"
+                disabled={deadlineBusy}
                 value={deadlineValue}
                 onChange={(e) => setDeadlineValue(e.target.value)}
                 className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
@@ -907,7 +976,7 @@ export function MyTasksPage() {
             <div className="mt-6 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setDeadlineTask(null)}
+                onClick={deadlineDialog.requestClose}
                 className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Отмена

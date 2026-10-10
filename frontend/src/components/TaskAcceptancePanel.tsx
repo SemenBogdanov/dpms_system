@@ -94,6 +94,9 @@ export function TaskAcceptancePanel({ task, onUpdated, onDraftStateChange }: Tas
   const [draftRevision, setDraftRevision] = useState(task.acceptance_revision)
   const [draftCriterionTitles, setDraftCriterionTitles] = useState<Record<string, string>>({})
   const mutationInFlightRef = useRef(false)
+  const mounted = useRef(true)
+  const loadGeneration = useRef(0)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; loadGeneration.current += 1 } }, [])
 
   const beginMutation = () => {
     if (mutationInFlightRef.current) return false
@@ -108,10 +111,13 @@ export function TaskAcceptancePanel({ task, onUpdated, onDraftStateChange }: Tas
   }
 
   const loadPlan = useCallback(async () => {
+    const generation = ++loadGeneration.current
+    if (!mounted.current) return
     setLoading(true)
     setLoadError(null)
     try {
       const data = await api.get<TaskAcceptance>(`/api/tasks/${task.id}/acceptance`)
+      if (!mounted.current || generation !== loadGeneration.current) return
       setPlan(data)
       setLastLoadedAt(new Date().toISOString())
       setDraftCriterionTitles((current) => ({
@@ -119,9 +125,9 @@ export function TaskAcceptancePanel({ task, onUpdated, onDraftStateChange }: Tas
         ...Object.fromEntries(data.criteria.map((criterion) => [criterion.id, criterion.title])),
       }))
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : 'Не удалось загрузить критерии приемки')
+      if (mounted.current && generation === loadGeneration.current) setLoadError(error instanceof Error ? error.message : 'Не удалось загрузить критерии приемки')
     } finally {
-      setLoading(false)
+      if (mounted.current && generation === loadGeneration.current) setLoading(false)
     }
   }, [task.id])
 
@@ -273,17 +279,18 @@ export function TaskAcceptancePanel({ task, onUpdated, onDraftStateChange }: Tas
           evidence_url: evidence[criterionId]?.url.trim() || undefined,
         })),
       })
+      if (!mounted.current) return
       toast.success('Критерии отправлены на приемку')
       setSelected((current) => new Set([...current].filter((criterionId) => !submittedIds.includes(criterionId))))
       setEvidence((current) => Object.fromEntries(
         Object.entries(current).filter(([criterionId]) => !submittedIds.includes(criterionId)),
       ))
       await loadPlan()
-      onUpdated?.()
+      if (mounted.current) onUpdated?.()
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось отправить критерии')
+      if (mounted.current) toast.error(error instanceof Error ? error.message : 'Не удалось отправить критерии')
     } finally {
-      endMutation()
+      if (mounted.current) endMutation()
     }
   }
 
@@ -302,14 +309,15 @@ export function TaskAcceptancePanel({ task, onUpdated, onDraftStateChange }: Tas
       await api.post(`/api/tasks/${task.id}/acceptance/review`, {
         decisions: [{ criterion_id: criterion.id, approved, comment: comment || undefined }],
       })
+      if (!mounted.current) return
       toast.success(approved ? 'Критерий принят' : 'Критерий возвращен')
       setReviewComments((current) => ({ ...current, [criterion.id]: '' }))
       await loadPlan()
-      onUpdated?.()
+      if (mounted.current) onUpdated?.()
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось обработать критерий')
+      if (mounted.current) toast.error(error instanceof Error ? error.message : 'Не удалось обработать критерий')
     } finally {
-      endMutation()
+      if (mounted.current) endMutation()
     }
   }
 
@@ -327,15 +335,16 @@ export function TaskAcceptancePanel({ task, onUpdated, onDraftStateChange }: Tas
         approved,
         comment,
       })
+      if (!mounted.current) return
       toast.success(approved ? 'Решение изменено: критерий принят' : 'Решение изменено: критерий возвращен')
       setRevisionComments((current) => ({ ...current, [criterion.id]: '' }))
       setRevisionCriterionId(null)
       await loadPlan()
-      onUpdated?.()
+      if (mounted.current) onUpdated?.()
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось изменить решение')
+      if (mounted.current) toast.error(error instanceof Error ? error.message : 'Не удалось изменить решение')
     } finally {
-      endMutation()
+      if (mounted.current) endMutation()
     }
   }
 
@@ -350,12 +359,12 @@ export function TaskAcceptancePanel({ task, onUpdated, onDraftStateChange }: Tas
         aria-live="polite"
       >
         <p className="text-sm font-semibold text-rose-900">Критерии приемки не загрузились</p>
-        <p className="mt-1 text-sm text-rose-800">{loadError || 'Неизвестная ошибка загрузки'}</p>
+        <p className="mt-1 text-sm text-foreground">{loadError || 'Неизвестная ошибка загрузки'}</p>
         <button
           type="button"
           onClick={() => void loadPlan()}
           disabled={loading}
-          className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-md border border-rose-300 bg-white px-3 py-2 text-sm font-medium text-rose-800 hover:bg-rose-100 disabled:opacity-50"
+          className="mt-3 inline-flex min-h-11 items-center gap-2 rounded-md border border-rose-300 bg-white px-3 py-2 text-sm font-medium text-foreground hover:bg-rose-100 disabled:opacity-50"
         >
           <RefreshCcw className="h-4 w-4" /> {loading ? 'Повторяем...' : 'Повторить загрузку'}
         </button>
@@ -409,7 +418,7 @@ export function TaskAcceptancePanel({ task, onUpdated, onDraftStateChange }: Tas
 
       {draftConflict && (
         <div
-          className="mt-3 rounded-md border border-violet-300 bg-violet-50 px-3 py-2 text-sm text-violet-950"
+          className="mt-3 rounded-md border border-violet-300 bg-violet-50 px-3 py-2 text-sm text-foreground"
           role="status"
         >
           <p className="font-medium">Критерии изменились после создания черновика</p>
@@ -509,6 +518,7 @@ export function TaskAcceptancePanel({ task, onUpdated, onDraftStateChange }: Tas
               {canSubmitCriterion && selected.has(criterion.id) && (
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   <textarea
+                    disabled={busy}
                     value={evidence[criterion.id]?.comment ?? ''}
                     onChange={(event) => updateEvidence(criterion.id, 'comment', event.target.value)}
                     rows={2}
@@ -518,6 +528,7 @@ export function TaskAcceptancePanel({ task, onUpdated, onDraftStateChange }: Tas
                     className="min-h-[4.75rem] w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                   />
                   <textarea
+                    disabled={busy}
                     inputMode="url"
                     value={evidence[criterion.id]?.url ?? ''}
                     onChange={(event) => updateEvidence(criterion.id, 'url', event.target.value)}
@@ -533,6 +544,7 @@ export function TaskAcceptancePanel({ task, onUpdated, onDraftStateChange }: Tas
               {canReviewCriterion && (
                 <div className="mt-3 space-y-2 border-t border-slate-100 pt-3">
                   <textarea
+                    disabled={busy}
                     value={comment}
                     onChange={(event) => setReviewComments((current) => ({ ...current, [criterion.id]: event.target.value }))}
                     rows={2}
@@ -586,6 +598,7 @@ export function TaskAcceptancePanel({ task, onUpdated, onDraftStateChange }: Tas
                   {canReviseCriterion && revisionCriterionId === criterion.id && (
                     <div className="mt-2 space-y-2 rounded-md border border-slate-200 bg-slate-50 p-2.5">
                       <textarea
+                        disabled={busy}
                         value={revisionComment}
                         onChange={(event) => setRevisionComments((current) => ({
                           ...current,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowRight, Bell, Check, Lock, RefreshCw, Unlock, X } from 'lucide-react'
 import { auditCalendar, type CalendarReadiness as Readiness, type CalendarState } from '@/api/auditCalendar'
@@ -24,6 +24,25 @@ export function CalendarReadiness({ state, from, to, onAction, onRefresh }: { st
   const [result, setResult] = useState<Readiness | null>(null)
   const [error, setError] = useState('')
   const [reload, setReload] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState('')
+  const refreshSequence = useRef(0)
+  const refreshPending = useRef(false)
+  useEffect(() => {
+    refreshSequence.current += 1; refreshPending.current = false
+    setRefreshing(false); setRefreshError('')
+    return () => { refreshSequence.current += 1 }
+  }, [from, to, tab, duration])
+  async function refreshSummary() {
+    if (refreshPending.current) return
+    const sequence = ++refreshSequence.current
+    refreshPending.current = true; setRefreshing(true); setRefreshError('')
+    try {
+      await onRefresh()
+      if (sequence === refreshSequence.current) setReload(n => n + 1)
+    } catch (e) { if (sequence === refreshSequence.current) setRefreshError(errorText(e)) }
+    finally { if (sequence === refreshSequence.current) { refreshPending.current = false; setRefreshing(false) } }
+  }
   const query = JSON.stringify({ from, to, duration, version: state.scope.version })
   const [loadedQuery, setLoadedQuery] = useState('')
   useEffect(() => {
@@ -48,7 +67,9 @@ export function CalendarReadiness({ state, from, to, onAction, onRefresh }: { st
   const inPeriod = (date: string) => date >= from && date <= to && isWorkingDay(date)
   const personLink = (id: string, date: string, label = name(id)) => <Link className="ac-readiness-link" to={availabilityHref(id, date)}>{label}<ArrowRight size={14} aria-hidden="true" /></Link>
   return <section className="ac-readiness" aria-label="Сводка доступности">
-    <header className="ac-section-head"><div><h2>Сводка доступности</h2><small>{dateLabel(from)}–{dateLabel(to)} · Пн–Пт · {timeLabel(current?.working_start ?? 600)}–{timeLabel(current?.working_end ?? 1080)} · Europe/Moscow</small></div><button type="button" className="ac-icon" title="Обновить сводку" aria-label="Обновить сводку" disabled={loading} onClick={() => setReload(n => n + 1)}><RefreshCw size={16} /></button></header>
+    <header className="ac-section-head"><div><h2>Сводка доступности</h2><small>{dateLabel(from)}–{dateLabel(to)} · Пн–Пт · {timeLabel(current?.working_start ?? 600)}–{timeLabel(current?.working_end ?? 1080)} · Europe/Moscow</small></div><button type="button" className="ac-icon" title="Обновить сводку" aria-label="Обновить сводку" disabled={loading || refreshing} onClick={() => void refreshSummary()}><RefreshCw size={16} /></button></header>
+    {refreshing && <p role="status">Обновление сводки и заявок…</p>}
+    {refreshError && <div className="ac-error" role="alert">Сводка и заявки не обновлены. {refreshError}<button type="button" disabled={refreshing} onClick={() => void refreshSummary()}>Повторить обновление сводки</button></div>}
     <div className="ac-summary-controls"><nav className="ac-summary-tabs" aria-label="Вкладки сводки">{([{ id: 'timeline', label: 'По времени' }, { id: 'employees', label: 'Заполненность' }, { id: 'groups', label: 'Группы' }, { id: 'requests', label: 'Заявки' }]).map(item => {
       const next = new URLSearchParams(params); next.set('summary_tab', item.id)
       return <Link key={item.id} to={`?${next}`} aria-current={tab === item.id ? 'page' : undefined}>{item.label}{item.id === 'requests' ? ` (${requests.filter(r => ['pending', 'approved'].includes(r.status)).length})` : ''}</Link>
@@ -82,6 +103,6 @@ export function CalendarReadiness({ state, from, to, onAction, onRefresh }: { st
       <dl className="ac-request-times"><div><dt>Обращение, Москва</dt><dd><time dateTime={request.requested_at}>{serverTimeLabel(request.requested_at)}</time><small>{name(request.requested_by_id)}</small></dd></div><div><dt>Открыто, Москва</dt><dd>{serverTimeLabel(request.opened_at)}<small>{name(request.opened_by_id)}</small></dd></div><div><dt>Закрыто, Москва</dt><dd>{serverTimeLabel(request.closed_at)}<small>{name(request.closed_by_id)}</small></dd></div></dl>
       {request.resolution && <p>Решение: {request.resolution}</p>}
       {state.actor.can_manage && !state.scope.archived && <div className="ac-actions">{request.status === 'pending' && <><button type="button" onClick={() => onAction({ kind: 'resolve', id: request.id, action: 'approve' })}><Check size={16} />Одобрить и открыть день</button><button type="button" onClick={() => onAction({ kind: 'resolve', id: request.id, action: 'reject' })}><X size={16} />Отклонить</button></>}{request.status === 'approved' && <button type="button" onClick={() => onAction({ kind: 'resolve', id: request.id, action: 'close' })}><Lock size={16} />Закрыть заявку и день</button>}</div>}
-    </article>) : <p className="ac-empty">Заявок за период нет.</p>}</div>}
+    </article>) : !refreshing && !refreshError ? <p className="ac-empty">Заявок за период нет.</p> : null}</div>}
   </section>
 }

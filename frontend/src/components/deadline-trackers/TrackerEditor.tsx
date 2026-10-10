@@ -60,7 +60,7 @@ export function TrackerEditor({ initial, editing, linkedSource, groups, categori
   }
 
   return <TrackerDialog title={editing ? 'Редактирование трекера' : 'Новый трекер срока'} dirty={dirty} busy={busy} onClose={onClose}
-    footer={<button type="submit" form="deadline-tracker-editor" disabled={busy || uncertain} className={cn(trackerButton, 'border-primary bg-primary text-primary-foreground hover:bg-primary/90 dark:text-primary-foreground')}>
+    footer={<button type="submit" form="deadline-tracker-editor" disabled={busy || uncertain} className={cn(trackerButton, 'border-primary bg-primary text-primary-foreground hover:bg-primary/90 dark:hover:bg-primary/90 dark:text-primary-foreground')}>
       <Save className="h-4 w-4" aria-hidden="true" />{editing ? 'Сохранить' : 'Создать трекер'}
     </button>}>
     <form id="deadline-tracker-editor" onSubmit={(event) => void submit(event)} noValidate autoComplete="off">
@@ -134,7 +134,7 @@ export function TrackerEditor({ initial, editing, linkedSource, groups, categori
                   change('startsAt', localDateInput(task.start_at)); change('dueAt', localDateInput(task.due_at))
                 }
               }}><option value="">Без личной задачи</option>{personalTasks.map((task) => <option key={task.id} value={task.id}>{task.task_key} · {task.title}</option>)}</select>
-              {sourceError && <div role="alert" className="text-sm text-rose-700">{sourceError} <button type="button" className={trackerButton} onClick={onRetrySources}>Повторить загрузку задач</button></div>}
+              {sourceError && <div role="alert" className="text-sm text-rose-700 dark:text-rose-300">{sourceError} <button type="button" className={trackerButton} onClick={onRetrySources}>Повторить загрузку задач</button></div>}
             </TrackerField>}
           </div>
         </details>

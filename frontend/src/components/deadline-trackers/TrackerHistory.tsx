@@ -34,7 +34,8 @@ export function TrackerHistory({ tracker, busy, error, readError, onRetryRead, o
   const [revision, setRevision] = useState(0)
   const [offset, setOffset] = useState(0)
   const [hasMore, setHasMore] = useState(false)
-  useEffect(() => { setOffset(0) }, [revision, tracker.updated_at, tracker.current_occurrence?.id])
+  const [retry, setRetry] = useState(0)
+  useEffect(() => { setOffset(0) }, [revision, tracker.id, tracker.updated_at, tracker.current_occurrence?.id])
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true); setLoadError('')
@@ -54,7 +55,7 @@ export function TrackerHistory({ tracker, busy, error, readError, onRetryRead, o
       if (!controller.signal.aborted) setLoadError(cause instanceof Error ? cause.message : 'Не удалось загрузить историю')
     }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [offset, onLoad, revision, tracker.id, tracker.updated_at, tracker.current_occurrence?.id])
+  }, [offset, retry, onLoad, revision, tracker.id, tracker.updated_at, tracker.current_occurrence?.id])
   const timezone = tracker.recurrence?.timezone
   const live = tracker.status === 'active' || tracker.status === 'paused'
   const noCurrentOccurrence = Boolean(tracker.recurrence && tracker.current_occurrence?.status !== 'pending')
@@ -76,7 +77,7 @@ export function TrackerHistory({ tracker, busy, error, readError, onRetryRead, o
       <section aria-label="История повторений" className="border-t border-slate-200 pt-3 dark:border-slate-700">
         <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">{tracker.recurrence ? 'История повторений' : 'Срок'}</h3><button type="button" className={trackerButton} disabled={loading || busy} onClick={() => setRevision((value) => value + 1)}><RefreshCw className="h-4 w-4" aria-hidden="true" />Обновить</button></div>
         {loading && <p role="status" className="py-3 text-sm text-slate-500">Загрузка истории...</p>}
-        {loadError && <p role="alert" className="py-3 text-sm text-rose-700 dark:text-rose-300">{loadError}</p>}
+        {loadError && <p role="alert" className="py-3 text-sm text-rose-700 dark:text-rose-300">{loadError}<button type="button" className={trackerButton} disabled={loading} onClick={() => setRetry((value) => value + 1)}>Повторить загрузку истории</button></p>}
         <ol className="divide-y divide-slate-200 dark:divide-slate-700">{history?.occurrences.map((occurrence) => <li key={occurrence.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
           <div className="min-w-0 text-sm"><div className="break-words tabular-nums">#{occurrence.sequence} · {date(occurrence.due_at, timezone)}</div><div className="text-xs text-slate-500">{occurrenceLabels[occurrence.status]}{occurrence.completed_at && ` · ${date(occurrence.completed_at, timezone)}`}</div></div>
           {tracker.recurrence && live && !noCurrentOccurrence && occurrence.status === 'pending' && <button type="button" className={trackerButton} disabled={busy} onClick={() => void onComplete(occurrence).then(() => setRevision((value) => value + 1))}><CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden="true" />Завершить повторение</button>}
@@ -85,7 +86,7 @@ export function TrackerHistory({ tracker, busy, error, readError, onRetryRead, o
       </section>
       {!!history?.alerts.length && <details className="border-t border-slate-200 pt-3 dark:border-slate-700"><summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">Доставка напоминаний</summary><ul className="space-y-2 text-sm">{history.alerts.map((alert) => <li key={alert.id} className="flex flex-wrap justify-between gap-2"><span className="tabular-nums">{date(alert.scheduled_for, timezone)}</span><span>{alertLabels[alert.status]}{alert.is_read ? ' · Прочитано' : ''}</span></li>)}</ul></details>}
       {!!history?.events.length && <details className="border-t border-slate-200 pt-3 dark:border-slate-700"><summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold">Журнал изменений</summary><ul className="space-y-2 text-sm">{history.events.map((event) => <li key={event.id} className="flex flex-wrap justify-between gap-2"><span>{eventLabels[event.event_type] || 'Изменение трекера'}</span><span className="tabular-nums text-slate-500">{date(event.created_at, timezone)}</span></li>)}</ul></details>}
-      {hasMore && <button type="button" className={trackerButton} disabled={loading || busy} onClick={() => setOffset((value) => value + 100)}>Загрузить еще историю</button>}
+      {hasMore && <button type="button" className={trackerButton} disabled={loading || busy || Boolean(loadError)} onClick={() => setOffset((value) => value + 100)}>Загрузить еще историю</button>}
     </div>
   </TrackerDialog>
 }

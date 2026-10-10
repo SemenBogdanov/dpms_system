@@ -4,6 +4,7 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type ReactNode,
@@ -235,6 +236,8 @@ function ProjectCockpit(
 ) {
   const [workspace, setWorkspace] = useState<WorkEntityWorkspace | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const loadRevision = useRef(0)
   const [busy, setBusy] = useState(false)
   const [executionContractTask, setExecutionContractTask] =
     useState<WorkEntityTask | null>(null)
@@ -278,22 +281,25 @@ function ProjectCockpit(
     criticalityReason: '',
   })
 
-  const loadWorkspace = useCallback(async () => {
+  const loadWorkspace = useCallback(async (propagate = false) => {
+    const revision = ++loadRevision.current
     setLoading(true)
+    setLoadError(null)
     try {
-      const data = await api.get<WorkEntityWorkspace>(
-        `/api/work-entities/${entity.id}/workspace`,
-      )
-      setWorkspace(data)
+      const data = await api.get<WorkEntityWorkspace>(`/api/work-entities/${entity.id}/workspace`)
+      if (revision === loadRevision.current) setWorkspace(data)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось загрузить план')
+      if (revision !== loadRevision.current) return
+      setLoadError(error instanceof Error ? error.message : 'Не удалось загрузить план')
+      if (propagate) throw error
     } finally {
-      setLoading(false)
+      if (revision === loadRevision.current) setLoading(false)
     }
   }, [entity.id])
 
   useEffect(() => {
     void loadWorkspace()
+    return () => { loadRevision.current += 1 }
   }, [loadWorkspace])
 
   const milestones = useMemo(
@@ -365,8 +371,13 @@ function ProjectCockpit(
     .filter((participant) => participant.user_id !== ownerParticipant?.user_id)
     .slice(0, 4)
   const nearestMilestones = milestones.slice(0, 3)
-  const refreshAll = async () => {
-    await Promise.all([loadWorkspace(), onChanged()])
+  const refreshAll = async (propagate = false) => {
+    try {
+      await Promise.all([loadWorkspace(true), onChanged()])
+    } catch (error) {
+      setLoadError('Не удалось обновить данные проекта. Повторите загрузку.')
+      if (propagate) throw error
+    }
   }
 
   const openTaskDialog = () => {
@@ -679,8 +690,11 @@ function ProjectCockpit(
     )
   }
 
+  if (!workspace) return <div role="alert" className="p-4 text-red-700">{loadError || 'План недоступен'} <button type="button" onClick={() => void loadWorkspace()}>Повторить загрузку плана</button></div>
+
   return (
     <div className="space-y-4">
+      {loadError && <div role="alert" className="text-red-700">{loadError}. Показаны последние загруженные данные. <button type="button" onClick={() => void loadWorkspace()}>Повторить загрузку плана</button></div>}
       <section className="grid items-stretch gap-4 xl:grid-cols-[minmax(0,1fr)_480px] 2xl:grid-cols-[minmax(0,1.2fr)_640px]">
         <div className="grid min-w-0 grid-rows-[auto_1fr] gap-4">
           <article className="rounded-lg border border-slate-200 bg-white p-4">
@@ -707,14 +721,14 @@ function ProjectCockpit(
             {entity.success_criteria && (
               <div className="mt-3 flex items-start gap-2 text-sm leading-6 text-slate-600">
                 <FileCheck2 className="mt-1 h-4 w-4 shrink-0 text-emerald-600" />
-                <span>
+                <span className="min-w-0 [overflow-wrap:anywhere]">
                   <strong className="font-medium text-slate-800">Успех:</strong>{' '}
                   {entity.success_criteria}
                 </span>
               </div>
             )}
             {entity.constraints && (
-              <div className="mt-3 border-l-2 border-amber-400 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <div className="mt-3 border-l-2 border-amber-400 bg-amber-50 px-3 py-2 text-sm text-amber-900 [overflow-wrap:anywhere]">
                 <strong className="font-medium">Ограничения:</strong> {entity.constraints}
               </div>
             )}
@@ -1405,10 +1419,10 @@ function ProjectCockpit(
             </Field>
             {charterPreview && (
               <section className="rounded-lg border border-sky-200 bg-sky-50 p-3">
-                <p className="text-sm font-semibold text-sky-900">
+                <p className="text-sm font-semibold text-sky-800">
                   Будет создана ревизия {charterPreview.schedule_revision + 1}
                 </p>
-                <ul className="mt-2 space-y-1 text-xs leading-5 text-sky-900">
+                <ul className="mt-2 space-y-1 text-xs leading-5 text-sky-800">
                   {charterPreview.changes.map((change) => (
                     <li key={change.field}>
                       {charterFieldLabels[change.field]}: изменение будет
@@ -1584,7 +1598,7 @@ function ProjectCockpit(
           entityId={entity.id}
           operation={executionContractTask}
           onClose={() => setExecutionContractTask(null)}
-          onChanged={refreshAll}
+          onChanged={() => refreshAll(true)}
         />
       )}
     </div>

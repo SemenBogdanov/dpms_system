@@ -7,6 +7,7 @@ import { AlertTriangle, CalendarClock, Copy, FileText, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { WorkEntityBacklinks } from './WorkEntityBacklinks'
 import { TaskAcceptancePanel } from './TaskAcceptancePanel'
+import { useFormNavigationProtection } from './PersonalTaskForm'
 import { preventBackdropDismiss, useProtectedModal } from '@/hooks/useProtectedModal'
 import { clearTaskAcceptanceDraft } from '@/lib/acceptanceDraft'
 
@@ -80,11 +81,23 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
   const [attachments, setAttachments] = useState<TaskAttachment[]>([])
   const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({})
   const [attachmentsLoading, setAttachmentsLoading] = useState(false)
+  const [attachmentsError, setAttachmentsError] = useState('')
+  const [reviewEventsError, setReviewEventsError] = useState('')
+  const [readRevision, setReadRevision] = useState(0)
   const [reviewEvents, setReviewEvents] = useState<TaskReviewEvent[]>([])
   const [reviewEventsLoading, setReviewEventsLoading] = useState(false)
   const [acceptanceDraftDirty, setAcceptanceDraftDirty] = useState(false)
   const [acceptanceMutationBusy, setAcceptanceMutationBusy] = useState(false)
   const [discardDialogOpen, setDiscardDialogOpen] = useState(false)
+  const navigationBusy = useRef(false)
+  navigationBusy.current = acceptanceMutationBusy
+  const pendingNavigation = useRef<(() => void) | null>(null)
+  const discardNavigation = useRef(false)
+  const requestNavigation = useCallback((leave: () => void) => {
+    pendingNavigation.current = leave
+    setDiscardDialogOpen(true)
+  }, [])
+  useFormNavigationProtection(Boolean(task) && (acceptanceDraftDirty || acceptanceMutationBusy), navigationBusy, requestNavigation)
   const lastDraftFocusRef = useRef<HTMLElement | null>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   const pendingPointerTriggerRef = useRef<{ element: HTMLElement; capturedAt: number } | null>(null)
@@ -134,6 +147,7 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
     setAcceptanceMutationBusy(false)
     setDiscardDialogOpen(false)
     lastDraftFocusRef.current = null
+    pendingNavigation.current = null
   }, [taskId])
 
   const requestClose = useCallback(() => {
@@ -160,6 +174,7 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
   }, [acceptanceDraftDirty, acceptanceMutationBusy, closeAndRestoreFocus, panelRef])
 
   const continueEditing = () => {
+    pendingNavigation.current = null
     setDiscardDialogOpen(false)
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
@@ -184,10 +199,19 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
   const discardAndClose = () => {
     if (!taskId) return
     clearTaskAcceptanceDraft(taskId)
+    discardNavigation.current = true
     setAcceptanceDraftDirty(false)
     setDiscardDialogOpen(false)
-    closeAndRestoreFocus()
   }
+
+  useEffect(() => {
+    if (acceptanceDraftDirty || !discardNavigation.current) return
+    discardNavigation.current = false
+    const leave = pendingNavigation.current
+    pendingNavigation.current = null
+    if (leave) leave()
+    else closeAndRestoreFocus()
+  }, [acceptanceDraftDirty, discardDialogOpen, closeAndRestoreFocus])
 
   const handleAcceptanceDraftState = useCallback((state: { dirty: boolean; busy: boolean }) => {
     setAcceptanceDraftDirty(state.dirty)
@@ -206,7 +230,7 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
     const createdUrls: string[] = []
 
     async function loadAttachments() {
-      setAttachmentsLoading(true)
+      setAttachmentsLoading(true); setAttachmentsError('')
       setAttachments([])
       setAttachmentUrls({})
       try {
@@ -228,21 +252,21 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
           }
         }
         if (active) setAttachmentUrls(Object.fromEntries(entries))
-      } catch {
-        if (active) setAttachments([])
+      } catch (cause) {
+        if (active) setAttachmentsError(cause instanceof Error ? cause.message : 'Не удалось загрузить вложения')
       } finally {
         if (active) setAttachmentsLoading(false)
       }
     }
 
     async function loadReviewEvents() {
-      setReviewEventsLoading(true)
+      setReviewEventsLoading(true); setReviewEventsError('')
       setReviewEvents([])
       try {
         const list = await api.get<TaskReviewEvent[]>(`/api/tasks/${taskId}/review-events`)
         if (active) setReviewEvents(list)
-      } catch {
-        if (active) setReviewEvents([])
+      } catch (cause) {
+        if (active) setReviewEventsError(cause instanceof Error ? cause.message : 'Не удалось загрузить журнал приёмки')
       } finally {
         if (active) setReviewEventsLoading(false)
       }
@@ -256,6 +280,7 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
       createdUrls.forEach((url) => URL.revokeObjectURL(url))
     }
   }, [
+    readRevision,
     taskId,
     task?.acceptance_state,
     task?.acceptance_accepted_count,
@@ -329,15 +354,15 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className={`relative w-full rounded-xl bg-white shadow-2xl ${task.acceptance_mode === 'criteria' ? 'max-w-3xl' : 'max-w-lg'}`}
+        className={`relative flex max-h-[calc(100dvh-2rem)] w-full flex-col overflow-hidden rounded-xl bg-white shadow-2xl ${task.acceptance_mode === 'criteria' ? 'max-w-3xl' : 'max-w-lg'}`}
         onClick={(e) => e.stopPropagation()}
         onFocusCapture={(event) => {
           const target = event.target as HTMLElement
           if (target.dataset.acceptanceDraft === 'true') lastDraftFocusRef.current = target
         }}
       >
-        <div className="flex items-start justify-between border-b border-slate-200 p-4">
-          <h2 id="task-detail-title" className="text-lg font-semibold text-slate-900 pr-8">
+        <div className="flex shrink-0 items-start justify-between border-b border-slate-200 p-4">
+          <h2 id="task-detail-title" className="min-w-0 flex-1 text-lg font-semibold text-slate-900 pr-8">
             <button
               type="button"
               onClick={handleCopyTaskLabel}
@@ -345,7 +370,7 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
               title="Скопировать номер и название"
             >
               <span className="shrink-0 font-mono text-sm text-slate-400">#{task.task_number}</span>
-              <span className="min-w-0">{task.title}</span>
+              <span className="min-w-0 [overflow-wrap:anywhere]">{task.title}</span>
               <Copy className="mt-1 h-4 w-4 shrink-0 text-slate-300 group-hover:text-primary" />
             </button>
           </h2>
@@ -360,7 +385,11 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
           </button>
         </div>
 
-        <div className="max-h-[calc(100vh-12rem)] overflow-y-auto p-4 space-y-4">
+        <div className="min-h-0 overflow-y-auto p-4 space-y-4">
+          {(attachmentsError || reviewEventsError) && <div role="alert" className="text-sm text-red-600">
+            {attachmentsError && <p>{attachmentsError}</p>}{reviewEventsError && <p>{reviewEventsError}</p>}
+            <button type="button" onClick={() => setReadRevision((value) => value + 1)}>Повторить загрузку материалов и истории</button>
+          </div>}
           {/* Статус, приоритет, тип, сложность, дедлайн */}
           <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-3 text-sm">
             <div className="flex flex-wrap gap-x-4 gap-y-1">
@@ -405,7 +434,7 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
                 {task.rejection_comment && (
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Последний возврат</p>
-                    <p className="mt-1 whitespace-pre-wrap text-amber-950">{task.rejection_comment}</p>
+                    <p className="mt-1 whitespace-pre-wrap text-amber-900">{task.rejection_comment}</p>
                   </div>
                 )}
               </div>
@@ -457,6 +486,7 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
 
           {task.acceptance_mode === 'criteria' && (
             <TaskAcceptancePanel
+              key={task.id}
               task={task}
               onUpdated={onAcceptanceUpdated}
               onDraftStateChange={handleAcceptanceDraftState}
@@ -658,6 +688,7 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
             {isTeamleadOrAdmin && onOpenDeadline && (
               <button
                 type="button"
+                disabled={acceptanceMutationBusy || acceptanceDraftDirty}
                 onClick={() => onOpenDeadline(task)}
                 className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
@@ -667,6 +698,7 @@ export const TaskDetailModal: FC<TaskDetailModalProps> = ({
             {isTeamleadOrAdmin && task.status === 'done' && onOpenBugfix && (
               <button
                 type="button"
+                disabled={acceptanceMutationBusy || acceptanceDraftDirty}
                 onClick={() => onOpenBugfix(task)}
                 className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >

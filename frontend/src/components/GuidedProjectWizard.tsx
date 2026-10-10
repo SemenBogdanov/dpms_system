@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -163,7 +163,33 @@ export function GuidedProjectWizard({
   const [tasks, setTasks] = useState<TaskDraft[]>([])
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
+  const pendingRef = useRef(false)
+  const [createdId, setCreatedId] = useState<string | null>(null)
+  const createdIdRef = useRef<string | null>(null)
+  const [refreshError, setRefreshError] = useState(false)
   const panelRef = useProtectedModal<HTMLDivElement>()
+  const dirty = Boolean(title || outcome || successCriteria || constraints || milestones.length || tasks.length || selectedMemberIds.length || startsAt !== initialStart || dueAt !== initialDue)
+  const close = () => {
+    if (pendingRef.current) return
+    if (!createdId && dirty && !window.confirm('Закрыть мастер и удалить несохранённый черновик?')) return
+    onClose()
+  }
+  useEffect(() => {
+    if (!dirty || createdId) return
+    const protect = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', protect)
+    return () => window.removeEventListener('beforeunload', protect)
+  }, [dirty, createdId])
+
+  const openCreated = async (entityId: string) => {
+    setRefreshError(false)
+    try {
+      await onCreated(entityId)
+      onClose()
+    } catch {
+      setRefreshError(true)
+    }
+  }
 
   const acceptedContacts = useMemo(
     () =>
@@ -309,6 +335,14 @@ export function GuidedProjectWizard({
   }
 
   const submit = async () => {
+    if (pendingRef.current) return
+    if (createdIdRef.current) {
+      pendingRef.current = true
+      setBusy(true)
+      try { await openCreated(createdIdRef.current) }
+      finally { pendingRef.current = false; setBusy(false) }
+      return
+    }
     if (!validateStep() || !user) return
     const orderedMilestones = sortedMilestones
     const milestoneIndex = new Map(
@@ -343,6 +377,7 @@ export function GuidedProjectWizard({
         target_milestone_index: milestoneIndex.get(task.targetMilestoneId) ?? 0,
       })),
     }
+    pendingRef.current = true
     setBusy(true)
     try {
       const result = await api.post<GuidedProjectCreated>(
@@ -350,11 +385,13 @@ export function GuidedProjectWizard({
         payload,
       )
       toast.success('Черновик проекта создан')
-      await onCreated(result.entity_id)
-      onClose()
+      createdIdRef.current = result.entity_id
+      setCreatedId(result.entity_id)
+      await openCreated(result.entity_id)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось создать проект')
     } finally {
+      pendingRef.current = false
       setBusy(false)
     }
   }
@@ -370,7 +407,7 @@ export function GuidedProjectWizard({
       <div
         ref={panelRef}
         tabIndex={-1}
-        className="flex max-h-[96vh] w-full flex-col overflow-hidden rounded-t-lg bg-white shadow-2xl sm:max-w-5xl sm:rounded-lg"
+        className="flex max-h-[100dvh] w-full flex-col overflow-hidden rounded-t-lg bg-white shadow-2xl sm:max-h-[calc(100dvh-2rem)] sm:max-w-5xl sm:rounded-lg"
       >
         <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-4 py-3 sm:px-6">
           <div>
@@ -383,7 +420,7 @@ export function GuidedProjectWizard({
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={close}
             disabled={busy}
             className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 disabled:opacity-40"
             aria-label="Закрыть"
@@ -399,7 +436,7 @@ export function GuidedProjectWizard({
                 <button
                   type="button"
                   onClick={() => index < step && setStep(index)}
-                  disabled={index > step || busy}
+                  disabled={index > step || busy || Boolean(createdId)}
                   className={cn(
                     'flex w-full items-center gap-2 border-b-2 pb-2 text-left text-xs font-medium transition sm:text-sm',
                     index === step
@@ -428,7 +465,7 @@ export function GuidedProjectWizard({
           </ol>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+        <fieldset disabled={busy || Boolean(createdId)} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
           {step === 0 && (
             <div className="mx-auto max-w-3xl space-y-5">
               <div>
@@ -536,7 +573,7 @@ export function GuidedProjectWizard({
                 {milestones.map((milestone, index) => (
                   <section
                     key={milestone.id}
-                    className="rounded-lg border border-slate-200 bg-slate-50/60 p-3"
+                    className="rounded-lg border border-slate-200 bg-slate-50 p-3"
                   >
                     <div className="flex items-start gap-3">
                       <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-semibold text-emerald-700">
@@ -694,7 +731,7 @@ export function GuidedProjectWizard({
                   {tasks.map((task, index) => (
                     <section
                       key={task.id}
-                      className="rounded-lg border border-slate-200 bg-slate-50/60 p-3"
+                      className="rounded-lg border border-slate-200 bg-slate-50 p-3"
                     >
                       <div className="flex items-start gap-3">
                         <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-xs font-semibold text-sky-700">
@@ -981,26 +1018,26 @@ export function GuidedProjectWizard({
                     </div>
                   )}
                   <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-emerald-700">
                       <CheckCircle2 className="h-4 w-4" />
                       Будет создан единый черновик
                     </div>
                     <dl className="mt-3 grid grid-cols-3 gap-3 text-center">
                       <div>
                         <dt className="text-xs text-emerald-700">Проверок</dt>
-                        <dd className="mt-0.5 text-lg font-semibold text-emerald-900">
+                        <dd className="mt-0.5 text-lg font-semibold text-emerald-700">
                           {milestones.length}
                         </dd>
                       </div>
                       <div>
                         <dt className="text-xs text-emerald-700">Операций</dt>
-                        <dd className="mt-0.5 text-lg font-semibold text-emerald-900">
+                        <dd className="mt-0.5 text-lg font-semibold text-emerald-700">
                           {tasks.length}
                         </dd>
                       </div>
                       <div>
                         <dt className="text-xs text-emerald-700">Участников</dt>
-                        <dd className="mt-0.5 text-lg font-semibold text-emerald-900">
+                        <dd className="mt-0.5 text-lg font-semibold text-emerald-700">
                           {selectedMemberIds.length + 1}
                         </dd>
                       </div>
@@ -1010,17 +1047,18 @@ export function GuidedProjectWizard({
               </section>
             </div>
           )}
-        </div>
+        </fieldset>
 
-        <footer className="flex items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:px-6">
+        {refreshError && <p role="alert" className="px-4 py-2 text-amber-900">Проект создан: {createdId}. Не удалось обновить список. Повторите открытие, создание повторяться не будет.</p>}
+        <footer className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-6">
           <button
             type="button"
-            onClick={() => (step === 0 ? onClose() : setStep((current) => current - 1))}
+            onClick={() => (step === 0 || createdId ? close() : setStep((current) => current - 1))}
             disabled={busy}
             className="inline-flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
           >
             {step > 0 && <ArrowLeft className="h-4 w-4" />}
-            {step === 0 ? 'Отмена' : 'Назад'}
+            {createdId ? 'Закрыть' : step === 0 ? 'Отмена' : 'Назад'}
           </button>
           {step < steps.length - 1 ? (
             <button
@@ -1039,7 +1077,7 @@ export function GuidedProjectWizard({
               className="inline-flex h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
             >
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              Создать черновик
+              {createdId ? 'Открыть созданный проект' : 'Создать черновик'}
             </button>
           )}
         </footer>

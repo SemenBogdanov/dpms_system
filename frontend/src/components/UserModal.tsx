@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { User } from '@/api/types'
 import { validatePassword } from '@/lib/passwordValidation'
 import { cn } from '@/lib/utils'
@@ -59,8 +59,13 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
   const [busy, setBusy] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
   const panelRef = useProtectedModal<HTMLDivElement>(open)
+  const pending = useRef(false)
+  const session = useRef(0)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    session.current += 1
+    pending.current = false
+    setBusy(false)
     if (!open) return
     setValidationError(null)
     if (mode === 'edit' && initial) {
@@ -96,6 +101,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setPassword('')
       setShowPassword(false)
     }
+    return () => { session.current += 1 }
   }, [open, mode, initial])
 
   const handleDevelopmentChange = (checked: boolean) => {
@@ -115,6 +121,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (pending.current) return
     if (!full_name.trim()) {
       setValidationError('ФИО обязательно')
       return
@@ -140,6 +147,8 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       return
     }
     setValidationError(null)
+    const revision = session.current
+    pending.current = true
     setBusy(true)
     try {
       await onSubmit({
@@ -158,11 +167,14 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
         competency_constructor_enabled: competencyConstructorEnabled,
         ...(mode === 'create' ? { password } : undefined),
       })
-      onClose()
+      if (session.current === revision) onClose()
     } catch (err) {
-      setValidationError(err instanceof Error ? err.message : 'Ошибка сохранения')
+      if (session.current === revision) setValidationError(err instanceof Error ? err.message : 'Ошибка сохранения')
     } finally {
-      setBusy(false)
+      if (session.current === revision) {
+        pending.current = false
+        setBusy(false)
+      }
     }
   }
 
@@ -170,17 +182,19 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      className="protected-modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       role="dialog"
       aria-modal="true"
       aria-labelledby="user-modal-title"
       onPointerDown={preventBackdropDismiss}
     >
-      <div ref={panelRef} tabIndex={-1} className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-xl">
-        <h3 id="user-modal-title" className="text-lg font-semibold text-slate-900">
+      <div ref={panelRef} tabIndex={-1} className="protected-modal-panel w-full max-w-2xl rounded-lg bg-white p-4 shadow-xl sm:p-6">
+        <h3 id="user-modal-title" className="shrink-0 text-lg font-semibold text-slate-900">
           {mode === 'create' ? 'Добавить сотрудника' : 'Редактировать сотрудника'}
         </h3>
-        <form onSubmit={handleSubmit} className="mt-4 space-y-3">
+        <form onSubmit={handleSubmit} aria-busy={busy} className="mt-4 flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 overflow-y-auto overscroll-contain">
+          <fieldset disabled={busy} className="min-w-0 space-y-3">
           <label htmlFor="user-full-name" className="block text-sm font-medium text-slate-700">ФИО *</label>
           <input
             id="user-full-name"
@@ -198,8 +212,9 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
             onChange={(e) => setEmail(e.target.value)}
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
           />
-          <label className="block text-sm font-medium text-slate-700">Роль</label>
+          <label htmlFor="user-role" className="block text-sm font-medium text-slate-700">Роль</label>
           <select
+            id="user-role"
             value={role}
             onChange={(e) => setRole(e.target.value as User['role'])}
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
@@ -208,8 +223,9 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
               <option key={r} value={r}>{r}</option>
             ))}
           </select>
-          <label className="block text-sm font-medium text-slate-700">Лига</label>
+          <label htmlFor="user-league" className="block text-sm font-medium text-slate-700">Лига</label>
           <select
+            id="user-league"
             value={league}
             onChange={(e) => setLeague(e.target.value as User['league'])}
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
@@ -218,8 +234,9 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
               <option key={l} value={l}>{l}</option>
             ))}
           </select>
-          <label className="block text-sm font-medium text-slate-700">План (MPW)</label>
+          <label htmlFor="user-mpw" className="block text-sm font-medium text-slate-700">План (MPW)</label>
           <input
+            id="user-mpw"
             type="number"
             min={0}
             value={mpw}
@@ -361,12 +378,15 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
               </p>
             </>
           )}
+          </fieldset>
+          </div>
           {validationError && (
-            <p className="text-sm text-red-600">{validationError}</p>
+            <p role="alert" className="max-h-24 shrink-0 overflow-y-auto break-words pt-2 text-sm text-red-600">{validationError}</p>
           )}
-          <div className="mt-6 flex justify-end gap-2">
+          <div className="flex shrink-0 justify-end gap-2 pt-3">
             <button
               type="button"
+              disabled={busy}
               onClick={onClose}
               className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
@@ -376,12 +396,12 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
               type="submit"
               disabled={busy}
               className={cn(
-                'rounded-md px-4 py-2 text-sm font-medium text-white',
-                mode === 'create' ? 'bg-primary hover:opacity-90' : 'bg-slate-700 hover:bg-slate-800',
+                'rounded-md px-4 py-2 text-sm font-medium',
+                mode === 'create' ? 'bg-primary text-primary-foreground hover:opacity-90' : 'bg-slate-700 text-white hover:bg-slate-800',
                 'disabled:opacity-50'
               )}
             >
-              {busy ? '...' : mode === 'create' ? 'Создать' : 'Сохранить'}
+              {busy ? 'Сохранение...' : mode === 'create' ? 'Создать' : 'Сохранить'}
             </button>
           </div>
         </form>

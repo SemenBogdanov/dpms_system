@@ -12,6 +12,7 @@ export type WorkEntityHealth = {
     | 'paused'
     | 'done'
     | 'archived'
+    | 'unknown'
   label: string
   detail: string
   tone: WorkEntityHealthTone
@@ -33,7 +34,7 @@ function daysUntil(value: string | null | undefined, now: Date) {
 
 export function getWorkEntityHealth(
   entity: WorkEntity,
-  overdueItems = 0,
+  overdueItems: number | null = null,
   now = new Date(),
 ): WorkEntityHealth {
   if (entity.status === 'archived') {
@@ -88,7 +89,7 @@ export function getWorkEntityHealth(
     }
   }
 
-  if (overdueItems > 0) {
+  if (overdueItems !== null && overdueItems > 0) {
     return {
       key: 'overdue',
       label: 'Есть просрочка',
@@ -112,6 +113,15 @@ export function getWorkEntityHealth(
       label: 'Контроль срока',
       detail: remainingDays === 0 ? 'Целевой срок сегодня.' : `До целевого срока: ${remainingDays} дн.`,
       tone: 'watch',
+    }
+  }
+
+  if (overdueItems === null) {
+    return {
+      key: 'unknown',
+      label: 'Сводка недоступна',
+      detail: 'Просрочки ещё не проверены. Обновите сводку проекта.',
+      tone: 'neutral',
     }
   }
 

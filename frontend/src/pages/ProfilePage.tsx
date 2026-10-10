@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '@/api/client'
 //import type { User, UserProgress, Task, QTransactionRead, LeagueEvaluation, LeagueProgress } from '@/api/types'
@@ -21,7 +21,6 @@ export function ProfilePage() {
 
   const [user, setUser] = useState<User | null>(null)
   const [progress, setProgress] = useState<UserProgress | null>(null)
-  const [loading] = useState(true)
   const [profileError, setProfileError] = useState<string | null>(null)
   const [profileLoading, setProfileLoading] = useState(false)
   const [doneTasks, setDoneTasks] = useState<Task[]>([])
@@ -38,10 +37,16 @@ export function ProfilePage() {
   const [runRateLoading, setRunRateLoading] = useState(false)
   const [runRateError, setRunRateError] = useState<string | null>(null)
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+  const requestSequence = useRef(0)
+  const scope = JSON.stringify([currentId, walletFilter, directionFilter])
+  const currentScope = useRef(scope)
+  currentScope.current = scope
 
   const isOwnProfile = !urlUserId || urlUserId === currentUser?.id
 
   const loadProfile = useCallback(async () => {
+    const sequence = ++requestSequence.current
+    const isCurrent = () => sequence === requestSequence.current && currentScope.current === scope
     if (!currentId) {
       setUser(null)
       setProgress(null)
@@ -66,6 +71,7 @@ export function ProfilePage() {
         }),
       ]
       const [u, p, tasks, inProgress, review, trans] = await Promise.all(promises)
+      if (!isCurrent()) return
       setUser(u)
       setProgress(p)
       setDoneTasks(tasks)
@@ -85,19 +91,20 @@ export function ProfilePage() {
       setLeagueProgressLoading(true)
       api
         .get<LeagueProgress>(`/api/users/${currentId}/league-progress`)
-        .then(setLeagueProgress)
-        .catch((e) => setLeagueProgressError(e instanceof Error ? e.message : 'Ошибка загрузки'))
-        .finally(() => setLeagueProgressLoading(false))
+        .then((value) => { if (isCurrent()) setLeagueProgress(value) })
+        .catch((e) => { if (isCurrent()) setLeagueProgressError(e instanceof Error ? e.message : 'Ошибка загрузки') })
+        .finally(() => { if (isCurrent()) setLeagueProgressLoading(false) })
 
       setRunRate(null)
       setRunRateError(null)
       setRunRateLoading(true)
       api
         .get<RunRate>(`/api/users/${currentId}/run-rate`)
-        .then(setRunRate)
-        .catch((e) => setRunRateError(e instanceof Error ? e.message : 'Ошибка загрузки'))
-        .finally(() => setRunRateLoading(false))
+        .then((value) => { if (isCurrent()) setRunRate(value) })
+        .catch((e) => { if (isCurrent()) setRunRateError(e instanceof Error ? e.message : 'Ошибка загрузки') })
+        .finally(() => { if (isCurrent()) setRunRateLoading(false) })
     } catch (e) {
+      if (!isCurrent()) return
       setUser(null)
       setProgress(null)
       setDoneTasks([])
@@ -108,16 +115,17 @@ export function ProfilePage() {
       setRunRate(null)
       setProfileError(e instanceof Error ? e.message : 'Ошибка загрузки профиля')
     } finally {
-      setProfileLoading(false)
+      if (isCurrent()) setProfileLoading(false)
     }
-  }, [currentId, walletFilter, directionFilter, currentUser?.role])
+  }, [currentId, walletFilter, directionFilter, scope])
 
   useEffect(() => {
     loadProfile()
+    return () => { requestSequence.current += 1 }
   }, [loadProfile])
 
   if (!currentId) return <SkeletonCard />
-  if (loading && !user) return <SkeletonCard />
+  if (!user && !profileError) return <SkeletonCard />
 
   const progressPercent = progress ? progress.percent : 0
   const progressTarget = progress?.target ?? user?.mpw ?? 0
@@ -153,10 +161,17 @@ export function ProfilePage() {
         )}
       </div>
 
-      {profileError && <div className="text-red-600">{profileError}</div>}
+      {profileError && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 text-red-600">
+          <span>{profileError}</span>
+          <button type="button" onClick={() => void loadProfile()} disabled={profileLoading} className="rounded-md border border-current px-3 py-2 text-sm disabled:opacity-50">
+            Повторить
+          </button>
+        </div>
+      )}
       {profileLoading && <p className="text-slate-500">Загрузка профиля...</p>}
 
-      {user && !profileLoading && (
+      {user && user.id === currentId && !profileLoading && (
         <>
           {/* Карточка героя */}
           <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm flex flex-wrap items-start justify-between gap-4">
@@ -355,7 +370,7 @@ export function ProfilePage() {
         </>
       )}
 
-      {!user && !profileError && !loading && !profileLoading && (
+      {!user && !profileError && !profileLoading && (
         <p className="text-slate-500">Выберите сотрудника в списке выше.</p>
       )}
 

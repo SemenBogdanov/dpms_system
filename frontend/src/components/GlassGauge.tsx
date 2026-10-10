@@ -41,9 +41,9 @@ export function GlassGauge({ load, capacity, utilization, status, className }: G
         <span
           className={cn(
             'rounded-full px-3 py-1 text-sm font-medium',
-            status === 'green' && 'bg-emerald-100 text-emerald-800',
+            status === 'green' && 'bg-emerald-100 text-emerald-700',
             status === 'yellow' && 'bg-amber-100 text-amber-800',
-            status === 'red' && 'bg-red-100 text-red-800'
+            status === 'red' && 'bg-red-100 text-red-700'
           )}
         >
           {status === 'green' && 'Норма'}

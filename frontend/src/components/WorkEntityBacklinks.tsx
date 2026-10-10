@@ -26,7 +26,11 @@ type WorkEntityBacklinksProps = {
   canManage?: boolean
 }
 
-export function WorkEntityBacklinks({
+export function WorkEntityBacklinks(props: WorkEntityBacklinksProps) {
+  return <BacklinksSession key={`${props.targetType}:${props.targetId}`} {...props} />
+}
+
+function BacklinksSession({
   targetType,
   targetId,
   className,
@@ -39,33 +43,45 @@ export function WorkEntityBacklinks({
   const [editing, setEditing] = useState(false)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
-  const [unavailable, setUnavailable] = useState(false)
+  const [linksError, setLinksError] = useState<string | null>(null)
+  const [entitiesError, setEntitiesError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
   const requestRef = useRef(0)
+  const pendingRef = useRef(false)
+  const activeRef = useRef(true)
 
   const load = useCallback(async () => {
     const requestId = ++requestRef.current
-    try {
-      const params = new URLSearchParams({ target_type: targetType, target_id: targetId })
-      const [reverseLinks, entityList] = await Promise.all([
-        api.get<WorkEntityReverseLink[]>(`/api/work-entities/links/by-target?${params.toString()}`),
-        api.get<WorkEntity[]>('/api/work-entities?include_archived=false'),
-      ])
-      if (requestId !== requestRef.current) return
-      setLinks(reverseLinks)
-      setEntities(entityList)
-      setUnavailable(false)
-    } catch {
-      if (requestId !== requestRef.current) return
-      setUnavailable(true)
-    } finally {
-      if (requestId === requestRef.current) setLoading(false)
-    }
+    setLoading(true)
+    const params = new URLSearchParams({ target_type: targetType, target_id: targetId })
+    await Promise.all([
+      api.get<WorkEntityReverseLink[]>(`/api/work-entities/links/by-target?${params.toString()}`)
+        .then((data) => {
+          if (requestId !== requestRef.current) return
+          setLinks(data)
+          setLinksError(null)
+          setSaved(false)
+        }).catch(() => {
+          if (requestId === requestRef.current) setLinksError('Не удалось обновить связи')
+        }),
+      api.get<WorkEntity[]>('/api/work-entities?include_archived=false')
+        .then((data) => {
+          if (requestId !== requestRef.current) return
+          setEntities(data)
+          setEntitiesError(null)
+        }).catch(() => {
+          if (requestId === requestRef.current) setEntitiesError('Не удалось загрузить проекты для добавления связи')
+        }),
+    ])
+    if (requestId === requestRef.current) setLoading(false)
   }, [targetId, targetType])
 
   useEffect(() => {
+    activeRef.current = true
     setLoading(true)
     void load()
     return () => {
+      activeRef.current = false
       requestRef.current += 1
     }
   }, [load])
@@ -81,7 +97,8 @@ export function WorkEntityBacklinks({
   }, [entities, links])
 
   const addLink = async () => {
-    if (!selectedEntityId) return
+    if (!selectedEntityId || pendingRef.current || loading || linksError || entitiesError) return
+    pendingRef.current = true
     setBusy(true)
     try {
       await api.post(`/api/work-entities/${selectedEntityId}/links`, {
@@ -89,31 +106,37 @@ export function WorkEntityBacklinks({
         target_id: targetId,
         relation_type: relationType,
       })
-      await load()
+      if (!activeRef.current) return
+      setSaved(true)
       setSelectedEntityId('')
       setEditing(false)
       toast.success('Связь добавлена')
+      await load()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось добавить связь')
     } finally {
+      pendingRef.current = false
       setBusy(false)
     }
   }
 
   const removeLink = async (link: WorkEntityReverseLink) => {
+    if (pendingRef.current || loading || linksError) return
+    pendingRef.current = true
     setBusy(true)
     try {
       await api.delete(`/api/work-entities/${link.entity_id}/links/${link.link_id}`)
-      await load()
+      if (!activeRef.current) return
+      setSaved(true)
       toast.success('Связь удалена')
+      await load()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось удалить связь')
     } finally {
+      pendingRef.current = false
       setBusy(false)
     }
   }
-
-  if (unavailable) return null
 
   return (
     <section className={cn('rounded-lg border border-slate-200 bg-slate-50/60 p-3 dark:border-slate-700 dark:bg-slate-900/60', className)}>
@@ -121,7 +144,7 @@ export function WorkEntityBacklinks({
         <div className="flex min-w-0 items-center gap-2">
           <Network className="h-4 w-4 shrink-0 text-primary" />
           <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Проекты и цели</h3>
-          {!loading && (
+          {!loading && !linksError && (
             <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-200">
               {links.length}
             </span>
@@ -134,13 +157,17 @@ export function WorkEntityBacklinks({
             className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:border-primary/40 hover:text-primary disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
             title={editing ? 'Закрыть добавление связи' : 'Добавить в проект или цель'}
             aria-label={editing ? 'Закрыть добавление связи' : 'Добавить в проект или цель'}
-            disabled={loading}
+            disabled={loading || busy || Boolean(linksError || entitiesError)}
           >
             {editing ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
           </button>
         )}
       </div>
 
+      {(linksError || entitiesError) && <div role="alert" className="py-2 text-sm text-red-700">
+        {saved && 'Изменение сохранено. '}{linksError || entitiesError}. {linksError && links.length > 0 && 'Показаны последние загруженные связи.'}
+        <button type="button" disabled={loading} onClick={() => void load()} className="ml-2 underline">Повторить загрузку связей</button>
+      </div>}
       {loading ? (
         <div className="flex items-center gap-2 py-2 text-xs text-slate-400">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -165,7 +192,7 @@ export function WorkEntityBacklinks({
                 <button
                   type="button"
                   onClick={() => void removeLink(link)}
-                  disabled={busy}
+                  disabled={busy || Boolean(linksError)}
                   className="inline-flex h-8 w-8 shrink-0 items-center justify-center text-slate-400 hover:text-red-600 disabled:opacity-50"
                   title="Убрать связь"
                   aria-label={`Убрать связь с ${link.entity_title}`}
@@ -176,9 +203,9 @@ export function WorkEntityBacklinks({
             </div>
           ))}
         </div>
-      ) : (
+      ) : !linksError ? (
         <p className="py-1 text-xs text-slate-500 dark:text-slate-400">Объект пока не связан с проектами или целями.</p>
-      )}
+      ) : null}
 
       {canManage && editing && (
         <div className="mt-3 grid gap-2 border-t border-slate-200 pt-3 sm:grid-cols-[minmax(0,1fr)_150px_auto] dark:border-slate-700">
@@ -214,7 +241,7 @@ export function WorkEntityBacklinks({
           <button
             type="button"
             onClick={() => void addLink()}
-            disabled={!selectedEntityId || busy}
+            disabled={!selectedEntityId || busy || loading || Boolean(linksError || entitiesError)}
             className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:opacity-50"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}

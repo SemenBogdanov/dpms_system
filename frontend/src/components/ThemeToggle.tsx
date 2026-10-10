@@ -24,8 +24,8 @@ export function ThemeToggle() {
             key={option.value}
             type="button"
             onClick={() => setTheme(option.value)}
-            className={`inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700 ${
-              selected ? 'bg-primary text-primary-foreground shadow-sm hover:bg-primary hover:text-primary-foreground' : ''
+            className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md transition-colors ${
+              selected ? 'bg-primary text-primary-foreground shadow-sm hover:bg-primary hover:text-primary-foreground' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
             }`}
             aria-label={option.title}
             aria-pressed={selected}

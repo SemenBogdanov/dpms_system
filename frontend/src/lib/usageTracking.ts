@@ -24,39 +24,57 @@ export function usageSection(pathname: string, user: User): string | null {
 }
 
 type Visit = { section: string; event_id: string; sent: boolean }
-const memory = new Map<string, Visit>()
+type VisitState = { last: Visit | null; pending: Visit[] }
+const memory = new Map<string, VisitState>()
 const inflight = new Set<string>()
+const MAX_PENDING = 100
 
-function readVisit(userId: string): Visit | undefined {
-  if (memory.has(userId)) return memory.get(userId)
+function isVisit(value: unknown): value is Visit {
+  return !!value && typeof value === 'object' && 'section' in value && typeof value.section === 'string'
+    && 'event_id' in value && typeof value.event_id === 'string' && /^[0-9a-f-]{36}$/i.test(value.event_id)
+    && 'sent' in value && typeof value.sent === 'boolean'
+}
+
+function readVisits(userId: string): VisitState {
+  const cached = memory.get(userId)
+  if (cached) return cached
+  let state: VisitState = { last: null, pending: [] }
   try {
     const saved: unknown = JSON.parse(sessionStorage.getItem(`dpms:usage:last-section:${userId}`) || 'null')
-    if (saved && typeof saved === 'object' && 'section' in saved && typeof saved.section === 'string'
-      && 'event_id' in saved && typeof saved.event_id === 'string' && /^[0-9a-f-]{36}$/i.test(saved.event_id)
-      && 'sent' in saved && typeof saved.sent === 'boolean') {
-      const visit = saved as Visit
-      memory.set(userId, visit)
-      return visit
+    if (isVisit(saved)) {
+      state = { last: saved, pending: saved.sent ? [] : [saved] }
+    } else if (saved && typeof saved === 'object' && 'last' in saved && 'pending' in saved && Array.isArray(saved.pending)) {
+      state = { last: isVisit(saved.last) ? saved.last : null, pending: saved.pending.filter(isVisit).filter((visit) => !visit.sent).slice(-MAX_PENDING) }
     }
   } catch { /* Navigation must also work when storage is unavailable. */ }
-  return undefined
+  memory.set(userId, state)
+  return state
 }
 
-function storeVisit(userId: string, visit: Visit) {
-  memory.set(userId, visit)
-  try { sessionStorage.setItem(`dpms:usage:last-section:${userId}`, JSON.stringify(visit)) } catch { /* Best effort. */ }
+function storeVisits(userId: string, state: VisitState) {
+  memory.set(userId, state)
+  try { sessionStorage.setItem(`dpms:usage:last-section:${userId}`, JSON.stringify(state)) } catch { /* Best effort. */ }
 }
 
-export async function recordSectionVisit(userId: string, section: string) {
-  const previous = readVisit(userId)
-  const visit = previous?.section === section ? previous : { section, event_id: crypto.randomUUID(), sent: false }
-  if (visit.sent || inflight.has(visit.event_id)) return
-  storeVisit(userId, visit)
-  inflight.add(visit.event_id)
-  try {
-    // Telemetry failures must never terminate the user's working session.
-    await api.post('/api/usage/section-views', { event_id: visit.event_id, section }, { redirectOnUnauthorized: false })
-    if (memory.get(userId)?.event_id === visit.event_id) storeVisit(userId, { ...visit, sent: true })
-  } catch { /* Keep the same id for a later foreground/reload retry; no polling. */ }
-  finally { inflight.delete(visit.event_id) }
+export async function recordSectionVisit(userId: string, section: string, isCurrent = () => true) {
+  const previous = readVisits(userId)
+  if (previous.last?.section !== section) {
+    const visit = { section, event_id: crypto.randomUUID(), sent: false }
+    storeVisits(userId, { last: visit, pending: [...previous.pending, visit].slice(-MAX_PENDING) })
+  }
+  // Keep unacknowledged IDs across navigation; telemetry stays bounded and best effort.
+  for (const visit of [...readVisits(userId).pending]) {
+    if (!isCurrent()) return
+    if (inflight.has(visit.event_id)) continue
+    inflight.add(visit.event_id)
+    try {
+      await api.post('/api/usage/section-views', { event_id: visit.event_id, section: visit.section }, { redirectOnUnauthorized: false })
+      const current = readVisits(userId)
+      storeVisits(userId, {
+        last: current.last?.event_id === visit.event_id ? { ...visit, sent: true } : current.last,
+        pending: current.pending.filter((item) => item.event_id !== visit.event_id),
+      })
+    } catch { /* Retry the same ID on a later foreground/reload; no polling. */ }
+    finally { inflight.delete(visit.event_id) }
+  }
 }

@@ -80,6 +80,28 @@ a {
   touch-action: manipulation;
 }
 
+:is(button, a, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+}
+
+.protected-modal-overlay {
+  padding: max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right)) max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+}
+
+.protected-modal-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 100%;
+  max-height: calc(100dvh - max(0.75rem, env(safe-area-inset-top)) - max(0.75rem, env(safe-area-inset-bottom)));
+  overflow: hidden;
+}
+
+.protected-modal-panel input[type='checkbox'] {
+  flex-shrink: 0;
+}
+
 .app-shell {
   height: 100vh;
   height: 100dvh;
@@ -551,7 +573,9 @@ a {
 
 [data-theme='dark'] .text-emerald-500,
 [data-theme='dark'] .text-emerald-600,
-[data-theme='dark'] .text-emerald-700 {
+[data-theme='dark'] .text-emerald-700,
+[data-theme='dark'] .text-emerald-800,
+[data-theme='dark'] .text-emerald-900 {
   color: hsl(158 64% 62%);
 }
 
@@ -570,7 +594,8 @@ a {
 [data-theme='dark'] .text-amber-600,
 [data-theme='dark'] .text-amber-700,
 [data-theme='dark'] .text-amber-800,
-[data-theme='dark'] .text-amber-900 {
+[data-theme='dark'] .text-amber-900,
+[data-theme='dark'] .text-amber-950 {
   color: hsl(43 96% 68%);
 }
 
@@ -588,7 +613,9 @@ a {
 
 [data-theme='dark'] .text-red-500,
 [data-theme='dark'] .text-red-600,
-[data-theme='dark'] .text-red-700 {
+[data-theme='dark'] .text-red-700,
+[data-theme='dark'] .text-red-800,
+[data-theme='dark'] .text-red-900 {
   color: hsl(0 91% 73%);
 }
 
@@ -616,13 +643,78 @@ a {
 
 [data-theme='dark'] .text-blue-500,
 [data-theme='dark'] .text-blue-600,
-[data-theme='dark'] .text-blue-700 {
+[data-theme='dark'] .text-blue-700,
+[data-theme='dark'] .text-blue-800 {
   color: hsl(213 94% 75%);
 }
 
 [data-theme='dark'] .border-blue-200,
 [data-theme='dark'] .border-blue-300 {
   border-color: hsl(217 91% 60% / 0.42);
+}
+
+/* Complete the reviewed status pairs; leave solid action colors and variants alone. */
+[data-theme='dark'] .bg-rose-50,
+[data-theme='dark'] .bg-rose-50\/70,
+[data-theme='dark'] .bg-rose-100 {
+  background-color: hsl(347 77% 50% / 0.13);
+}
+
+[data-theme='dark'] .text-rose-700,
+[data-theme='dark'] .text-rose-800,
+[data-theme='dark'] .text-rose-900 {
+  color: hsl(351 95% 78%);
+}
+
+[data-theme='dark'] .border-rose-200,
+[data-theme='dark'] .border-rose-300 {
+  border-color: hsl(351 95% 71% / 0.44);
+}
+
+[data-theme='dark'] .bg-violet-50,
+[data-theme='dark'] .bg-violet-100 {
+  background-color: hsl(258 90% 66% / 0.14);
+}
+
+[data-theme='dark'] .text-violet-700,
+[data-theme='dark'] .text-violet-800,
+[data-theme='dark'] .text-violet-950 {
+  color: hsl(252 95% 85%);
+}
+
+[data-theme='dark'] .border-violet-100,
+[data-theme='dark'] .border-violet-200,
+[data-theme='dark'] .border-violet-300 {
+  border-color: hsl(252 95% 76% / 0.44);
+}
+
+[data-theme='dark'] .bg-emerald-50\/60 {
+  background-color: hsl(160 84% 39% / 0.13);
+}
+
+[data-theme='dark'] .bg-amber-50\/40,
+[data-theme='dark'] .bg-amber-50\/60 {
+  background-color: hsl(39 96% 50% / 0.13);
+}
+
+:is([data-theme='dark'], [data-theme='rose']) .bg-slate-50\/60 {
+  background-color: hsl(var(--surface-soft) / 0.6);
+}
+
+:is([data-theme='dark'], [data-theme='rose']) .bg-slate-50\/70 {
+  background-color: hsl(var(--surface-soft) / 0.7);
+}
+
+:is([data-theme='dark'], [data-theme='rose']) .bg-slate-50\/80 {
+  background-color: hsl(var(--surface-soft) / 0.8);
+}
+
+[data-theme='rose'] :is(input, select, textarea)[aria-invalid='true'] {
+  border-color: hsl(347 77% 42%);
+}
+
+[data-theme='dark'] :is(input, select, textarea)[aria-invalid='true'] {
+  border-color: hsl(351 95% 71%);
 }
 
 [data-theme='dark'] .bg-sky-50,

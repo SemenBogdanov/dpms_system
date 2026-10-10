@@ -199,18 +199,18 @@ export function AdminServerBootPanel() {
             </table>
             </div>
           )}
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
-            <p role="status" className="text-xs tabular-nums text-muted-foreground">
-              {data.total === 0 ? '0 записей' : `${numberFormat.format(query.offset + 1)}–${numberFormat.format(query.offset + data.items.length)} из ${numberFormat.format(data.total)}`}
-            </p>
-            <nav aria-label="Страницы загрузок сервера" className="flex gap-2">
-              <button type="button" disabled={loading || query.offset === 0} onClick={() => setQuery((current) => ({ ...current, offset: Math.max(0, current.offset - PAGE_SIZE) }))} className={iconButton} title="Предыдущие записи" aria-label="Предыдущие записи"><ChevronLeft className="h-4 w-4" aria-hidden="true" /></button>
-              <button type="button" disabled={loading || query.offset + PAGE_SIZE >= data.total} onClick={() => setQuery((current) => ({ ...current, offset: current.offset + PAGE_SIZE }))} className={iconButton} title="Следующие записи" aria-label="Следующие записи"><ChevronRight className="h-4 w-4" aria-hidden="true" /></button>
-            </nav>
-          </div>
           <p className="mt-2 text-xs text-muted-foreground">Время событий по часам сервера; независимая проверка не проводилась.</p>
         </>
       )}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
+            <p role="status" className="text-xs tabular-nums text-muted-foreground">
+              {data ? data.total === 0 ? '0 записей' : `${numberFormat.format(query.offset + 1)}–${numberFormat.format(query.offset + data.items.length)} из ${numberFormat.format(data.total)}` : ''}
+            </p>
+            <nav aria-label="Страницы загрузок сервера" className="flex gap-2">
+              <button type="button" aria-disabled={loading || !!error || query.offset === 0} onClick={() => { if (!loading && !error && query.offset > 0) setQuery((current) => ({ ...current, offset: Math.max(0, current.offset - PAGE_SIZE) })) }} className={`${iconButton} aria-disabled:cursor-not-allowed aria-disabled:opacity-50`} title="Предыдущие записи" aria-label="Предыдущие записи"><ChevronLeft className="h-4 w-4" aria-hidden="true" /></button>
+              <button type="button" aria-disabled={loading || !data || query.offset + PAGE_SIZE >= data.total} onClick={() => { if (!loading && data && query.offset + PAGE_SIZE < data.total) setQuery((current) => ({ ...current, offset: current.offset + PAGE_SIZE })) }} className={`${iconButton} aria-disabled:cursor-not-allowed aria-disabled:opacity-50`} title="Следующие записи" aria-label="Следующие записи"><ChevronRight className="h-4 w-4" aria-hidden="true" /></button>
+            </nav>
+          </div>
     </section>
   )
 }

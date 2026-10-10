@@ -6,6 +6,7 @@ import { CalendarCommandForm } from './CalendarCommandForm'
 import { CalendarModal } from './CalendarModal'
 import { useCalendarMeetingOptions } from './useCalendarMeetingOptions'
 import { calendarInstant, useCalendarClock } from './useCalendarClock'
+import { CalendarMeetingConflict } from './CalendarMeetingConflict'
 
 function MeetingIssues({ issues }: { issues: CalendarIssue[] }) {
   const seen = new Set<string>()
@@ -22,6 +23,8 @@ export function CalendarMeetingEditor({ state, date: initialDate, start: initial
   const optionsStatusId = useId()
   const timeFieldsId = useId()
   const frozenFact = fact || state.facts.find(f => f.plan_id === plan?.id)
+  const [baseline, setBaseline] = useState(plan)
+  const [initiallyEditable] = useState(state.actor.can_manage && !state.scope.archived && !frozenFact && !plan?.fact_outcome)
   const [mode, setMode] = useState<'plan' | 'fact' | 'notice'>('plan')
   const [changed, setChanged] = useState(false)
   const [date, setDate] = useState(plan?.date || initialDate)
@@ -56,7 +59,7 @@ export function CalendarMeetingEditor({ state, date: initialDate, start: initial
     : !Number.isInteger(start) || start < 0 || start >= 1440 || start % 30 !== 0 ? 'Укажите начало встречи с шагом 30 минут.'
     : !Number.isInteger(duration) || duration < 30 || duration % 30 !== 0 ? 'Длительность должна быть не меньше 30 минут и кратна 30.'
     : start + duration > 1440 ? 'Встреча не может переходить через полночь.' : ''
-  if (frozenFact || !editable) {
+  if (!initiallyEditable) {
     const record = frozenFact || plan
     return <CalendarModal title={frozenFact ? 'Факт встречи' : 'План встречи'} onClose={onClose}>
       {!record && <p className="ac-muted">Только просмотр. {state.scope.archived ? 'Контур архивирован.' : 'Назначение доступно помощнику контура.'}</p>}
@@ -69,6 +72,7 @@ export function CalendarMeetingEditor({ state, date: initialDate, start: initial
     </CalendarModal>
   }
   const validate = () => {
+    if (!editable || (plan && (!state.plans.some(p => p.id === plan.id) || state.plans.find(p => p.id === plan.id)?.fact_outcome))) return 'План больше недоступен для редактирования. Ввод сохранён.'
     if (prefill && !prefillEnabled) return 'Дождитесь обновления календаря перед сохранением.'
     if (prefill && mode === 'plan' && calendarInstant(date, start) < clock.current()) return 'Выбранное окно истекло. Укажите новое время встречи.'
     if (mode === 'notice') return !noticeUser ? 'Выберите участника встречи.' : ''
@@ -83,7 +87,11 @@ export function CalendarMeetingEditor({ state, date: initialDate, start: initial
     if (mode === 'fact' && absentMinutes > 5 && outcome !== 'cancelled') return 'Отсутствие аудитора более 5 минут: результат должен быть «Отменено».'
     return ''
   }
-  return <CalendarCommandForm title={mode === 'fact' ? 'Зафиксировать факт' : mode === 'notice' ? 'Уведомление об отсутствии' : plan ? 'Редакция плана' : 'План встречи'} version={prefill?.version ?? state.scope.version} initialDirty={!!prefill} onClose={onClose} onRefresh={onRefresh} validate={validate} command={() => mode === 'notice' ? { operation: 'notice.record', payload: { plan_id: plan!.id, user_id: noticeUser, reported_at: `${reportedAt}:00+03:00`, reason } } : mode === 'fact' ? { operation: 'fact.record', payload: { plan_id: plan!.id, date, start, duration, group_id: group, activity, speaker_id: speaker || null, outcome, reason, evidence, auditor_absent_minutes: absentMinutes } } : plan?.source_id ? { operation: 'plan.revise', payload: { id: plan.id, date, start, duration, group_id: group, activity, speaker_id: speaker || null, status, reason } } : { operation: 'plan.save', payload: { ...(plan && { id: plan.id }), date, start, duration, group_id: group, activity, speaker_id: speaker || null, status, reason } }}>
+  return <CalendarCommandForm title={mode === 'fact' ? 'Зафиксировать факт' : mode === 'notice' ? 'Уведомление об отсутствии' : plan ? 'Редакция плана' : 'План встречи'} version={state.scope.version} initialVersion={prefill?.version} initialDirty={!!prefill} onClose={onClose} onRefresh={onRefresh} validate={validate}
+    reconcile={(fresh, resolve) => <CalendarMeetingConflict key={fresh.scope.version} state={fresh} baseline={baseline} draft={{ date, start, duration, group_id: group, activity, speaker_id: speaker || null, status }} onResolve={(merged, current) => {
+      setDate(merged.date); setStart(merged.start); setDuration(merged.duration); setGroup(merged.group_id); setActivity(merged.activity); setSpeaker(merged.speaker_id || ''); setStatus(merged.status); setBaseline(current); resolve()
+    }} />}
+    command={() => mode === 'notice' ? { operation: 'notice.record', payload: { plan_id: plan!.id, user_id: noticeUser, reported_at: `${reportedAt}:00+03:00`, reason } } : mode === 'fact' ? { operation: 'fact.record', payload: { plan_id: plan!.id, date, start, duration, group_id: group, activity, speaker_id: speaker || null, outcome, reason, evidence, auditor_absent_minutes: absentMinutes } } : plan?.source_id ? { operation: 'plan.revise', payload: { id: plan.id, date, start, duration, group_id: group, activity, speaker_id: speaker || null, status, reason } } : { operation: 'plan.save', payload: { ...(plan && { id: plan.id }), date, start, duration, group_id: group, activity, speaker_id: speaker || null, status, reason } }}>
     <div className="ac-meeting-fields" onChange={() => setChanged(true)}>
       {mode === 'plan' && plan?.source_id && <><label className="ac-check"><input type="checkbox" checked={workingRevision} onChange={e => setWorkingRevision(e.target.checked)} />Создать рабочую редакцию источника</label><p className="ac-warning">Оригинал сохраняется. Перенос на будущую дату требует современного состава А+Т и не даёт исторического исключения.</p></>}
       {plan && <div className="ac-segments" aria-label="Действие с планом">{(['plan', 'fact', 'notice'] as const).map(value => <button type="button" key={value} disabled={changed && mode !== value} aria-pressed={mode === value} onClick={() => setMode(value)}>{value === 'plan' ? 'План' : value === 'fact' ? 'Факт' : 'Уведомление'}</button>)}</div>}
@@ -108,7 +116,7 @@ export function CalendarMeetingEditor({ state, date: initialDate, start: initial
             {!eligibleGroups.length && <p className="ac-warning">Нет доступных групп для выбранного времени.</p>}
             {group && !selectedOption?.eligible && <p className="ac-warning">Выбранная группа недоступна для выбранного времени. Выбор сохранён.</p>}
             <MeetingIssues issues={optionIssues} />
-            {options.data.groups.some(g => !g.eligible && g.id !== group) && <details><summary>Недоступные группы</summary>{options.data.groups.filter(g => !g.eligible && g.id !== group).map(g => <div key={g.id}><strong>{g.code} · {g.label}</strong><MeetingIssues issues={[...g.issues, ...g.warnings]} /></div>)}</details>}
+            {options.data.groups.some(g => !g.eligible && g.id !== group) && <details><summary tabIndex={0}>Недоступные группы</summary>{options.data.groups.filter(g => !g.eligible && g.id !== group).map(g => <div key={g.id}><strong>{g.code} · {g.label}</strong><MeetingIssues issues={[...g.issues, ...g.warnings]} /></div>)}</details>}
           </>}
         </div>}
         {group && <p className="ac-muted ac-meeting-composition">А: {personName(composition?.auditor_id)} · Т: {personName(composition?.tech_id)}</p>}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   ChevronDown,
@@ -10,11 +10,15 @@ import {
   StickyNote,
   UserSquare2,
   X,
+  MessageCircle,
+  Flag,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { useAttention } from '@/contexts/attentionState'
+import { readPreference, writePreference } from '@/lib/preferenceStorage'
+import { useProtectedModal } from '@/hooks/useProtectedModal'
 import {
   applySidebarItemLabels,
   normalizeSidebarOrder,
@@ -33,14 +37,38 @@ export function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [desktopPinned, setDesktopPinned] = useState(() => {
     if (typeof window === 'undefined') return true
-    return window.localStorage.getItem('dpms.sidebarPinned') !== 'false'
+    return readPreference('dpms.sidebarPinned') !== 'false'
   })
   const [desktopHoverOpen, setDesktopHoverOpen] = useState(false)
+  const [desktopFocusOpen, setDesktopFocusOpen] = useState(false)
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia('(min-width: 1024px)').matches)
+  const desktopTriggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLElement>(null)
+  const drawerRef = useProtectedModal<HTMLDivElement>(mobileOpen && !isDesktop, { onEscape: () => setMobileOpen(false) })
+  const panelVisible = isDesktop ? desktopPinned || desktopHoverOpen || desktopFocusOpen : mobileOpen
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
-    window.localStorage.setItem('dpms.sidebarPinned', String(desktopPinned))
+    writePreference('dpms.sidebarPinned', String(desktopPinned))
   }, [desktopPinned])
+
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1024px)')
+    const update = () => {
+      setIsDesktop(media.matches)
+      setMobileOpen(false)
+      setDesktopHoverOpen(false)
+      setDesktopFocusOpen(false)
+    }
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
+
+  useEffect(() => { setMobileOpen(false) }, [location.key])
+
+  useEffect(() => {
+    if (panelRef.current) panelRef.current.inert = !panelVisible
+  }, [panelRef, panelVisible])
 
   const sidebarOrder = useMemo(() => normalizeSidebarOrder(user?.sidebar_menu_order), [user?.sidebar_menu_order])
   const visibleNav = useMemo(
@@ -140,13 +168,14 @@ export function Sidebar() {
     return (
       <span
         className={cn('inline-flex shrink-0 items-center', compact ? 'gap-0.5' : 'gap-1')}
+        role="img"
         aria-label={`Непросмотрено: обращений ${summary.direct_count}, важных событий ${summary.important_count}`}
       >
         {summary.direct_count > 0 && (
-          <span className="h-2 w-2 rounded-full bg-red-500 ring-2 ring-[hsl(var(--surface))]" title={`${summary.direct_count} новых обращений`} />
+          <span title={`${summary.direct_count} новых обращений`}><MessageCircle aria-hidden="true" className="h-3 w-3 text-red-600" /></span>
         )}
         {summary.important_count > 0 && (
-          <span className="h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-[hsl(var(--surface))]" title={`${summary.important_count} важных событий`} />
+          <span title={`${summary.important_count} важных событий`}><Flag aria-hidden="true" className="h-3 w-3 text-emerald-700" /></span>
         )}
       </span>
     )
@@ -156,11 +185,12 @@ export function Sidebar() {
     <NavLink
       key={item.to}
       to={item.to}
+      tabIndex={0}
       end={item.to === '/'}
       onClick={closeMobile}
       className={({ isActive }) =>
         cn(
-          'flex items-center gap-2.5 rounded-xl text-sm transition-colors',
+          'flex min-h-11 items-center gap-2.5 rounded-xl text-sm transition-colors lg:min-h-0',
           nested ? 'px-3 py-1.5 text-[13px]' : 'px-3 py-2',
           isActive
             ? 'bg-accent-lighter text-accent-dark font-medium'
@@ -194,9 +224,10 @@ export function Sidebar() {
       <div>
         <button
           type="button"
+          tabIndex={0}
           onClick={() => toggleGroup(button.id)}
           className={cn(
-            'flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors',
+            'flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors lg:min-h-0',
             isActive
               ? 'bg-accent-lighter text-accent-dark font-medium'
               : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
@@ -204,7 +235,7 @@ export function Sidebar() {
           aria-expanded={isOpen}
         >
           <Icon className="h-4 w-4 shrink-0" />
-          <span className="min-w-0 flex-1 text-left">{button.label}</span>
+          <span className="min-w-0 flex-1 text-left [overflow-wrap:anywhere]">{button.label}</span>
           {items.some((item) => item.id === 'messages') && attentionDots()}
           <ChevronDown className={cn('h-4 w-4 shrink-0 transition-transform', isOpen && 'rotate-180')} />
         </button>
@@ -254,7 +285,10 @@ export function Sidebar() {
             })}
             <button
               type="button"
-              onClick={() => setMobileOpen(true)}
+              onClick={(event) => {
+                event.currentTarget.focus()
+                setMobileOpen(true)
+              }}
               className={cn(
                 'flex min-h-[54px] flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] font-semibold transition-colors',
                 mobileOpen
@@ -263,6 +297,7 @@ export function Sidebar() {
               )}
               aria-label="Открыть все разделы"
               aria-expanded={mobileOpen}
+              aria-controls="app-sidebar"
             >
               <Menu className="h-5 w-5 shrink-0" />
               <span>Ещё</span>
@@ -273,20 +308,33 @@ export function Sidebar() {
 
       <button
         type="button"
-        onClick={() => setMobileOpen((o) => !o)}
+        onClick={(event) => {
+          event.currentTarget.focus()
+          setMobileOpen((o) => !o)
+        }}
         className="mobile-menu-button fixed z-50 inline-flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-surface text-foreground shadow-sm lg:hidden"
+        style={{ visibility: mobileOpen ? 'hidden' : undefined }}
         aria-label="Меню"
         aria-expanded={mobileOpen}
+        aria-controls="app-sidebar"
       >
         {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
       </button>
 
-      {mobileOpen && (
-        <div
-          className="fixed inset-0 z-30 bg-black/30 lg:hidden"
-          onClick={() => setMobileOpen(false)}
-          aria-hidden
-        />
+      {!desktopPinned && (
+        <button
+          ref={desktopTriggerRef}
+          type="button"
+          tabIndex={0}
+          aria-label="Открыть боковую панель"
+          aria-controls="app-sidebar"
+          aria-expanded={isDesktop && panelVisible}
+          className="fixed left-2 top-2 z-30 hidden h-8 w-8 items-center justify-center rounded-md border border-border bg-surface text-foreground lg:inline-flex"
+          onClick={() => {
+            setDesktopFocusOpen(true)
+            window.requestAnimationFrame(() => panelRef.current?.focus())
+          }}
+        ><Menu className="h-4 w-4" /></button>
       )}
 
       {!desktopPinned && (
@@ -297,7 +345,39 @@ export function Sidebar() {
         />
       )}
 
+      <div
+        ref={drawerRef}
+        tabIndex={-1}
+        className={!isDesktop && mobileOpen ? 'fixed inset-0 z-40' : 'contents'}
+        role={!isDesktop && mobileOpen ? 'dialog' : undefined}
+        aria-modal={!isDesktop && mobileOpen ? true : undefined}
+        aria-label={!isDesktop && mobileOpen ? 'Разделы' : undefined}
+      >
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/30 lg:hidden"
+          onClick={closeMobile}
+          aria-hidden
+        />
+      )}
       <aside
+        id="app-sidebar"
+        ref={panelRef}
+        tabIndex={-1}
+        aria-label="Разделы"
+        aria-hidden={!panelVisible}
+        style={{ visibility: panelVisible ? 'visible' : 'hidden' }}
+        onFocus={() => { if (isDesktop) setDesktopFocusOpen(true) }}
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setDesktopFocusOpen(false)
+        }}
+        onKeyDown={(event) => {
+          if (isDesktop && !desktopPinned && event.key === 'Escape') {
+            setDesktopFocusOpen(false)
+            setDesktopHoverOpen(false)
+            desktopTriggerRef.current?.focus()
+          }
+        }}
         onMouseEnter={() => {
           if (!desktopPinned) setDesktopHoverOpen(true)
         }}
@@ -308,13 +388,17 @@ export function Sidebar() {
           'app-sidebar fixed left-0 top-0 z-40 flex h-full flex-col border-r border-gray-200/50 bg-white shadow-sm transition-transform duration-200 ease-out',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
           desktopPinned && 'lg:static lg:translate-x-0 lg:shadow-none',
-          !desktopPinned && (desktopHoverOpen ? 'lg:translate-x-0' : 'lg:-translate-x-full')
+          !desktopPinned && (desktopHoverOpen || desktopFocusOpen ? 'lg:translate-x-0' : 'lg:-translate-x-full')
         )}
       >
         <div className="relative flex items-center justify-center border-b border-gray-100 px-4 py-5">
           <img src="/logo_prosto_sdelal.svg" alt="Просто Сделал" className="app-logo h-9" />
+          <button type="button" onClick={closeMobile} aria-label="Закрыть меню" className="absolute right-1 top-1 inline-flex h-11 w-11 items-center justify-center rounded-md text-foreground lg:hidden">
+            <X className="h-5 w-5" />
+          </button>
           <button
             type="button"
+            tabIndex={0}
             onClick={() => setDesktopPinned((value) => !value)}
             className={cn(
               'absolute right-2 top-4 hidden h-8 w-8 items-center justify-center rounded-md border border-gray-200 text-gray-400 transition-colors hover:bg-gray-50 hover:text-gray-700 lg:inline-flex',
@@ -350,6 +434,7 @@ export function Sidebar() {
           </div>
           <button
             type="button"
+            tabIndex={0}
             onClick={logout}
             className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-gray-400 hover:bg-gray-50 hover:text-gray-600 transition-colors"
           >
@@ -358,6 +443,7 @@ export function Sidebar() {
           </button>
         </div>
       </aside>
+      </div>
     </>
   )
 }

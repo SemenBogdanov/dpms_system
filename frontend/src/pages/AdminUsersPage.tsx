@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '@/api/client'
 import type { AdminUser, User, PeriodHistoryItem, LeagueEvaluation, LeagueChange, RolloverResponse } from '@/api/types'
@@ -11,7 +11,8 @@ import { AdminServerBootPanel } from '@/components/AdminServerBootPanel'
 import { AuditCalendarAdminPanel } from '@/components/audit-calendar/AuditCalendarAdminPanel'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
-import { BarChart3, Copy, History, KeyRound, Pencil, PlugZap, Plus, RotateCcw, Trash2, UserPlus, Users } from 'lucide-react'
+import { useProtectedModal } from '@/hooks/useProtectedModal'
+import { BarChart3, Copy, History, KeyRound, Pencil, PlugZap, Plus, RefreshCw, RotateCcw, Trash2, UserPlus, Users, X } from 'lucide-react'
 
 const MONTHS = [
   'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
@@ -94,10 +95,45 @@ function previousMonthValue(date = new Date()) {
   return monthInputValue(new Date(date.getFullYear(), date.getMonth() - 1, 1))
 }
 
+function AdminDialog({ title, id, children, footer, busy = false, onClose, onSubmit }: {
+  title: string
+  id: string
+  children: React.ReactNode
+  footer: React.ReactNode
+  busy?: boolean
+  onClose: () => void
+  onSubmit?: React.FormEventHandler<HTMLFormElement>
+}) {
+  const ref = useProtectedModal<HTMLFormElement>(true, { onEscape: onClose })
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+      <form ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={id} aria-busy={busy}
+        onSubmit={onSubmit ?? ((event) => event.preventDefault())}
+        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl">
+        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 p-4">
+          <h2 id={id} className="min-w-0 text-lg font-semibold text-slate-900">{title}</h2>
+          <button type="button" onClick={onClose} disabled={busy} aria-label="Закрыть" title="Закрыть"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 disabled:opacity-50">
+            <X className="h-5 w-5" />
+          </button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">{children}</div>
+        <footer className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-slate-200 p-4">{footer}</footer>
+      </form>
+    </div>
+  )
+}
+
 export function AdminUsersPage() {
   const { user: currentUser } = useAuth()
   const [users, setUsers] = useState<AdminUser[]>([])
   const [periodHistory, setPeriodHistory] = useState<PeriodHistoryItem[]>([])
+  const [historyLoading, setHistoryLoading] = useState(true)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const historyRevision = useRef(0)
+  const usersRevision = useRef(0)
+  const pendingRef = useRef(new Set<string>())
+  const [pending, setPending] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [rolloverConfirm, setRolloverConfirm] = useState(false)
@@ -123,23 +159,45 @@ export function AdminUsersPage() {
   const [temporaryInviteText, setTemporaryInviteText] = useState('')
   const [historyUser, setHistoryUser] = useState<AdminUser | null>(null)
 
+  function beginAction(id: string) {
+    if (pendingRef.current.has(id)) return false
+    pendingRef.current.add(id)
+    setPending(new Set(pendingRef.current))
+    return true
+  }
+
+  function finishAction(id: string) {
+    pendingRef.current.delete(id)
+    setPending(new Set(pendingRef.current))
+  }
+
   const loadUsers = useCallback(() => {
+    const revision = ++usersRevision.current
+    setError(null)
     api.get<AdminUser[]>('/api/users/admin')
-      .then(setUsers)
-      .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка'))
-      .finally(() => setLoading(false))
+      .then((data) => { if (revision === usersRevision.current) setUsers(data) })
+      .catch((e) => { if (revision === usersRevision.current) setError(e instanceof Error ? e.message : 'Ошибка') })
+      .finally(() => { if (revision === usersRevision.current) setLoading(false) })
   }, [])
 
   const loadHistory = useCallback(() => {
-    api.get<PeriodHistoryItem[]>('/api/admin/period-history').then(setPeriodHistory).catch(() => setPeriodHistory([]))
+    const revision = ++historyRevision.current
+    setHistoryLoading(true)
+    setHistoryError(null)
+    api.get<PeriodHistoryItem[]>('/api/admin/period-history')
+      .then((data) => { if (revision === historyRevision.current) setPeriodHistory(data) })
+      .catch((e) => { if (revision === historyRevision.current) setHistoryError(e instanceof Error ? e.message : 'Не удалось загрузить историю периодов') })
+      .finally(() => { if (revision === historyRevision.current) setHistoryLoading(false) })
   }, [])
 
   useEffect(() => {
     loadUsers()
+    return () => { usersRevision.current += 1 }
   }, [loadUsers])
 
   useEffect(() => {
     loadHistory()
+    return () => { historyRevision.current += 1 }
   }, [loadHistory])
 
   const now = new Date()
@@ -166,9 +224,11 @@ export function AdminUsersPage() {
   }, [])
 
   const handleApplyLeagueChanges = () => {
+    if (pendingRef.current.has('leagues')) return
     const eligibleCount = leagueEvaluations.filter((e) => e.eligible && e.suggested_league !== e.current_league).length
     if (eligibleCount === 0) return
     if (!window.confirm(`Будут изменены лиги ${eligibleCount} сотрудников. Подтвердить?`)) return
+    if (!beginAction('leagues')) return
     setApplyLeagueBusy(true)
     api
       .post<LeagueChange[]>('/api/admin/apply-league-changes', {})
@@ -178,10 +238,11 @@ export function AdminUsersPage() {
         loadLeagueEvaluation()
       })
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка применения'))
-      .finally(() => setApplyLeagueBusy(false))
+      .finally(() => { finishAction('leagues'); setApplyLeagueBusy(false) })
   }
 
   const handleRolloverSubmit = () => {
+    if (pendingRef.current.has('rollover')) return
     if (rolloverInput.trim() !== ROLLOVER_CONFIRM_TEXT) {
       toast.error(`Введите ${ROLLOVER_CONFIRM_TEXT} для подтверждения`)
       return
@@ -190,6 +251,7 @@ export function AdminUsersPage() {
       toast.error('Выберите период')
       return
     }
+    if (!beginAction('rollover')) return
     setRolloverBusy(true)
     const request = rolloverMode === 'auto'
       ? api.post<RolloverResponse>('/api/admin/period-close/auto', {})
@@ -209,15 +271,16 @@ export function AdminUsersPage() {
         loadUsers()
       })
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка rollover'))
-      .finally(() => setRolloverBusy(false))
+      .finally(() => { finishAction('rollover'); setRolloverBusy(false) })
   }
 
   const handleCancelSubmit = () => {
-    if (!cancelPeriod) return
+    if (!cancelPeriod || pendingRef.current.has('cancel')) return
     if (cancelInput.trim() !== CANCEL_CONFIRM_TEXT) {
       toast.error(`Введите ${CANCEL_CONFIRM_TEXT} для подтверждения`)
       return
     }
+    if (!beginAction('cancel')) return
     setCancelBusy(true)
     api
       .post<RolloverResponse>(`/api/admin/period-history/${cancelPeriod.period}/cancel`, {})
@@ -229,7 +292,7 @@ export function AdminUsersPage() {
         loadUsers()
       })
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка отмены закрытия'))
-      .finally(() => setCancelBusy(false))
+      .finally(() => { finishAction('cancel'); setCancelBusy(false) })
   }
 
   const handleUserSubmit = async (payload: UserFormPayload) => {
@@ -281,13 +344,29 @@ export function AdminUsersPage() {
   }
 
   const closeQuickInvite = () => {
-    if (quickInviteBusy) return
+    if (pendingRef.current.has('quick-invite')) return
+    if ((quickInviteFullName || quickInviteEmail || quickInviteText) && !window.confirm('Закрыть окно и удалить введённые данные?')) return
     setQuickInviteOpen(false)
     resetQuickInvite()
   }
 
+  const closeRollover = () => {
+    if (pendingRef.current.has('rollover')) return
+    if (rolloverInput && !window.confirm('Отменить ввод подтверждения?')) return
+    setRolloverConfirm(false)
+    setRolloverInput('')
+  }
+
+  const closeCancelPeriod = () => {
+    if (pendingRef.current.has('cancel')) return
+    if (cancelInput && !window.confirm('Отменить ввод подтверждения?')) return
+    setCancelPeriod(null)
+    setCancelInput('')
+  }
+
   const handleQuickInviteSubmit = async (event: React.FormEvent) => {
     event.preventDefault()
+    if (pendingRef.current.has('quick-invite')) return
     const fullName = quickInviteFullName.trim()
     const email = quickInviteEmail.trim().toLowerCase()
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -300,6 +379,7 @@ export function AdminUsersPage() {
       return
     }
     setQuickInviteError(null)
+    if (!beginAction('quick-invite')) return
     setQuickInviteBusy(true)
     let inviteText = quickInviteText
     let userCreated = Boolean(quickInviteText)
@@ -339,15 +419,18 @@ export function AdminUsersPage() {
       }
       setQuickInviteError(message)
     } finally {
+      finishAction('quick-invite')
       setQuickInviteBusy(false)
     }
   }
 
   const handleIssueTemporaryPassword = async (u: AdminUser) => {
-    if (temporaryPasswordUserId || u.id === currentUser?.id) return
+    if (pendingRef.current.has('temporary') || pendingRef.current.has(`user:${u.id}`) || u.id === currentUser?.id) return
     if (!window.confirm(
       `Выдать временный пароль для ${u.full_name}? Все текущие сессии сотрудника будут завершены.`
     )) return
+    if (!beginAction('temporary')) return
+    beginAction(`user:${u.id}`)
     setTemporaryPasswordUserId(u.id)
     try {
       const password = generateQuickInvitePassword()
@@ -360,23 +443,32 @@ export function AdminUsersPage() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Не удалось выдать временный пароль')
     } finally {
+      finishAction('temporary')
+      finishAction(`user:${u.id}`)
       setTemporaryPasswordUserId(null)
     }
   }
 
   const handleDeactivate = (u: AdminUser) => {
+    if (pendingRef.current.has(`user:${u.id}`)) return
     if (!window.confirm(`Деактивировать ${u.full_name}?`)) return
+    if (!beginAction(`user:${u.id}`)) return
     api.patch(`/api/users/${u.id}`, { is_active: false }).then(() => {
+      setUsers((current) => current.map((item) => item.id === u.id ? { ...item, is_active: false } : item))
       toast.success('Сотрудник деактивирован')
       loadUsers()
     }).catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
+      .finally(() => finishAction(`user:${u.id}`))
   }
 
   const handleRestore = (u: AdminUser) => {
+    if (!beginAction(`user:${u.id}`)) return
     api.patch(`/api/users/${u.id}`, { is_active: true }).then(() => {
+      setUsers((current) => current.map((item) => item.id === u.id ? { ...item, is_active: true } : item))
       toast.success('Сотрудник восстановлен')
       loadUsers()
     }).catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка'))
+      .finally(() => finishAction(`user:${u.id}`))
   }
 
   const formatDate = (value: string | null) => (value ? new Date(value).toLocaleDateString('ru') : '')
@@ -438,6 +530,7 @@ export function AdminUsersPage() {
       <button
         type="button"
         onClick={() => { setEditingUser(u); setUserModalOpen(true) }}
+        disabled={pending.has(`user:${u.id}`)}
         className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:bg-slate-50 hover:text-slate-700"
         title="Редактировать"
         aria-label={`Редактировать ${u.full_name}`}
@@ -448,7 +541,7 @@ export function AdminUsersPage() {
         <button
           type="button"
           onClick={() => handleIssueTemporaryPassword(u)}
-          disabled={temporaryPasswordUserId !== null}
+          disabled={temporaryPasswordUserId !== null || pending.has(`user:${u.id}`)}
           className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:border-amber-200 hover:bg-amber-50 hover:text-amber-700 disabled:opacity-50"
           title="Выдать временный пароль"
           aria-label={`Выдать временный пароль для ${u.full_name}`}
@@ -460,6 +553,7 @@ export function AdminUsersPage() {
         <button
           type="button"
           onClick={() => handleDeactivate(u)}
+          disabled={pending.has(`user:${u.id}`)}
           className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
           title="Деактивировать"
           aria-label={`Деактивировать ${u.full_name}`}
@@ -470,6 +564,7 @@ export function AdminUsersPage() {
         <button
           type="button"
           onClick={() => handleRestore(u)}
+          disabled={pending.has(`user:${u.id}`)}
           className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-600"
           title="Восстановить"
           aria-label={`Восстановить ${u.full_name}`}
@@ -481,10 +576,10 @@ export function AdminUsersPage() {
   )
 
   if (loading) return <div className="text-slate-500">Загрузка...</div>
-  if (error) return <div className="text-red-600">{error}</div>
 
   return (
     <div className="space-y-6">
+      {error && <div role="alert" className="text-red-600">{error} <button type="button" onClick={loadUsers} className="underline">Повторить загрузку сотрудников</button></div>}
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-sm font-medium text-primary">Администрирование</p>
@@ -748,6 +843,11 @@ export function AdminUsersPage() {
         )}
         <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 bg-white">
           <h3 className="border-b border-slate-200 px-4 py-2 text-sm font-medium text-slate-700">История периодов</h3>
+          {historyError && <div role="alert" className="flex flex-wrap items-center gap-3 p-4 text-sm text-red-600">
+            <span>{historyError}{periodHistory.length > 0 ? ' Показана ранее загруженная история.' : ''}</span>
+            <button type="button" onClick={loadHistory} disabled={historyLoading} className="inline-flex min-h-11 items-center gap-2 underline"><RefreshCw className="h-4 w-4" />Повторить загрузку истории</button>
+          </div>}
+          {historyLoading && <p role="status" className="p-4 text-sm text-slate-500">Загрузка истории периодов...</p>}
           <table className="min-w-[960px] text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
@@ -807,7 +907,7 @@ export function AdminUsersPage() {
               ))}
             </tbody>
           </table>
-          {periodHistory.length === 0 && <p className="p-4 text-slate-500 text-center">Нет закрытых периодов</p>}
+          {!historyLoading && !historyError && periodHistory.length === 0 && <p className="p-4 text-slate-500 text-center">Нет закрытых периодов</p>}
         </div>
       </section>
 
@@ -877,243 +977,89 @@ export function AdminUsersPage() {
       />
 
       <UserAdminHistoryModal
+        key={historyUser?.id ?? 'closed'}
         user={historyUser}
         open={historyUser !== null}
         onClose={() => setHistoryUser(null)}
       />
 
       {quickInviteOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="quick-invite-title"
-        >
-          <form
-            onSubmit={handleQuickInviteSubmit}
-            className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 id="quick-invite-title" className="text-lg font-semibold text-slate-900">
-                  Быстро добавить
-                </h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  Будет открыт раздел «Развитие», а временный пароль потребуется заменить при первом входе.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={closeQuickInvite}
-                disabled={quickInviteBusy}
-                className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 disabled:opacity-50"
-              >
-                Закрыть
-              </button>
-            </div>
-
-            <div className="mt-5 space-y-4">
-              <label className="block text-sm font-medium text-slate-700">
-                ФИО
-                <input
-                  type="text"
-                  value={quickInviteFullName}
-                  onChange={(e) => {
-                    setQuickInviteFullName(e.target.value)
-                    setQuickInviteText('')
-                    setQuickInviteError(null)
-                  }}
-                  autoComplete="name"
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-                  placeholder="Иванов И.И."
-                />
-              </label>
-              <label className="block text-sm font-medium text-slate-700">
-                Почта
-                <input
-                  type="email"
-                  value={quickInviteEmail}
-                  onChange={(e) => {
-                    setQuickInviteEmail(e.target.value)
-                    setQuickInviteText('')
-                    setQuickInviteError(null)
-                  }}
-                  autoComplete="email"
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-                  placeholder="name@example.com"
-                />
-              </label>
-            </div>
-
-            {quickInviteError && (
-              <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {quickInviteError}
-              </p>
-            )}
-
-            {quickInviteText && (
-              <label className="mt-4 block text-sm font-medium text-slate-700">
-                Текст для ручного копирования
-                <textarea
-                  readOnly
-                  value={quickInviteText}
-                  rows={5}
-                  className="mt-1 w-full resize-y rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-800"
-                />
-              </label>
-            )}
-
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={closeQuickInvite}
-                disabled={quickInviteBusy}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                Отмена
-              </button>
-              <button
-                type="submit"
-                disabled={quickInviteBusy}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-              >
-                <Copy className="h-4 w-4" />
-                {quickInviteBusy ? '...' : 'Скопировать'}
-              </button>
-            </div>
-          </form>
-        </div>
+        <AdminDialog title="Быстро добавить" id="quick-invite-title" busy={quickInviteBusy}
+          onClose={closeQuickInvite} onSubmit={handleQuickInviteSubmit}
+          footer={<>
+            <button type="button" onClick={closeQuickInvite} disabled={quickInviteBusy}
+              className="min-h-11 rounded-lg border border-slate-300 px-4 py-2 text-sm disabled:opacity-50">Отмена</button>
+            <button type="submit" disabled={quickInviteBusy}
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">
+              <Copy className="h-4 w-4" />{quickInviteBusy ? 'Копирование...' : 'Скопировать'}
+            </button>
+          </>}>
+          <p className="text-sm text-slate-500">Будет открыт раздел «Развитие», а временный пароль потребуется заменить при первом входе.</p>
+          <fieldset disabled={quickInviteBusy || Boolean(quickInviteText)} className="mt-5 min-w-0 space-y-4">
+            <label className="block text-sm font-medium text-slate-700">ФИО
+              <input type="text" value={quickInviteFullName} autoComplete="name"
+                onChange={(e) => { setQuickInviteFullName(e.target.value); setQuickInviteError(null) }}
+                className="mt-1 min-h-11 w-full rounded-lg border border-slate-300 px-3 py-2 text-base text-slate-900 focus:border-primary focus:ring-2 focus:ring-primary/20 sm:text-sm" placeholder="Иванов И.И." />
+            </label>
+            <label className="block text-sm font-medium text-slate-700">Почта
+              <input type="email" value={quickInviteEmail} autoComplete="email"
+                onChange={(e) => { setQuickInviteEmail(e.target.value); setQuickInviteError(null) }}
+                className="mt-1 min-h-11 w-full rounded-lg border border-slate-300 px-3 py-2 text-base text-slate-900 focus:border-primary focus:ring-2 focus:ring-primary/20 sm:text-sm" placeholder="name@example.com" />
+            </label>
+          </fieldset>
+          {quickInviteError && <p role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{quickInviteError}</p>}
+          {quickInviteText && <label className="mt-4 block text-sm font-medium text-slate-700">Текст для ручного копирования
+            <textarea readOnly value={quickInviteText} rows={5} className="mt-1 w-full resize-none rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-base text-slate-800 sm:text-sm" />
+          </label>}
+        </AdminDialog>
       )}
 
       {temporaryInviteText && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="temporary-password-title"
-        >
-          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
-            <h2 id="temporary-password-title" className="text-lg font-semibold text-slate-900">
-              Временный пароль выдан
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Передайте сообщение сотруднику. После закрытия окна пароль больше не будет показан.
-            </p>
-            <textarea
-              readOnly
-              value={temporaryInviteText}
-              rows={6}
-              className="mt-4 w-full resize-y rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-800"
-            />
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setTemporaryInviteText('')}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Закрыть
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  copyTextToClipboard(temporaryInviteText)
-                    .then(() => toast.success('Сообщение скопировано'))
-                    .catch(() => toast.error('Не удалось скопировать сообщение'))
-                }}
-                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
-              >
-                <Copy className="h-4 w-4" />
-                Скопировать
-              </button>
-            </div>
-          </div>
-        </div>
+        <AdminDialog title="Временный пароль выдан" id="temporary-password-title"
+          onClose={() => {
+            if (window.confirm('Сообщение передано сотруднику? После закрытия оно больше не будет показано.')) setTemporaryInviteText('')
+          }}
+          footer={<button type="button" onClick={() => {
+            copyTextToClipboard(temporaryInviteText)
+              .then(() => toast.success('Сообщение скопировано'))
+              .catch(() => toast.error('Не удалось скопировать сообщение'))
+          }} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
+            <Copy className="h-4 w-4" />Скопировать
+          </button>}>
+          <p className="text-sm text-slate-500">Передайте сообщение сотруднику. После закрытия окна пароль больше не будет показан.</p>
+          <textarea aria-label="Сообщение сотруднику" readOnly value={temporaryInviteText} rows={6}
+            className="mt-4 w-full resize-none rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 font-mono text-base text-slate-800 sm:text-sm" />
+        </AdminDialog>
       )}
 
       {rolloverConfirm && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          role="dialog"
-          aria-modal="true"
-          onKeyDown={(e) => e.key === 'Escape' && setRolloverConfirm(false)}
-        >
-          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-semibold text-slate-900">Подтверждение закрытия периода</h3>
-            <p className="mt-2 text-sm text-slate-600">
-              Будет выполнено действие: {periodActionLabel}. Списывается только базовый план; баллы сверх плана сохраняются.
-            </p>
-            <p className="mt-2 text-sm text-slate-600">
-              Введите "{ROLLOVER_CONFIRM_TEXT}" для подтверждения.
-            </p>
-            <input
-              type="text"
-              value={rolloverInput}
-              onChange={(e) => setRolloverInput(e.target.value)}
-              className="mt-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              placeholder={ROLLOVER_CONFIRM_TEXT}
-            />
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setRolloverConfirm(false)}
-                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Отмена
-              </button>
-              <button
-                type="button"
-                onClick={handleRolloverSubmit}
-                disabled={rolloverBusy || rolloverInput.trim() !== ROLLOVER_CONFIRM_TEXT}
-                className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
-              >
-                {rolloverBusy ? '...' : 'Закрыть период'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <AdminDialog title="Подтверждение закрытия периода" id="rollover-title" busy={rolloverBusy} onClose={closeRollover}
+          footer={<>
+            <button type="button" onClick={closeRollover} disabled={rolloverBusy} className="min-h-11 rounded-md border border-slate-300 px-4 py-2 text-sm disabled:opacity-50">Отмена</button>
+            <button type="button" onClick={handleRolloverSubmit} disabled={rolloverBusy || rolloverInput.trim() !== ROLLOVER_CONFIRM_TEXT}
+              className="min-h-11 rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">{rolloverBusy ? 'Закрытие...' : 'Закрыть период'}</button>
+          </>}>
+          <p className="text-sm text-slate-600">Будет выполнено действие: {periodActionLabel}. Списывается только базовый план; баллы сверх плана сохраняются.</p>
+          <label className="mt-2 block text-sm text-slate-600">Введите "{ROLLOVER_CONFIRM_TEXT}" для подтверждения.
+            <input type="text" value={rolloverInput} disabled={rolloverBusy} onChange={(e) => setRolloverInput(e.target.value)}
+              className="mt-3 min-h-11 w-full rounded-md border border-slate-300 px-3 py-2 text-base sm:text-sm" placeholder={ROLLOVER_CONFIRM_TEXT} />
+          </label>
+        </AdminDialog>
       )}
 
       {cancelPeriod && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          role="dialog"
-          aria-modal="true"
-          onKeyDown={(e) => e.key === 'Escape' && setCancelPeriod(null)}
-        >
-          <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
-            <h3 className="text-lg font-semibold text-slate-900">Отмена закрытия периода</h3>
-            <p className="mt-2 text-sm text-slate-600">
-              Период {cancelPeriod.period} будет открыт обратно: снимки удалятся, а списанные по базовому плану Main будут восстановлены обратными транзакциями.
-            </p>
-            <p className="mt-2 text-sm text-slate-600">
-              Введите "{CANCEL_CONFIRM_TEXT}" для подтверждения.
-            </p>
-            <input
-              type="text"
-              value={cancelInput}
-              onChange={(e) => setCancelInput(e.target.value)}
-              className="mt-3 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              placeholder={CANCEL_CONFIRM_TEXT}
-            />
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setCancelPeriod(null)}
-                className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Отмена
-              </button>
-              <button
-                type="button"
-                onClick={handleCancelSubmit}
-                disabled={cancelBusy || cancelInput.trim() !== CANCEL_CONFIRM_TEXT}
-                className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-              >
-                {cancelBusy ? '...' : 'Отменить закрытие'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <AdminDialog title="Отмена закрытия периода" id="cancel-period-title" busy={cancelBusy} onClose={closeCancelPeriod}
+          footer={<>
+            <button type="button" onClick={closeCancelPeriod} disabled={cancelBusy} className="min-h-11 rounded-md border border-slate-300 px-4 py-2 text-sm disabled:opacity-50">Отмена</button>
+            <button type="button" onClick={handleCancelSubmit} disabled={cancelBusy || cancelInput.trim() !== CANCEL_CONFIRM_TEXT}
+              className="min-h-11 rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50">{cancelBusy ? 'Отмена...' : 'Отменить закрытие'}</button>
+          </>}>
+          <p className="text-sm text-slate-600">Период {cancelPeriod.period} будет открыт обратно: снимки удалятся, а списанные по базовому плану Main будут восстановлены обратными транзакциями.</p>
+          <label className="mt-2 block text-sm text-slate-600">Введите "{CANCEL_CONFIRM_TEXT}" для подтверждения.
+            <input type="text" value={cancelInput} disabled={cancelBusy} onChange={(e) => setCancelInput(e.target.value)}
+              className="mt-3 min-h-11 w-full rounded-md border border-slate-300 px-3 py-2 text-base sm:text-sm" placeholder={CANCEL_CONFIRM_TEXT} />
+          </label>
+        </AdminDialog>
       )}
     </div>
   )

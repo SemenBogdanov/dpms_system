@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   AlertTriangle,
   ArrowRightLeft,
@@ -98,7 +98,7 @@ function uuidV4() {
 }
 
 function contractTone(status: TaskStatus) {
-  if (status === 'done') return 'border-emerald-200 bg-emerald-50 text-emerald-800'
+  if (status === 'done') return 'border-emerald-200 bg-emerald-50 text-emerald-700'
   if (status === 'in_progress' || status === 'review') {
     return 'border-sky-200 bg-sky-50 text-sky-800'
   }
@@ -240,7 +240,16 @@ function ContractSummary({ contract }: { contract: WorkEntityExecutionContract }
   )
 }
 
-export function OperationExecutionContractModal({
+export function OperationExecutionContractModal(props: {
+  entityId: string
+  operation: WorkEntityTask
+  onClose: () => void
+  onChanged: () => Promise<void>
+}) {
+  return <ExecutionContractSession key={`${props.entityId}:${props.operation.id}`} {...props} />
+}
+
+function ExecutionContractSession({
   entityId,
   operation,
   onClose,
@@ -278,6 +287,14 @@ export function OperationExecutionContractModal({
   const [acceptanceMode, setAcceptanceMode] = useState<AcceptanceMode>('criteria')
   const [criteriaText, setCriteriaText] = useState(operation.acceptance_criteria || '')
   const [releaseReason, setReleaseReason] = useState('')
+  const pendingRef = useRef(false)
+  const activeRef = useRef(true)
+  const optionsRevision = useRef(0)
+  const contractRevision = useRef(0)
+  useEffect(() => {
+    activeRef.current = true
+    return () => { activeRef.current = false; optionsRevision.current += 1; contractRevision.current += 1 }
+  }, [])
 
   const criteria = useMemo(
     () => criteriaText
@@ -288,19 +305,21 @@ export function OperationExecutionContractModal({
   )
 
   const loadContract = useCallback(async () => {
+    const revision = ++contractRevision.current
     setContractLoading(true)
     setContractLoadError(null)
     try {
       const result = await api.get<WorkEntityExecutionContract | null>(
         `/api/work-entities/${entityId}/tasks/${operation.id}/execution-contract`,
       )
-      setCurrentContract(result)
+      if (revision === contractRevision.current) setCurrentContract(result)
     } catch (error) {
+      if (revision !== contractRevision.current) return
       setContractLoadError(
         error instanceof Error ? error.message : 'Не удалось проверить актуальный Q-контракт',
       )
     } finally {
-      setContractLoading(false)
+      if (revision === contractRevision.current) setContractLoading(false)
     }
   }, [entityId, operation.id])
 
@@ -309,21 +328,26 @@ export function OperationExecutionContractModal({
   }, [loadContract])
 
   const loadOptions = async () => {
+    const revision = ++optionsRevision.current
     setOptionsLoading(true)
+    setSelectedTaskId('')
+    setOptions([])
     setOptionsError(null)
     try {
       const result = await api.get<WorkEntityExecutionContractTaskOption[]>(
         `/api/work-entities/${entityId}/tasks/${operation.id}/execution-contract-options`,
         { search: search.trim(), limit: '50' },
       )
+      if (revision !== optionsRevision.current) return
       setOptions(result)
       if (selectedTaskId && !result.some((item) => item.task_id === selectedTaskId)) {
         setSelectedTaskId('')
       }
     } catch (error) {
+      if (revision !== optionsRevision.current) return
       setOptionsError(error instanceof Error ? error.message : 'Не удалось загрузить Q-задачи')
     } finally {
-      setOptionsLoading(false)
+      if (revision === optionsRevision.current) setOptionsLoading(false)
     }
   }
 
@@ -336,33 +360,41 @@ export function OperationExecutionContractModal({
   }, [mode, entityId, operation.id, currentContract, contractLoading, contractLoadError])
 
   const refreshParent = async (successMessage: string) => {
+    if (!activeRef.current) return
     toast.success(successMessage)
     setRefreshError(null)
     try {
       await onChanged()
-      onClose()
+      if (activeRef.current) onClose()
     } catch {
+      if (!activeRef.current) return
       setRefreshError('Изменение сохранено, но список проекта не обновился. Повторите обновление.')
       toast.error('Изменение сохранено. Не удалось обновить экран проекта.')
     }
   }
 
   const retryParentRefresh = async () => {
+    if (pendingRef.current) return
+    pendingRef.current = true
     setBusy(true)
     setRefreshError(null)
     try {
       await onChanged()
+      if (!activeRef.current) return
       toast.success('Данные проекта обновлены')
       onClose()
     } catch {
+      if (!activeRef.current) return
       setRefreshError('Изменение сохранено, но список проекта не обновился. Повторите обновление.')
     } finally {
+      pendingRef.current = false
       setBusy(false)
     }
   }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
+    if (pendingRef.current || currentContract || refreshError || contractLoading || contractLoadError || (mode === 'link' && (optionsLoading || optionsError))) return
     const payload: WorkEntityExecutionContractCreate = mode === 'link'
       ? {
           mode: 'link',
@@ -402,39 +434,48 @@ export function OperationExecutionContractModal({
       }
     }
 
+    pendingRef.current = true
     setBusy(true)
     try {
       const contract = await api.post<WorkEntityExecutionContract>(
         `/api/work-entities/${entityId}/tasks/${operation.id}/execution-contract`,
         payload,
       )
+      if (!activeRef.current) return
       setCurrentContract(contract)
       await refreshParent(
         mode === 'publish' ? 'Операция опубликована в Q-пул' : 'Q-задача связана с операцией',
       )
     } catch (error) {
+      if (!activeRef.current) return
       toast.error(error instanceof Error ? error.message : 'Не удалось создать Q-контракт')
     } finally {
+      pendingRef.current = false
       setBusy(false)
     }
   }
 
   const release = async () => {
+    if (pendingRef.current || refreshError) return
     if (releaseReason.trim().length < 5) {
       toast.error('Укажите причину освобождения')
       return
     }
+    pendingRef.current = true
     setBusy(true)
     try {
       const contract = await api.patch<WorkEntityExecutionContract>(
         `/api/work-entities/${entityId}/tasks/${operation.id}/execution-contract`,
         { reason: releaseReason.trim() },
       )
+      if (!activeRef.current) return
       setCurrentContract(contract)
       await refreshParent('Q-контракт освобожден')
     } catch (error) {
+      if (!activeRef.current) return
       toast.error(error instanceof Error ? error.message : 'Не удалось освободить контракт')
     } finally {
+      pendingRef.current = false
       setBusy(false)
     }
   }
@@ -480,7 +521,7 @@ export function OperationExecutionContractModal({
                   type="button"
                   onClick={() => void retryParentRefresh()}
                   disabled={busy}
-                  className="mt-2 inline-flex items-center gap-1.5 font-semibold text-amber-950 hover:underline disabled:opacity-50"
+                  className="mt-2 inline-flex items-center gap-1.5 font-semibold text-amber-900 hover:underline disabled:opacity-50"
                 >
                   <RefreshCw className={cn('h-4 w-4', busy && 'animate-spin')} />
                   Обновить проект
@@ -494,12 +535,12 @@ export function OperationExecutionContractModal({
               Проверяем Q-контракт
             </div>
           ) : contractLoadError ? (
-            <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-900">
+            <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <div className="min-w-0 flex-1">
                   <p className="font-semibold">Не удалось проверить актуальное состояние</p>
-                  <p className="mt-1 break-words text-red-800">{contractLoadError}</p>
+                  <p className="mt-1 break-words text-red-700">{contractLoadError}</p>
                   <button
                     type="button"
                     onClick={() => void loadContract()}
@@ -519,13 +560,14 @@ export function OperationExecutionContractModal({
                   <div className="flex items-start gap-2">
                     <Unlink className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
                     <div>
-                      <h4 className="text-sm font-semibold text-amber-950">Освободить контракт</h4>
+                      <h4 className="text-sm font-semibold text-amber-900">Освободить контракт</h4>
                       <p className="mt-1 text-xs leading-5 text-amber-800">
                         Доступно только до назначения исполнителя и начала работы. Действие и причина сохранятся в истории.
                       </p>
                     </div>
                   </div>
                   <textarea
+                    disabled={busy || Boolean(refreshError)}
                     value={releaseReason}
                     onChange={(event) => setReleaseReason(event.target.value)}
                     rows={3}
@@ -536,7 +578,7 @@ export function OperationExecutionContractModal({
                   <button
                     type="button"
                     onClick={() => void release()}
-                    disabled={busy || releaseReason.trim().length < 5}
+                    disabled={busy || Boolean(refreshError) || releaseReason.trim().length < 5}
                     className="mt-3 inline-flex h-10 items-center gap-2 rounded-lg border border-amber-300 bg-white px-3 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
                   >
                     {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Unlink className="h-4 w-4" />}
@@ -547,6 +589,7 @@ export function OperationExecutionContractModal({
             </div>
           ) : (
             <form onSubmit={submit} className="space-y-5">
+              <fieldset disabled={busy || Boolean(refreshError)} className="min-w-0 space-y-5">
               <div className="grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1">
                 <button
                   type="button"
@@ -581,7 +624,19 @@ export function OperationExecutionContractModal({
                       <Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-slate-400" />
                       <input
                         value={search}
-                        onChange={(event) => setSearch(event.target.value)}
+                        onChange={(event) => {
+                          optionsRevision.current += 1
+                          setSearch(event.target.value)
+                          setSelectedTaskId('')
+                          setOptions([])
+                          setOptionsLoading(false)
+                          setOptionsError(null)
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter' || event.nativeEvent.isComposing) return
+                          event.preventDefault()
+                          void loadOptions()
+                        }}
                         placeholder="Номер или название Q-задачи"
                         className={cn(inputClass, 'pl-9')}
                       />
@@ -707,6 +762,7 @@ export function OperationExecutionContractModal({
                   {mode === 'publish' ? 'Опубликовать в Q-пул' : 'Связать Q-задачу'}
                 </button>
               </div>
+              </fieldset>
             </form>
           )}
         </div>

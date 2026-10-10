@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react'
+import { readPreference } from '@/lib/preferenceStorage'
 
 export type ThemeMode = 'light' | 'dark' | 'rose'
 
@@ -16,7 +17,7 @@ export const ThemeContext = createContext<ThemeContextValue | undefined>(undefin
 
 export function readStoredTheme(): ThemeMode {
   if (typeof window === 'undefined') return 'light'
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY)
+  const stored = readPreference(THEME_STORAGE_KEY)
   return stored === 'dark' || stored === 'rose' ? stored : 'light'
 }
 

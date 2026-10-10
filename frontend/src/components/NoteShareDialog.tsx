@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Share2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { ApiError } from '@/api/client'
@@ -18,28 +18,45 @@ export function NoteShareDialog({ noteIds, groupId, onClose, onApplied }: {
   const [error, setError] = useState('')
   const [confirmed, setConfirmed] = useState(false)
   const submitting = useRef(false)
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const [retry, setRetry] = useState(0)
+  const [targetsError, setTargetsError] = useState('')
+  const selection = JSON.stringify([groupId, noteIds])
+  const scope = useMemo(() => ({ project, selection, retry }), [project, selection, retry])
+  const currentScope = useRef(scope)
+  currentScope.current = scope
+  const [loadedScope, setLoadedScope] = useState<object | null>(null)
+  const [previewScope, setPreviewScope] = useState<object | null>(null)
   useEffect(() => {
     let cancelled = false
-    setLoading(true); setRecipients([]); setSelected([]); setPreview(null); setConfirmed(false)
-    void noteGroupsApi.recipients(project || undefined).then(data => { if (!cancelled) { setRecipients(data); setError('') } })
-      .catch(error => { if (!cancelled) setError(error instanceof Error ? error.message : 'Получатели недоступны') })
-      .finally(() => { if (!cancelled) setLoading(false) })
+    const current = () => !cancelled && currentScope.current === scope
+    setLoading(true); setError(''); setRecipients([]); setSelected([]); setPreview(null); setConfirmed(false)
+    void noteGroupsApi.recipients(project || undefined).then(data => { if (current()) { setRecipients(data); setLoadedScope(scope); setError('') } })
+      .catch(error => { if (current()) setError(error instanceof Error ? error.message : 'Получатели недоступны') })
+      .finally(() => { if (current()) setLoading(false) })
     return () => { cancelled = true }
-  }, [project])
-  useEffect(() => { let cancelled = false; void noteGroupsApi.targets().then(targets => { if (!cancelled) setProjects(targets.filter(target => target.target_type === 'entity')) }).catch(() => {}); return () => { cancelled = true } }, [])
+  }, [project, scope])
+  useEffect(() => { let cancelled = false; void noteGroupsApi.targets().then(targets => { if (!cancelled) { setProjects(targets.filter(target => target.target_type === 'entity')); setTargetsError('') } }).catch(() => { if (!cancelled) setTargetsError('Проекты недоступны') }); return () => { cancelled = true } }, [retry])
   const submit = async () => {
-    if (submitting.current) return
+    if (submitting.current || loadedScope !== scope || (preview && previewScope !== scope)) return
+    const current = () => mounted.current && currentScope.current === scope
     if (!selected.length) { setError('Выберите хотя бы одного получателя'); return }
     submitting.current = true; setBusy(true); setError('')
     try {
       if (preview) {
         if (!confirmed) { setError('Подтвердите список заметок и получателей'); return }
         await noteGroupsApi.apply(preview.id)
+        if (!current()) return
         onApplied(); onClose()
       } else {
-        setPreview(await noteGroupsApi.preview({ ...(groupId ? { group_id: groupId } : { note_ids: noteIds }), recipient_ids: selected, ...(project ? { project_id: project } : {}) }))
+        const data = await noteGroupsApi.preview({ ...(groupId ? { group_id: groupId } : { note_ids: noteIds }), recipient_ids: selected, ...(project ? { project_id: project } : {}) })
+        if (!current()) return
+        setPreview(data)
+        setPreviewScope(scope)
       }
     } catch (error) {
+      if (!current()) return
       setError(error instanceof Error ? error.message : 'Не удалось открыть доступ')
       if (error instanceof ApiError && [403, 404, 409].includes(error.status)) { setPreview(null); setConfirmed(false) }
     } finally { submitting.current = false; setBusy(false) }
@@ -54,7 +71,7 @@ export function NoteShareDialog({ noteIds, groupId, onClose, onApplied }: {
         </label>
         <fieldset disabled={busy || loading}><legend className="text-sm font-medium">Получатели</legend>
           {loading && <p role="status">Загрузка...</p>}
-          {!loading && recipients.length === 0 && <p className="text-sm text-slate-500">Нет принятых контактов в выбранном списке</p>}
+          {!loading && !error && recipients.length === 0 && <p className="text-sm text-slate-500">Нет принятых контактов в выбранном списке</p>}
           {recipients.map(recipient => <label key={recipient.id} className="flex min-h-11 items-center gap-3 py-1 text-sm">
             <input className="h-4 w-4 shrink-0" type="checkbox" checked={selected.includes(recipient.id)} onChange={event => setSelected(ids => event.target.checked ? [...ids, recipient.id] : ids.filter(id => id !== recipient.id))} />
             <span className="break-words">{recipient.name}</span>
@@ -75,9 +92,11 @@ export function NoteShareDialog({ noteIds, groupId, onClose, onApplied }: {
         </label>
       </>}
       {error && <p role="alert" className="break-words text-sm text-red-600">{error}</p>}
+      {targetsError && <p role="alert">{targetsError}</p>}
+      {(error || targetsError) && !preview && <button type="button" disabled={busy} className={noteControl} onClick={() => setRetry(value => value + 1)}>Повторить загрузку</button>}
       <div className="flex flex-wrap gap-2">
         {preview && <button type="button" className={noteControl} disabled={busy} onClick={() => { setPreview(null); setConfirmed(false) }}>Изменить получателей</button>}
-        <button type="submit" disabled={busy || loading} className={`${noteControl} bg-primary px-4 text-primary-foreground`}><Share2 className="h-4 w-4" />{busy ? 'Проверка...' : preview ? 'Открыть доступ' : 'Проверить доступ'}</button>
+        <button type="submit" disabled={busy || loading || loadedScope !== scope} className={`${noteControl} bg-primary px-4 text-primary-foreground`}><Share2 className="h-4 w-4" />{busy ? 'Проверка...' : preview ? 'Открыть доступ' : 'Проверить доступ'}</button>
       </div>
     </form>
   </NoteGroupDialog>

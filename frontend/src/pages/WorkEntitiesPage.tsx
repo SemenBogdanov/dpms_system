@@ -870,7 +870,7 @@ export function WorkEntitiesPage() {
   const [searchParams] = useSearchParams()
   const requestedEntityId = searchParams.get('entity')
   const [entities, setEntities] = useState<WorkEntity[]>([])
-  const [selectedId, setSelectedId] = useState(requestedEntityId || '')
+  const selectedId = requestedEntityId || ''
   const [links, setLinks] = useState<WorkEntityLink[]>([])
   const [summary, setSummary] = useState<WorkEntitySummary | null>(null)
   const [readiness, setReadiness] = useState<WorkEntityReadiness | null>(null)
@@ -885,6 +885,16 @@ export function WorkEntitiesPage() {
   const [mobileActionsOpen, setMobileActionsOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [listError, setListError] = useState<string | null>(null)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const [detailEntityId, setDetailEntityId] = useState('')
+  const [overdueById, setOverdueById] = useState<Record<string, number>>({})
+  const listRequestRef = useRef(0)
+  const summaryRevisionRef = useRef<Record<string, number>>({})
+  const summaryQueueRef = useRef<Array<{ id: string; generation: number }>>([])
+  const summaryInFlightRef = useRef(0)
+  const selectedIdRef = useRef(selectedId)
+  selectedIdRef.current = selectedId
   const [busy, setBusy] = useState(false)
   const [guidedCreateOpen, setGuidedCreateOpen] = useState(false)
   const [entityFormOpen, setEntityFormOpen] = useState(false)
@@ -909,8 +919,8 @@ export function WorkEntitiesPage() {
     [entities, selectedId],
   )
   const selectedHealth = useMemo(
-    () => (selected ? getWorkEntityHealth(selected, summary?.overdue_items ?? 0) : null),
-    [selected, summary?.overdue_items],
+    () => (selected ? getWorkEntityHealth(selected, detailEntityId === selectedId ? summary?.overdue_items ?? null : null) : null),
+    [selected, selectedId, detailEntityId, summary?.overdue_items],
   )
   const canEdit = selected?.access_role === 'owner' || selected?.access_role === 'editor'
   const isOwner = selected?.access_role === 'owner'
@@ -976,21 +986,56 @@ export function WorkEntitiesPage() {
     return groups
   }, [filteredJournalEvents, normalizedEvents])
 
-  const loadEntities = useCallback(async () => {
-    const data = await api.get<WorkEntity[]>('/api/work-entities?include_archived=true')
-    setEntities(data)
-    setSelectedId(() => {
-      if (requestedEntityId && data.some((entity) => entity.id === requestedEntityId)) {
-        return requestedEntityId
-      }
-      return ''
-    })
-    return data
-  }, [requestedEntityId])
+  const drainSummaries = useCallback(function drain() {
+    while (summaryInFlightRef.current < 3 && summaryQueueRef.current.length) {
+      const job = summaryQueueRef.current.shift()!
+      if (job.generation !== listRequestRef.current || job.id === selectedIdRef.current) continue
+      const revision = (summaryRevisionRef.current[job.id] ?? 0) + 1
+      summaryRevisionRef.current[job.id] = revision
+      summaryInFlightRef.current += 1
+      void api.get<WorkEntitySummary>(`/api/work-entities/${job.id}/summary`)
+        .then((value) => {
+          if (job.generation === listRequestRef.current && summaryRevisionRef.current[job.id] === revision) {
+            setOverdueById((current) => ({ ...current, [job.id]: value.overdue_items }))
+          }
+        })
+        .catch(() => { /* Missing summary remains explicitly unknown. */ })
+        .finally(() => { summaryInFlightRef.current -= 1; drain() })
+    }
+  }, [])
 
-  const loadDetail = useCallback(async (entityId: string) => {
+  const loadEntities = useCallback(async () => {
+    const requestId = ++listRequestRef.current
+    setLoading(true)
+    setListError(null)
+    try {
+      const data = await api.get<WorkEntity[]>('/api/work-entities?include_archived=true')
+      if (requestId !== listRequestRef.current) return data
+      setEntities(data)
+      setOverdueById((current) => {
+        const id = selectedIdRef.current
+        return id && current[id] !== undefined && data.some((entity) => entity.id === id) ? { [id]: current[id] } : {}
+      })
+      // One queue spans refresh generations; old pending GETs still occupy slots.
+      summaryQueueRef.current = data.map((entity) => ({ id: entity.id, generation: requestId }))
+      drainSummaries()
+      return data
+    } catch (error) {
+      if (requestId === listRequestRef.current) setListError(error instanceof Error ? error.message : 'Не удалось загрузить проекты')
+      throw error
+    } finally {
+      if (requestId === listRequestRef.current) setLoading(false)
+    }
+  }, [drainSummaries])
+
+  const loadDetail = useCallback(async (entityId: string, initial = false) => {
+    if (entityId !== selectedIdRef.current) return
     const requestId = ++detailRequestRef.current
-    setDetailLoading(true)
+    const summaryRevision = (summaryRevisionRef.current[entityId] ?? 0) + 1
+    summaryRevisionRef.current[entityId] = summaryRevision
+    const current = () => requestId === detailRequestRef.current && entityId === selectedIdRef.current
+    if (initial) setDetailLoading(true)
+    setDetailError(null)
     setEventsLoadingMore(false)
     setReadiness(null)
     try {
@@ -1003,18 +1048,23 @@ export function WorkEntitiesPage() {
           `/api/work-entities/${entityId}/events?limit=${EVENT_PAGE_SIZE}`,
         ),
       ])
-      if (requestId !== detailRequestRef.current) return
+      if (!current()) return
+      setDetailEntityId(entityId)
       setLinks(linkList)
       setSummary(entitySummary)
+      if (summaryRevisionRef.current[entityId] === summaryRevision) {
+        setOverdueById((values) => ({ ...values, [entityId]: entitySummary.overdue_items }))
+      }
       setReadiness(readinessResult)
       setMembers(memberList)
       setEvents(eventList)
       setEventsHasMore(eventList.length === EVENT_PAGE_SIZE)
     } catch (error) {
-      if (requestId !== detailRequestRef.current) return
-      toast.error(error instanceof Error ? error.message : 'Не удалось загрузить сущность')
+      if (!current()) return
+      setDetailError(error instanceof Error ? error.message : 'Не удалось загрузить сущность')
+      throw error
     } finally {
-      if (requestId === detailRequestRef.current) setDetailLoading(false)
+      if (current()) setDetailLoading(false)
     }
   }, [])
 
@@ -1037,10 +1087,17 @@ export function WorkEntitiesPage() {
       .catch((error) =>
         toast.error(error instanceof Error ? error.message : 'Не удалось загрузить проекты и цели'),
       )
-      .finally(() => setLoading(false))
+    return () => { listRequestRef.current += 1 }
   }, [loadEntities])
 
   useEffect(() => {
+    setDetailEntityId('')
+    setDetailError(null)
+    setLinks([])
+    setSummary(null)
+    setMembers([])
+    setEvents([])
+    setEventsHasMore(false)
     if (!selectedId) {
       setLinks([])
       setSummary(null)
@@ -1050,7 +1107,8 @@ export function WorkEntitiesPage() {
       setEventsHasMore(false)
       return
     }
-    void loadDetail(selectedId)
+    void loadDetail(selectedId, true).catch(() => {})
+    return () => { detailRequestRef.current += 1 }
   }, [loadDetail, selectedId])
 
   useEffect(() => {
@@ -1082,6 +1140,7 @@ export function WorkEntitiesPage() {
       })
       setEventsHasMore(olderEvents.length === EVENT_PAGE_SIZE)
     } catch (error) {
+      if (requestId !== detailRequestRef.current || selectedId !== selectedIdRef.current) return
       toast.error(error instanceof Error ? error.message : 'Не удалось загрузить историю')
     } finally {
       if (requestId === detailRequestRef.current) setEventsLoadingMore(false)
@@ -1146,7 +1205,7 @@ export function WorkEntitiesPage() {
     return acceptedContacts.filter((contact) => !memberIds.has(contact.id))
   }, [acceptedContacts, members])
 
-  const selectEntity = (entityId: string, replaceHistory = true) => {
+  const selectEntity = (entityId: string, replaceHistory = false) => {
     if (entityId !== selectedId) {
       setLinks([])
       setSummary(null)
@@ -1155,7 +1214,6 @@ export function WorkEntitiesPage() {
       setEvents([])
       setEventsHasMore(false)
     }
-    setSelectedId(entityId)
     setTab('control')
     setMobileActionsOpen(false)
     navigate(`/work-entities?entity=${entityId}`, { replace: replaceHistory })
@@ -1167,7 +1225,6 @@ export function WorkEntitiesPage() {
   }
 
   const openPortfolio = () => {
-    setSelectedId('')
     setLinks([])
     setSummary(null)
     setReadiness(null)
@@ -1420,13 +1477,20 @@ export function WorkEntitiesPage() {
         </button>
       </header>
 
-      {!selected ? (
+      {listError && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+        {listError}
+        <button type="button" onClick={() => void loadEntities().catch(() => {})} className="ml-3 underline">Повторить загрузку проектов</button>
+      </div>}
+      {!selected && selectedId && !loading && !listError && <p role="alert">Проект недоступен. <button type="button" onClick={openPortfolio}>Вернуться в портфель</button></p>}
+      {!selected && !listError ? (
         <WorkEntityPortfolio
           entities={orderedEntities}
           loading={loading}
+          overdueById={overdueById}
+          onRefresh={() => void loadEntities().catch(() => {})}
           onSelect={(entityId) => selectEntity(entityId, false)}
         />
-      ) : (
+      ) : selected ? (
       <div className="grid min-h-[620px] min-w-0 items-start gap-4 lg:grid-cols-[232px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)]">
         <aside className="min-w-0 space-y-6 lg:sticky lg:top-[73px]">
           <section>
@@ -1606,8 +1670,8 @@ export function WorkEntitiesPage() {
                   className={cn(
                     'border-b px-4 py-3',
                     readiness?.can_activate
-                      ? 'border-emerald-200 bg-emerald-50/60'
-                      : 'border-amber-200 bg-amber-50/60',
+                      ? 'border-emerald-200 bg-emerald-50'
+                      : 'border-amber-200 bg-amber-50',
                   )}
                   aria-label="Проверка готовности проекта"
                 >
@@ -1636,7 +1700,7 @@ export function WorkEntitiesPage() {
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => void loadDetail(selected.id)}
+                        onClick={() => void loadDetail(selected.id).catch(() => {})}
                         disabled={detailLoading}
                         className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-600 hover:border-primary/40 hover:text-primary disabled:opacity-50"
                         title="Повторить проверку"
@@ -1697,13 +1761,17 @@ export function WorkEntitiesPage() {
               )}
 
               <div className={cn('min-h-72', tab !== 'control' && 'p-4')}>
-                {detailLoading ? (
+                {detailError && detailEntityId === selected.id && <div role="alert" className="p-4 text-red-700">{detailError}. Показаны последние загруженные данные. <button type="button" onClick={() => void loadDetail(selected.id).catch(() => {})}>Повторить загрузку проекта</button></div>}
+                {detailError && detailEntityId !== selected.id ? (
+                  <div role="alert" className="p-4 text-red-700">{detailError} <button type="button" className="underline" onClick={() => void loadDetail(selected.id).catch(() => {})}>Повторить загрузку проекта</button></div>
+                ) : detailLoading || detailEntityId !== selected.id ? (
                   <div className="flex items-center justify-center gap-2 py-16 text-sm text-slate-500">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Загрузка
                   </div>
                 ) : tab === 'control' ? (
                   <ProjectCockpit
+                    key={selected.id}
                     ref={cockpitRef}
                     entity={selected}
                     readiness={readiness}
@@ -1718,13 +1786,14 @@ export function WorkEntitiesPage() {
                   />
                 ) : tab === 'work' ? (
                   <WorkEntityWorkspacePanel
+                    key={selected.id}
                     entity={selected}
                     onChanged={async () => {
                       await Promise.all([loadEntities(), loadDetail(selected.id)])
                     }}
                   />
                 ) : tab === 'map' ? (
-                  <WorkEntityProjectMap entity={selected} />
+                  <WorkEntityProjectMap key={selected.id} entity={selected} />
                 ) : tab === 'links' ? (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between gap-3">
@@ -2137,7 +2206,7 @@ export function WorkEntitiesPage() {
           )}
         </section>
       </div>
-      )}
+      ) : null}
 
       {guidedCreateOpen && (
         <GuidedProjectWizard
@@ -2146,7 +2215,6 @@ export function WorkEntitiesPage() {
           onCreated={async (entityId) => {
             await loadEntities()
             selectEntity(entityId)
-            await loadDetail(entityId)
           }}
         />
       )}

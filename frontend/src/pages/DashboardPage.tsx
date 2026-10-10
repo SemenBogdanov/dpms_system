@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { api } from '@/api/client'
 import type {
   CapacityGauge,
@@ -18,6 +18,8 @@ import { TaskDetailModal } from '@/components/TaskDetailModal'
 import { SkeletonCard } from '@/components/Skeleton'
 import { exportTeamCSV } from '@/lib/csv'
 
+type DashboardSection = 'core' | 'history' | 'overdue' | 'focus'
+
 export function DashboardPage() {
   const { user: currentUser } = useAuth()
   const [capacity, setCapacity] = useState<CapacityGauge | null>(null)
@@ -28,60 +30,101 @@ export function DashboardPage() {
   const [overdueTasks, setOverdueTasks] = useState<Task[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [detailTask, setDetailTask] = useState<Task | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState<Record<DashboardSection, boolean>>({ core: true, history: true, overdue: true, focus: true })
   const [error, setError] = useState<string | null>(null)
   const [focusStatuses, setFocusStatuses] = useState<FocusStatusItem[]>([])
+  const [focusError, setFocusError] = useState<string | null>(null)
+  const [overdueError, setOverdueError] = useState<string | null>(null)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const request = useRef(0)
+  const pending = useRef(new Set<DashboardSection>())
 
   const isTeamleadOrAdmin = currentUser?.role === 'teamlead' || currentUser?.role === 'admin'
 
-  const load = useCallback(async () => {
+  const loadSection = useCallback(async <T,>(
+    section: DashboardSection,
+    read: () => Promise<T>,
+    commit: (result: T) => void,
+    setFailure: Dispatch<SetStateAction<string | null>>,
+    failureMessage?: string,
+  ) => {
+    if (pending.current.has(section)) return
+    const revision = request.current
+    pending.current.add(section)
+    setLoading((previous) => ({ ...previous, [section]: true }))
     try {
-      const [cap, sum, bd, ip, rv] = await Promise.all([
-        api.get<CapacityGauge>('/api/dashboard/capacity'),
-        api.get<TeamSummary>('/api/dashboard/team-summary'),
-        api.get<BurndownData>('/api/dashboard/burndown'),
-        api.get<Task[]>('/api/tasks?status=in_progress'),
-        api.get<Task[]>('/api/tasks?status=review'),
-      ])
-      setCapacity(cap)
-      setTeam(sum)
-      setBurndown(bd)
-      setTasksInWorkCount((ip?.length ?? 0) + (rv?.length ?? 0))
-      setError(null)
-
-      const [history, od, fs] = await Promise.all([
-        api.get<{ weeks: CapacityHistoryPoint[] }>('/api/dashboard/capacity-history').catch(() => ({ weeks: [] })),
-        isTeamleadOrAdmin ? api.get<Task[]>('/api/tasks?is_overdue=true').catch(() => []) : Promise.resolve([]),
-        isTeamleadOrAdmin ? api.get<FocusStatusItem[]>('/api/dashboard/focus-status').catch(() => []) : Promise.resolve([]),
-      ])
-      setCapacityHistory(history.weeks ?? [])
-      if (currentUser?.role === 'teamlead' || currentUser?.role === 'admin') {
-        setOverdueTasks(od.filter((t) => t.status === 'in_queue' || t.status === 'in_progress'))
-        setFocusStatuses(fs)
-      }
+      const result = await read()
+      if (request.current !== revision) return
+      commit(result)
+      setFailure(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка загрузки')
+      if (request.current === revision) setFailure(failureMessage ?? (e instanceof Error ? e.message : 'Ошибка загрузки дашборда'))
     } finally {
-      setLoading(false)
+      if (request.current === revision) {
+        pending.current.delete(section)
+        setLoading((previous) => ({ ...previous, [section]: false }))
+      }
     }
-  }, [currentUser?.role, isTeamleadOrAdmin])
+  }, [])
+
+  const loadCore = useCallback(() => loadSection('core', () => Promise.all([
+    api.get<CapacityGauge>('/api/dashboard/capacity'),
+    api.get<TeamSummary>('/api/dashboard/team-summary'),
+    api.get<BurndownData>('/api/dashboard/burndown'),
+    api.get<Task[]>('/api/tasks?status=in_progress'),
+    api.get<Task[]>('/api/tasks?status=review'),
+  ]), ([cap, sum, bd, ip, rv]) => {
+    setCapacity(cap)
+    setTeam(sum)
+    setBurndown(bd)
+    setTasksInWorkCount((ip?.length ?? 0) + (rv?.length ?? 0))
+  }, setError), [loadSection])
+
+  const loadHistory = useCallback(() => loadSection('history',
+    () => api.get<{ weeks: CapacityHistoryPoint[] }>('/api/dashboard/capacity-history'),
+    (history) => setCapacityHistory(history.weeks ?? []), setHistoryError,
+    'Не удалось обновить историю ёмкости. Ранее загруженные данные могут быть устаревшими.',
+  ), [loadSection])
+
+  const loadOverdue = useCallback(() => loadSection('overdue',
+    () => api.get<Task[]>('/api/tasks?is_overdue=true'),
+    (tasks) => setOverdueTasks(tasks.filter((task) => task.status === 'in_queue' || task.status === 'in_progress')),
+    setOverdueError, 'Не удалось обновить просроченные задачи. Ранее загруженные данные могут быть устаревшими.',
+  ), [loadSection])
+
+  const loadFocus = useCallback(() => loadSection('focus',
+    () => api.get<FocusStatusItem[]>('/api/dashboard/focus-status'), setFocusStatuses,
+    setFocusError, 'Не удалось обновить состояние команды. Ранее загруженные данные могут быть устаревшими.',
+  ), [loadSection])
+
+  const load = useCallback(() => {
+    void loadCore()
+    void loadHistory()
+    if (isTeamleadOrAdmin) {
+      void loadOverdue()
+      void loadFocus()
+    }
+  }, [isTeamleadOrAdmin, loadCore, loadHistory, loadOverdue, loadFocus])
 
   useEffect(() => {
     api.get<User[]>('/api/users').then(setUsers).catch(() => setUsers([]))
   }, [])
 
   useEffect(() => {
-    load()
-  }, [load])
-
-  useEffect(() => {
+    const pendingSections = pending.current
+    void load()
     const t = setInterval(load, 30000)
-    return () => clearInterval(t)
+    return () => {
+      clearInterval(t)
+      request.current += 1
+      pendingSections.clear()
+    }
   }, [load])
 
-  if (loading) {
+  if (loading.core && !capacity) {
     return (
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <p role="status" className="text-sm text-slate-500 sm:col-span-2 lg:col-span-4">Загрузка основных данных...</p>
         {[1, 2, 3, 4].map((i) => (
           <SkeletonCard key={i} />
         ))}
@@ -91,7 +134,6 @@ export function DashboardPage() {
       </div>
     )
   }
-  if (error) return <div className="text-red-600">{error}</div>
 
   const loadVal = Number(capacity?.load ?? 0)
   const capVal = Number(capacity?.capacity ?? 0)
@@ -112,7 +154,7 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold text-slate-900">Дашборд руководителя</h1>
         {team && (
           <button
@@ -125,7 +167,23 @@ export function DashboardPage() {
         )}
       </div>
 
+      {loading.core && <p role="status" className="text-sm text-slate-500">Обновление основных данных...</p>}
+      {error && (
+        <div role="alert" className="text-sm text-red-600">
+          <p>{error}{capacity ? ' Показаны ранее загруженные данные.' : ''}</p>
+          <button type="button" disabled={loading.core} onClick={() => void loadCore()} className="mt-2 rounded border px-3 py-2 disabled:opacity-50">Повторить загрузку дашборда</button>
+        </div>
+      )}
+      {loading.history && <p role="status" className="text-sm text-slate-500">Обновление истории ёмкости...</p>}
+      {historyError && (
+        <div role="alert" className="text-sm text-red-600">
+          <p>{historyError}</p>
+          <button type="button" disabled={loading.history} onClick={() => void loadHistory()} className="mt-2 rounded border px-3 py-2 disabled:opacity-50">Повторить загрузку истории</button>
+        </div>
+      )}
+
       {/* Строка 1 — три метрики */}
+      {capacity && team && <>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <MetricCard
           title="Ёмкость команды"
@@ -165,13 +223,21 @@ export function DashboardPage() {
         <h2 className="mb-2 font-medium text-slate-800">Команда</h2>
         <TeamPulseTable members={allMembers} />
       </div>
+      </>}
 
       {/* Строка 4 — просроченные (только teamlead/admin) */}
-      {isTeamleadOrAdmin && overdueTasks.length > 0 && (
+      {isTeamleadOrAdmin && (overdueTasks.length > 0 || overdueError || loading.overdue) && (
         <div className="overdue-panel rounded-xl border-2 border-red-300 bg-white p-4 shadow-sm">
           <h2 className="overdue-panel-title mb-2 font-medium text-red-700">
-            ⚠️ Просроченные задачи ({overdueTasks.length})
+            ⚠️ Просроченные задачи{!overdueError && !loading.overdue && ` (${overdueTasks.length})`}
           </h2>
+          {loading.overdue && <p role="status" className="mb-3 text-sm text-slate-500">Обновление просроченных задач...</p>}
+          {overdueError && (
+            <div role="alert" className="mb-3 text-sm text-red-600">
+              <p>{overdueError}</p>
+              <button type="button" disabled={loading.overdue} onClick={() => void loadOverdue()} className="mt-2 rounded border px-3 py-2 disabled:opacity-50">Повторить загрузку просрочек</button>
+            </div>
+          )}
           <ul className="space-y-1">
             {overdueTasks.map((t) => (
               <li key={t.id}>
@@ -192,8 +258,15 @@ export function DashboardPage() {
       {isTeamleadOrAdmin && (
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="mb-2 font-medium text-slate-800">👥 Команда сейчас</h2>
+          {loading.focus && <p role="status" className="mb-3 text-sm text-slate-500">Обновление состояния команды...</p>}
+          {focusError && (
+            <div role="alert" className="mb-3 text-sm text-red-600">
+              <p>{focusError}</p>
+              <button type="button" disabled={loading.focus} onClick={() => void loadFocus()} className="mt-2 rounded border px-3 py-2 disabled:opacity-50">Повторить загрузку команды</button>
+            </div>
+          )}
           {focusStatuses.length === 0 ? (
-            <p className="text-sm text-slate-500">Нет активных исполнителей.</p>
+            !focusError && !loading.focus && <p className="text-sm text-slate-500">Нет активных исполнителей.</p>
           ) : (
             <ul className="space-y-1 text-sm">
               {focusStatuses.map((s) => (

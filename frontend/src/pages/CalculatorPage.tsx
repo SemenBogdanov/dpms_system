@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type ClipboardEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
@@ -9,6 +9,7 @@ import { EstimateCart } from '@/components/EstimateCart'
 import { TagInput } from '@/components/TagInput'
 import { ImagePlus, Paperclip, Plus, Search, Trash2, X } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { preventBackdropDismiss, useProtectedModal } from '@/hooks/useProtectedModal'
 
 const MAX_TASK_ATTACHMENTS = 5
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
@@ -58,13 +59,42 @@ export function CalculatorPage() {
   const [creating, setCreating] = useState(false)
   const [categoryTab, setCategoryTab] = useState<'all' | 'widget' | 'etl' | 'api' | 'docs' | 'proactive'>('all')
   const [catalogSearch, setCatalogSearch] = useState('')
+  const [catalogLoading, setCatalogLoading] = useState(true)
+  const [catalogError, setCatalogError] = useState<string | null>(null)
+  const catalogRequest = useRef(0)
+  const cartRevision = useRef(0)
+  const estimatedRevision = useRef<number | null>(null)
+  const estimateRequest = useRef(0)
+  const estimatePending = useRef(false)
+  const createSession = useRef(0)
+  const createPending = useRef(false)
 
   const isAdmin = currentUser?.role === 'admin'
 
-  useEffect(() => {
-    api.get<CatalogItem[]>('/api/catalog', { is_active: 'true' }).then(setCatalog).catch(() => setCatalog([]))
-    api.get<TaskTagSuggestion[]>('/api/tasks/tags/suggestions').then(setTagSuggestions).catch(() => setTagSuggestions([]))
+  const loadCatalog = useCallback(async () => {
+    const revision = ++catalogRequest.current
+    setCatalogLoading(true)
+    setCatalogError(null)
+    try {
+      const result = await api.get<CatalogItem[]>('/api/catalog', { is_active: 'true' })
+      if (catalogRequest.current === revision) setCatalog(result)
+    } catch (e) {
+      if (catalogRequest.current === revision) setCatalogError(e instanceof Error ? e.message : 'Ошибка загрузки каталога')
+    } finally {
+      if (catalogRequest.current === revision) setCatalogLoading(false)
+    }
   }, [])
+
+  useEffect(() => {
+    void loadCatalog()
+    api.get<TaskTagSuggestion[]>('/api/tasks/tags/suggestions').then(setTagSuggestions).catch(() => setTagSuggestions([]))
+    return () => {
+      catalogRequest.current += 1
+      estimateRequest.current += 1
+      estimatePending.current = false
+      createSession.current += 1
+    }
+  }, [loadCatalog])
 
   useEffect(() => {
     if (isAdmin) {
@@ -89,7 +119,17 @@ export function CalculatorPage() {
     }
   }, [createPriority, isAdmin])
 
+  const invalidateEstimate = () => {
+    cartRevision.current += 1
+    estimatedRevision.current = null
+    estimateRequest.current += 1
+    estimatePending.current = false
+    setLoading(false)
+    setEstimateResult(null)
+  }
+
   const addToCart = (item: CatalogItem) => {
+    invalidateEstimate()
     setCart((prev) => {
       const i = prev.findIndex((r) => r.catalog.id === item.id)
       if (i >= 0) {
@@ -99,41 +139,53 @@ export function CalculatorPage() {
       }
       return [...prev, { catalog: item, quantity: 1 }]
     })
-    setEstimateResult(null)
     toast.success(`✅ ${item.name} добавлен — ${Number(item.base_cost_q).toFixed(1)} Q`, { duration: 2000 })
   }
 
   const setQuantity = (catalogId: string, quantity: number) => {
+    invalidateEstimate()
     setCart((prev) =>
       prev.map((r) =>
         r.catalog.id === catalogId ? { ...r, quantity } : r
       )
     )
-    setEstimateResult(null)
   }
 
   const removeFromCart = (catalogId: string) => {
+    invalidateEstimate()
     setCart((prev) => prev.filter((r) => r.catalog.id !== catalogId))
-    setEstimateResult(null)
   }
 
   const handleCalculate = async () => {
-    if (cart.length === 0) return
+    if (cart.length === 0 || estimatePending.current) return
+    const revision = cartRevision.current
+    const request = ++estimateRequest.current
+    const isCurrent = () => estimateRequest.current === request && cartRevision.current === revision
+    estimatePending.current = true
+    estimatedRevision.current = null
+    setEstimateResult(null)
     setLoading(true)
     try {
       const res = await api.post<EstimateResponse>('/api/calculator/estimate', {
         items: cart.map((r) => ({ catalog_id: r.catalog.id, quantity: r.quantity })),
       })
+      if (!isCurrent()) return
+      estimatedRevision.current = revision
       setEstimateResult(res)
       toast.success('Расчёт выполнен')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка расчёта')
+      if (isCurrent()) toast.error(e instanceof Error ? e.message : 'Ошибка расчёта')
     } finally {
-      setLoading(false)
+      if (isCurrent()) {
+        estimatePending.current = false
+        setLoading(false)
+      }
     }
   }
 
   const openCreateModal = () => {
+    if (createPending.current || !estimateResult || estimatedRevision.current !== cartRevision.current) return
+    createSession.current += 1
     setCreateTitle('')
     setCreateDescription('')
     setCreatePriority('medium')
@@ -145,6 +197,22 @@ export function CalculatorPage() {
     setCreateAcceptanceCriteria([{ title: '', kind: 'required' }])
     setCreateModalOpen(true)
   }
+
+  const closeCreateModal = () => {
+    if (createPending.current) return
+    createSession.current += 1
+    setCreateModalOpen(false)
+  }
+  const createPanelRef = useProtectedModal<HTMLDivElement>(createModalOpen, {
+    onEscape: () => {
+      if (createPending.current) return
+      const dirty = Boolean(createTitle || createDescription || createTags.length || createAttachments.length || dueDate ||
+        createPriority !== 'medium' || createAcceptanceMode !== 'full' ||
+        createAcceptanceCriteria.some((criterion) => criterion.title || criterion.description) ||
+        createEstimatorId !== (isAdmin ? taskCreators[0]?.id ?? '' : currentUser?.id ?? ''))
+      if (!dirty || window.confirm('Закрыть форму и потерять несохранённые изменения?')) closeCreateModal()
+    },
+  })
 
   const updateAcceptanceCriterion = (
     index: number,
@@ -211,6 +279,7 @@ export function CalculatorPage() {
   }
 
   const handleAttachmentPaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    if (createPending.current) return
     const files = Array.from(event.clipboardData.items)
       .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
       .map((item, index) => {
@@ -250,6 +319,7 @@ export function CalculatorPage() {
   }
 
   const handleCreateTask = async () => {
+    if (createPending.current || !createModalOpen || !estimateResult || estimatedRevision.current !== cartRevision.current) return
     if (!createTitle.trim() || createTitle.length < 5) {
       toast.error('Название задачи не менее 5 символов')
       return
@@ -281,6 +351,8 @@ export function CalculatorPage() {
     const hasProactive = cart.some((r) => r.catalog.category === 'proactive')
     const adminSafePriority = !isAdmin && createPriority === 'critical' ? 'high' : createPriority
     const priorityToSend = hasProactive && (adminSafePriority === 'critical' || adminSafePriority === 'high') ? 'medium' : adminSafePriority
+    const session = createSession.current
+    createPending.current = true
     setCreating(true)
     try {
       const task = await api.post<Task>(
@@ -297,9 +369,11 @@ export function CalculatorPage() {
           acceptance_criteria: createAcceptanceMode === 'criteria' ? acceptanceCriteria : [],
         }
       )
+      if (createSession.current !== session) return
       let uploaded = 0
       if (createAttachments.length > 0) {
         const result = await uploadAttachments(task.id)
+        if (createSession.current !== session) return
         uploaded = result.uploaded
         if (uploaded < createAttachments.length) {
           toast.error(
@@ -315,9 +389,12 @@ export function CalculatorPage() {
       setCreateModalOpen(false)
       navigate('/queue')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка создания задачи')
+      if (createSession.current === session) toast.error(e instanceof Error ? e.message : 'Ошибка создания задачи')
     } finally {
-      setCreating(false)
+      if (createSession.current === session) {
+        createPending.current = false
+        setCreating(false)
+      }
     }
   }
 
@@ -347,6 +424,7 @@ export function CalculatorPage() {
   ]
 
   const handleDownloadCalculation = () => {
+    if (!estimateResult || estimatePending.current || estimatedRevision.current !== cartRevision.current) return
     const sumRaw = cart.reduce((s, r) => s + r.catalog.base_cost_q * r.quantity, 0)
     const totalQ = Math.round(sumRaw * 10) / 10
     const header = 'Операция,Категория,Сложность,Стоимость (Q),Количество,Итого (Q)\n'
@@ -400,10 +478,11 @@ export function CalculatorPage() {
               </button>
             ))}
           </div>
-          <div className="mb-3 flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1.5">
+          <div className="mb-3 flex items-center gap-2 rounded-md border border-slate-200 bg-white px-2 py-1.5 focus-within:ring-2 focus-within:ring-primary">
             <Search className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
             <input
               type="search"
+              aria-label="Поиск операции"
               value={catalogSearch}
               onChange={(e) => setCatalogSearch(e.target.value)}
               placeholder="Поиск операции"
@@ -420,7 +499,14 @@ export function CalculatorPage() {
               </button>
             )}
           </div>
-          <CatalogPicker catalog={filteredCatalog} onAdd={addToCart} />
+          {catalogLoading && <p role="status" className="text-sm text-slate-500">Загрузка каталога...</p>}
+          {catalogError && (
+            <div role="alert" className="space-y-2 text-sm text-red-600">
+              <p>{catalogError}</p>
+              <button type="button" onClick={() => void loadCatalog()} className="rounded border px-3 py-2">Повторить загрузку каталога</button>
+            </div>
+          )}
+          {!catalogLoading && !catalogError && <CatalogPicker catalog={filteredCatalog} onAdd={addToCart} />}
         </div>
         <div className="w-full md:flex-1 md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-180px)] overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <EstimateCart
@@ -438,23 +524,27 @@ export function CalculatorPage() {
 
       {createModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          className="protected-modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/50"
           role="dialog"
           aria-modal="true"
           aria-labelledby="create-task-dialog-title"
-          onKeyDown={(e) => e.key === 'Escape' && setCreateModalOpen(false)}
+          onPointerDown={preventBackdropDismiss}
         >
           <div
-            className={`max-h-[calc(100vh-2rem)] w-full overflow-y-auto rounded-xl bg-white p-6 shadow-lg ${
+            ref={createPanelRef}
+            tabIndex={-1}
+            aria-busy={creating}
+            className={`protected-modal-panel w-full rounded-xl bg-white p-4 shadow-lg sm:p-6 ${
               createAcceptanceMode === 'criteria' ? 'max-w-2xl' : 'max-w-lg'
             }`}
             onClick={(e) => e.stopPropagation()}
             onPaste={handleAttachmentPaste}
           >
-            <h3 id="create-task-dialog-title" className="text-lg font-semibold text-slate-900">
+            <h3 id="create-task-dialog-title" className="shrink-0 text-lg font-semibold text-slate-900">
               Создать задачу и отправить в очередь
             </h3>
-            <div className="mt-4 space-y-3">
+            <div className="mt-4 min-h-0 overflow-y-auto overscroll-contain">
+            <fieldset disabled={creating} className="min-w-0 space-y-3">
               <label htmlFor="create-task-title" className="block text-sm font-medium text-slate-700">
                 Название задачи *
               </label>
@@ -711,11 +801,13 @@ export function CalculatorPage() {
                   </div>
                 </div>
               )}
+            </fieldset>
             </div>
-            <div className="mt-6 flex justify-end gap-2">
+            <div className="mt-4 flex shrink-0 flex-wrap justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setCreateModalOpen(false)}
+                onClick={closeCreateModal}
+                disabled={creating}
                 className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
                 Отмена

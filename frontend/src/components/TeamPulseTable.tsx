@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import type { TeamMemberSummary } from '@/api/types'
 import { ProgressBar } from './ProgressBar'
 import { LeagueBadge } from './LeagueBadge'
@@ -9,7 +9,6 @@ interface TeamPulseTableProps {
 
 /** Таблица «Пульс команды»: сортировка по is_at_risk, потом по %. */
 export function TeamPulseTable({ members }: TeamPulseTableProps) {
-  const navigate = useNavigate()
   const sorted = [...members].sort((a, b) => {
     if (a.is_at_risk !== b.is_at_risk) return a.is_at_risk ? -1 : 1
     return a.percent - b.percent
@@ -37,12 +36,15 @@ export function TeamPulseTable({ members }: TeamPulseTableProps) {
             return (
             <tr
               key={m.id}
-              onClick={() => navigate(`/profile?user_id=${m.id}`)}
-              className={`border-b border-slate-100 transition-colors hover:bg-slate-50 cursor-pointer ${
+              className={`border-b border-slate-100 transition-colors hover:bg-slate-50 ${
                 m.is_at_risk ? 'bg-red-50' : m.percent >= 100 ? 'team-pulse-row-complete' : ''
               }`}
             >
-              <td className="px-4 py-2 font-medium text-slate-900">{m.full_name}</td>
+              <td className="px-4 py-2 font-medium text-slate-900">
+                <Link to={`/profile?user_id=${m.id}`} className="rounded hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
+                  {m.full_name}
+                </Link>
+              </td>
               <td className="px-4 py-2">
                 <LeagueBadge league={m.league as 'C' | 'B' | 'A'} />
               </td>

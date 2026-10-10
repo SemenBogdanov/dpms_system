@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import type { CSSProperties, FormEvent, KeyboardEvent, PointerEvent, ReactElement } from 'react'
 import { Check, FileText, GripVertical, Pencil, Plus, Search, X } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -11,6 +12,7 @@ import type {
 } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { cn } from '@/lib/utils'
+import { useProtectedModal } from '@/hooks/useProtectedModal'
 
 type SectionOption = {
   id: string
@@ -216,7 +218,16 @@ export function KnowledgePage() {
   const { user } = useAuth()
   const isManager = user?.role === 'admin' || user?.role === 'teamlead'
   const [articles, setArticles] = useState<KnowledgeArticle[]>([])
-  const [selectedSlug, setSelectedSlug] = useState('')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const selectedSlug = searchParams.get('article') ?? ''
+  const setSelectedSlug = useCallback((slug: string, replace = false) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      if (slug) next.set('article', slug)
+      else next.delete('article')
+      return next
+    }, { replace })
+  }, [setSearchParams])
   const [sectionFilter, setSectionFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState<'all' | KnowledgeStatus>('all')
   const [search, setSearch] = useState('')
@@ -232,6 +243,17 @@ export function KnowledgePage() {
   const listWidthRef = useRef(listWidth)
   const [listMaxWidth, setListMaxWidth] = useState(KNOWLEDGE_LIST_MAX_WIDTH)
   const [resizingList, setResizingList] = useState(false)
+  const editorRef = useProtectedModal<HTMLDivElement>(editorOpen, { onEscape: () => closeEditor() })
+  const editorInitial = useRef(JSON.stringify(EMPTY_FORM))
+  const live = useRef(true)
+  const selection = useRef({ slug: selectedSlug, revision: 0 })
+  if (selection.current.slug !== selectedSlug) selection.current = { slug: selectedSlug, revision: selection.current.revision + 1 }
+  useEffect(() => { live.current = true; return () => { live.current = false } }, [])
+  const savingRef = useRef(false)
+  const requestSequence = useRef(0)
+  const requestScope = JSON.stringify([isManager, search, sectionFilter, statusFilter])
+  const currentScope = useRef(requestScope)
+  currentScope.current = requestScope
 
   const updateListWidth = useCallback((value: number) => {
     const nextWidth = clampListWidth(value, listMaxWidth)
@@ -311,6 +333,9 @@ export function KnowledgePage() {
   }
 
   const loadArticles = useCallback(() => {
+    if (currentScope.current !== requestScope) return
+    const sequence = ++requestSequence.current
+    const isCurrent = () => sequence === requestSequence.current && currentScope.current === requestScope
     const params: Record<string, string> = {}
     if (sectionFilter !== 'all') params.section = sectionFilter
     if (isManager && statusFilter !== 'all') params.status = statusFilter
@@ -319,30 +344,33 @@ export function KnowledgePage() {
     setError(null)
     api
       .get<KnowledgeArticle[]>('/api/knowledge', params)
-      .then(setArticles)
+      .then((value) => { if (isCurrent()) setArticles(value) })
       .catch((e) => {
+        if (!isCurrent()) return
         setError(e instanceof Error ? e.message : 'Ошибка загрузки базы знаний')
         setArticles([])
       })
-      .finally(() => setLoading(false))
-  }, [isManager, search, sectionFilter, statusFilter])
+      .finally(() => { if (isCurrent()) setLoading(false) })
+  }, [isManager, search, sectionFilter, statusFilter, requestScope])
+  const refreshArticles = useRef(loadArticles)
+  refreshArticles.current = loadArticles
 
   useEffect(() => {
     loadArticles()
+    return () => { requestSequence.current += 1 }
   }, [loadArticles])
 
   useEffect(() => {
-    if (loading) return
+    if (loading || error) return
     if (!articles.length) {
-      setSelectedSlug('')
+      if (selectedSlug) setSelectedSlug('', true)
       return
     }
     if (articles.some((article) => article.slug === selectedSlug)) return
-    const requestedSlug = new URLSearchParams(window.location.search).get('article')
-    const startArticle = articles.find((article) => article.slug === requestedSlug)
+    const startArticle = articles.find((article) => article.slug === selectedSlug)
       ?? articles.find((article) => article.section === 'start')
-    setSelectedSlug(startArticle?.slug ?? articles[0].slug)
-  }, [articles, selectedSlug, loading])
+    setSelectedSlug(startArticle?.slug ?? articles[0].slug, true)
+  }, [articles, selectedSlug, loading, error, setSelectedSlug])
 
   const selectedArticle = useMemo(
     () => articles.find((article) => article.slug === selectedSlug) ?? articles[0] ?? null,
@@ -361,9 +389,9 @@ export function KnowledgePage() {
   }, [articles])
 
   const openEditor = (article: KnowledgeArticle | null) => {
+    if (savingRef.current) return
     setEditorArticle(article)
-    setForm(
-      article
+    const nextForm = article
         ? {
             slug: article.slug,
             title: article.title,
@@ -374,18 +402,25 @@ export function KnowledgePage() {
             sort_order: String(article.sort_order),
           }
         : EMPTY_FORM
-    )
+    editorInitial.current = JSON.stringify(nextForm)
+    setForm(nextForm)
     setEditorOpen(true)
   }
 
-  const closeEditor = () => {
+  const resetEditor = () => {
     setEditorOpen(false)
     setEditorArticle(null)
     setForm(EMPTY_FORM)
   }
+  const closeEditor = () => {
+    if (savingRef.current) return
+    if (JSON.stringify(form) !== editorInitial.current && !window.confirm('Закрыть редактор и удалить несохранённые изменения?')) return
+    resetEditor()
+  }
 
   const handleSave = (event: FormEvent) => {
     event.preventDefault()
+    if (savingRef.current) return
     const title = form.title.trim()
     const body = form.body.trim()
     const sortOrder = Number.parseInt(form.sort_order, 10)
@@ -394,7 +429,9 @@ export function KnowledgePage() {
       return
     }
 
+    savingRef.current = true
     setSaving(true)
+    const selectedRevision = selection.current.revision
     const payload: KnowledgeArticleCreate = {
       slug: form.slug.trim() || null,
       title,
@@ -410,26 +447,30 @@ export function KnowledgePage() {
 
     request
       .then((article) => {
+        if (!live.current) return
         toast.success(editorArticle ? 'Статья обновлена' : 'Статья создана')
-        setSelectedSlug(article.slug)
-        closeEditor()
-        loadArticles()
+        if (selectedRevision === selection.current.revision) setSelectedSlug(article.slug)
+        resetEditor()
+        refreshArticles.current()
       })
-      .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка сохранения'))
-      .finally(() => setSaving(false))
+      .catch((e) => { if (live.current) toast.error(e instanceof Error ? e.message : 'Ошибка сохранения') })
+      .finally(() => { savingRef.current = false; if (live.current) setSaving(false) })
   }
 
   const publishArticle = (article: KnowledgeArticle) => {
+    if (savingRef.current) return
+    savingRef.current = true
     setSaving(true)
     api
       .patch<KnowledgeArticle>(`/api/knowledge/${article.id}`, { status: 'published' })
       .then((updated) => {
+        if (!live.current) return
         toast.success('Статья опубликована')
-        setSelectedSlug(updated.slug)
-        loadArticles()
+        setArticles((current) => current.map((item) => item.id === updated.id ? updated : item))
+        refreshArticles.current()
       })
-      .catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка публикации'))
-      .finally(() => setSaving(false))
+      .catch((e) => { if (live.current) toast.error(e instanceof Error ? e.message : 'Ошибка публикации') })
+      .finally(() => { savingRef.current = false; if (live.current) setSaving(false) })
   }
 
   return (
@@ -538,7 +579,7 @@ export function KnowledgePage() {
 
           <div className="max-h-[calc(100vh-290px)] min-h-[280px] overflow-y-auto p-2">
             {loading && <p className="p-3 text-sm text-slate-500">Загрузка...</p>}
-            {error && <p className="p-3 text-sm text-red-600">{error}</p>}
+            {error && <div role="alert" className="p-3 text-sm text-red-600"><p>{error}</p><button type="button" onClick={loadArticles} className="mt-2 rounded border border-current px-3 py-2">Повторить</button></div>}
             {!loading && !error && articles.length === 0 && (
               <p className="p-3 text-sm text-slate-500">Материалы не найдены</p>
             )}
@@ -643,7 +684,7 @@ export function KnowledgePage() {
                           type="button"
                           onClick={() => publishArticle(selectedArticle)}
                           disabled={saving}
-                          className="inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                          className="inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-700 hover:ring-2 hover:ring-emerald-500/30 disabled:opacity-50"
                         >
                           <Check className="h-4 w-4" />
                           Опубликовать
@@ -652,6 +693,7 @@ export function KnowledgePage() {
                       <button
                         type="button"
                         onClick={() => openEditor(selectedArticle)}
+                        disabled={saving}
                         className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                       >
                         <Pencil className="h-4 w-4" />
@@ -680,9 +722,8 @@ export function KnowledgePage() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="knowledge-editor-title"
-          onKeyDown={(e) => e.key === 'Escape' && closeEditor()}
         >
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white shadow-xl">
+          <div ref={editorRef} tabIndex={-1} className="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-lg bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <h2 id="knowledge-editor-title" className="text-lg font-semibold text-slate-900">
                 {editorArticle ? 'Редактировать статью' : 'Новая статья'}
@@ -690,13 +731,15 @@ export function KnowledgePage() {
               <button
                 type="button"
                 onClick={closeEditor}
+                disabled={saving}
                 className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
                 aria-label="Закрыть"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <form onSubmit={handleSave} className="space-y-4 p-5">
+            <form onSubmit={handleSave} className="p-5">
+              <fieldset disabled={saving} className="min-w-0 space-y-4">
               <div className="grid gap-4 md:grid-cols-[1fr_180px]">
                 <label className="block">
                   <span className="mb-1 block text-sm font-medium text-slate-700">Название</span>
@@ -791,6 +834,7 @@ export function KnowledgePage() {
                   {saving ? 'Сохранение...' : 'Сохранить'}
                 </button>
               </div>
+              </fieldset>
             </form>
           </div>
         </div>

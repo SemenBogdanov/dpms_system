@@ -1,7 +1,26 @@
-import type { FC, FormEvent } from 'react'
+import { useCallback, useRef, type FC, type FormEvent } from 'react'
+import { preventBackdropDismiss, useProtectedModal } from '@/hooks/useProtectedModal'
+import { useFormNavigationProtection } from './PersonalTaskForm'
 import type { Task, User } from '@/api/types'
 
 const TASK_TITLE_MAX_LENGTH = 120
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function useTaskDialogProtection(open: boolean, busy: boolean, dirty: boolean, onClose: () => void) {
+  const panelRef = useProtectedModal<HTMLDivElement>(open)
+  const busyRef = useRef(busy)
+  busyRef.current = busy
+  const requestDiscard = useCallback((leave: () => void) => {
+    if (!busyRef.current && window.confirm('Закрыть без сохранения изменений?')) leave()
+  }, [])
+  useFormNavigationProtection(open && (dirty || busy), busyRef, requestDiscard)
+  const requestClose = () => {
+    if (busyRef.current) return
+    if (dirty) requestDiscard(onClose)
+    else onClose()
+  }
+  return { panelRef, requestClose }
+}
 
 interface BugfixModalProps {
   open: boolean
@@ -28,11 +47,12 @@ export const BugfixModal: FC<BugfixModalProps> = ({
   onSubmit,
   busy,
 }) => {
+  const { panelRef, requestClose } = useTaskDialogProtection(open && Boolean(parentTask), Boolean(busy), Boolean(title.trim() || description.trim()), onClose)
   if (!open || !parentTask) return null
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
-    if (!title.trim()) return
+    if (busy || !title.trim()) return
     onSubmit()
   }
 
@@ -43,13 +63,15 @@ export const BugfixModal: FC<BugfixModalProps> = ({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
       role="dialog"
       aria-modal="true"
-      onClick={onClose}
-      onKeyDown={(e) => e.key === 'Escape' && onClose()}
+      aria-label="Гарантийный баг-фикс"
+      onPointerDown={preventBackdropDismiss}
+      onKeyDown={(e) => e.key === 'Escape' && requestClose()}
     >
+      <div ref={panelRef} tabIndex={-1} className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto pb-[env(safe-area-inset-bottom)]">
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
-        className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl"
+        className="w-full rounded-xl bg-white p-6 shadow-xl [overflow-wrap:anywhere]"
       >
         <h3 className="text-lg font-semibold text-slate-900">🐛 Гарантийный баг-фикс</h3>
         <p className="mt-2 text-sm text-slate-600">
@@ -73,10 +95,12 @@ export const BugfixModal: FC<BugfixModalProps> = ({
 
         <div className="mt-4 space-y-3">
           <div>
-            <label className="block text-sm font-medium text-slate-700">
+            <label htmlFor="bugfix-title" className="block text-sm font-medium text-slate-700">
               Название бага
             </label>
             <input
+              id="bugfix-title"
+              disabled={busy}
               type="text"
               value={title}
               onChange={(e) => onTitleChange(e.target.value)}
@@ -89,10 +113,12 @@ export const BugfixModal: FC<BugfixModalProps> = ({
             </p>
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700">
+            <label htmlFor="bugfix-description" className="block text-sm font-medium text-slate-700">
               Описание
             </label>
             <textarea
+              id="bugfix-description"
+              disabled={busy}
               value={description}
               onChange={(e) => onDescriptionChange(e.target.value)}
               rows={3}
@@ -118,7 +144,8 @@ export const BugfixModal: FC<BugfixModalProps> = ({
         <div className="mt-6 flex justify-end gap-2">
           <button
             type="button"
-            onClick={onClose}
+            disabled={busy}
+            onClick={requestClose}
             className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
             Отмена
@@ -132,6 +159,7 @@ export const BugfixModal: FC<BugfixModalProps> = ({
           </button>
         </div>
       </form>
+      </div>
     </div>
   )
 }

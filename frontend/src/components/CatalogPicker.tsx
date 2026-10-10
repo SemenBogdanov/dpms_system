@@ -13,9 +13,9 @@ const categoryLabels: Record<string, string> = {
 
 const complexityStyles: Record<string, string> = {
   S: 'bg-slate-100 text-slate-700',
-  M: 'bg-blue-100 text-blue-800',
+  M: 'bg-blue-100 text-blue-700',
   L: 'bg-orange-100 text-orange-800',
-  XL: 'bg-red-100 text-red-800',
+  XL: 'bg-red-100 text-red-700',
 }
 
 interface CatalogPickerProps {
@@ -37,6 +37,7 @@ export function CatalogPicker({ catalog, onAdd, className }: CatalogPickerProps)
   return (
     <div className={cn('space-y-4', className)}>
       <h2 className="font-medium text-slate-800">Каталог операций</h2>
+      {catalog.length === 0 && <p className="text-sm text-slate-500">Нет операций</p>}
       {order.map(
         (cat) =>
           byCategory[cat]?.length > 0 && (
@@ -51,7 +52,7 @@ export function CatalogPicker({ catalog, onAdd, className }: CatalogPickerProps)
                     className="flex items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white p-2"
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-slate-900">
+                      <p className="break-words text-sm font-medium text-slate-900">
                         {item.name}
                       </p>
                       <div className="mt-1 flex flex-wrap gap-1">

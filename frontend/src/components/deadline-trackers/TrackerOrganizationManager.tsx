@@ -32,6 +32,8 @@ export function TrackerOrganizationManager({ kind, items, onCreate, onPatch, onD
   const dirty = name !== (editing?.name || '') || color !== (editing?.color || null)
   const sorted = [...items].sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name, 'ru'))
 
+  const visible = sorted.filter((item) => !item.is_archived || showArchived)
+
   const mutate = async (action: () => Promise<void>, reset = false) => {
     if (inFlight.current || uncertain) return
     inFlight.current = true; setBusy(true); setError('')
@@ -59,8 +61,9 @@ export function TrackerOrganizationManager({ kind, items, onCreate, onPatch, onD
   const reorder = (item: TrackerOrganization, offset: number) => {
     const index = sorted.findIndex((row) => row.id === item.id)
     const next = [...sorted]
-    const target = index + offset
-    if (target < 0 || target >= next.length) return
+    const neighbor = visible[visible.findIndex((row) => row.id === item.id) + offset]
+    if (!neighbor) return
+    const target = sorted.findIndex((row) => row.id === neighbor.id)
     ;[next[index], next[target]] = [next[target], next[index]]
     void mutate(() => onReorder(next.map((row) => row.id)))
   }
@@ -77,18 +80,18 @@ export function TrackerOrganizationManager({ kind, items, onCreate, onPatch, onD
           {swatches.map((swatch) => <button key={swatch.value} type="button" aria-label={swatch.label} title={swatch.label} aria-pressed={color === swatch.value} disabled={busy} onClick={() => setColor(swatch.value)} className={cn(trackerButton, 'h-11 w-11 p-0', color === swatch.value && 'ring-2 ring-primary')}><span className="h-5 w-5 rounded-full" style={{ backgroundColor: swatch.value }} /></button>)}
           <label className="sr-only" htmlFor="tracker-custom-color">Другой цвет</label><input id="tracker-custom-color" aria-label="Другой цвет" type="color" disabled={busy} value={color || '#64748b'} className="h-11 w-11 cursor-pointer rounded-md border border-slate-300 bg-transparent p-1" onChange={(e) => setColor(e.target.value)} />
         </div>
-        <div className="flex flex-wrap gap-2"><button disabled={busy} type="submit" className={cn(trackerButton, 'bg-primary text-primary-foreground hover:bg-primary/90 dark:text-primary-foreground')}>
+        <div className="flex flex-wrap gap-2"><button disabled={busy} type="submit" className={cn(trackerButton, 'bg-primary text-primary-foreground hover:bg-primary/90 dark:hover:bg-primary/90 dark:text-primary-foreground')}>
           {editingId ? <Save className="h-4 w-4" aria-hidden="true" /> : <Plus className="h-4 w-4" aria-hidden="true" />}{editingId ? 'Сохранить название и цвет' : 'Создать'}
         </button>{editingId && <button type="button" disabled={busy} className={trackerButton} onClick={() => select(null)}>Отменить правку</button>}</div>
       </form>
       <label className="flex min-h-11 items-center gap-2 text-sm"><input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />Показать архив</label>
       <ul className="divide-y divide-slate-200 dark:divide-slate-700">
-        {sorted.filter((item) => !item.is_archived || showArchived).map((item) => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
+        {visible.map((item) => <li key={item.id} className="flex flex-wrap items-center justify-between gap-2 py-3">
           <div className="flex min-w-0 flex-1 items-center gap-2">{item.color && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: item.color }} />}<span className="min-w-0 break-words text-sm">{item.name}{item.is_archived && <span className="ml-2 text-slate-500">Архив</span>}</span></div>
           <div className="flex flex-wrap gap-1" aria-label={`Действия: ${item.name}`}>
             <TrackerIconButton label={`Переименовать ${item.name}`} icon={Pencil} disabled={busy} onClick={() => select(item)} />
-            {kind === 'groups' && <><TrackerIconButton label={`Выше: ${item.name}`} icon={ArrowUp} disabled={busy || sorted[0]?.id === item.id} onClick={() => reorder(item, -1)} />
-            <TrackerIconButton label={`Ниже: ${item.name}`} icon={ArrowDown} disabled={busy || sorted[sorted.length - 1]?.id === item.id} onClick={() => reorder(item, 1)} /></>}
+            {kind === 'groups' && <><TrackerIconButton label={`Выше: ${item.name}`} icon={ArrowUp} disabled={busy || visible[0]?.id === item.id} onClick={() => reorder(item, -1)} />
+            <TrackerIconButton label={`Ниже: ${item.name}`} icon={ArrowDown} disabled={busy || visible[visible.length - 1]?.id === item.id} onClick={() => reorder(item, 1)} /></>}
             <TrackerIconButton label={`${item.is_archived ? 'Восстановить' : 'Архивировать'} ${item.name}`} icon={item.is_archived ? ArchiveRestore : Archive} disabled={busy} onClick={() => {
               if (!item.is_archived && !window.confirm(kind === 'groups' ? 'Архивировать группу? Трекеры сохранятся. Напоминания трекеров продолжат работать.' : 'Архивировать категорию? Старые трекеры сохранят эту категорию.')) return
               void mutate(() => onPatch(item.id, { is_archived: !item.is_archived }))

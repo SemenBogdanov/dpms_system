@@ -25,7 +25,7 @@ const views = [
   { id: 'management', label: 'Управление', Icon: Settings2, helper: true }, { id: 'history', label: 'Журнал', Icon: History, helper: true },
   { id: 'imports', label: 'Импорт', Icon: Upload, helper: true }, { id: 'help', label: 'Справка', Icon: HelpCircle },
 ]
-type MeetingSelection = { date: string; start: number; plan?: CalendarPlan; fact?: CalendarFact; prefill?: CalendarMeetingWindowPrefill }
+type MeetingSelection = { session: number; date: string; start: number; plan?: CalendarPlan; fact?: CalendarFact; prefill?: CalendarMeetingWindowPrefill }
 export function AuditCalendarPage() {
   const [params, setParams] = useSearchParams()
   const [initialToday] = useState(moscowToday)
@@ -53,6 +53,7 @@ export function AuditCalendarPage() {
   const [loading, setLoading] = useState(true)
   const [dataQuery, setDataQuery] = useState('')
   const [meeting, setMeeting] = useState<MeetingSelection | null>(null)
+  const meetingSequence = useRef(0)
   const [action, setAction] = useState<CalendarAction | null>(null)
   const [restore, setRestore] = useState<CalendarPlan | null>(null)
   const [availabilityAction, setAvailabilityAction] = useState<AvailabilityAction | null>(null)
@@ -69,6 +70,7 @@ export function AuditCalendarPage() {
     setLoading(true)
     try {
       const result = await auditCalendar.state({ from, to: queryTo, ...(group && view !== 'readiness' && { group }), ...(person && !['availability', 'readiness', 'workload'].includes(view) && { person }), ...(q && !['readiness', 'workload'].includes(view) && { q }) }, controller.signal)
+      if (sequence !== requestSequence.current || controller.signal.aborted) throw new DOMException('Calendar request superseded', 'AbortError')
       if (sequence === requestSequence.current) { setData(result); setDataQuery(query); setError(''); setDenied(false) }
       return result
     } catch (e) {
@@ -117,7 +119,7 @@ export function AuditCalendarPage() {
     setDraftFrom(first); setDraftTo(end)
     setValidation(''); update({ from: first, to: end, day: first })
   }
-  const open = (date: string, start: number, plan?: CalendarPlan, fact?: CalendarFact) => setMeeting({ date, start, plan, fact })
+  const open = (date: string, start: number, plan?: CalendarPlan, fact?: CalendarFact) => setMeeting({ session: ++meetingSequence.current, date, start, plan, fact })
   const selectedDay = params.get('day') || from
   const windowsEnabled = !loading && dataQuery === query && !error && !urlError
   const canView = (item: typeof views[number]) => !item.helper || data?.actor.can_manage || (item.id === 'management' && data?.actor.can_archive)
@@ -149,7 +151,7 @@ export function AuditCalendarPage() {
         {loading && !data && <p className="ac-empty" role="status">Загрузка календаря…</p>}
         {data && !denied && <div className="ac-bound-content" data-view={view} ref={node => node?.toggleAttribute('inert', loading || dataQuery !== query)} aria-busy={loading || dataQuery !== query}>{view === 'management' && <p className="ac-scope-caption">Цель: {calendarTargetScopes[data.stats.target_scope]}. Поиск и участник не меняют цель и накопленный недобор.</p>}{data.scope.archived && <p className="ac-scope-caption">Контур архивирован, изменения заблокированы.</p>}
           {view === 'graph' && <CalendarGraph state={data} from={from} to={to} day={selectedDay} groupId={group || null} setDay={day => update({ day })} onOpen={open} windows={{ duration: windowDuration, speakerId: windowSpeaker, enabled: windowsEnabled, sourceKey: query, sourceError: error || urlError, onControlsChange: update, onRefresh: refresh, onSelect: (date, start, prefill) => {
-            if (windowsEnabled && data.actor.can_manage && !data.scope.archived && prefill.version === data.scope.version) setMeeting({ date, start, prefill })
+            if (windowsEnabled && data.actor.can_manage && !data.scope.archived && prefill.version === data.scope.version) setMeeting({ session: ++meetingSequence.current, date, start, prefill })
           } }} />}
           {view === 'availability' && <><CalendarAvailability state={data} from={from} person={params.get('availability_person') || data.actor.user_id} setPerson={availability_person => update({ availability_person })} day={selectedDay} setDay={day => update({ day })} onRefresh={refresh} onAbsence={user => setAction({ kind: 'absence', user })} onAction={setAvailabilityAction} controlsTarget={availabilityControls} enabled={!loading && dataQuery === query && !error && !urlError} /><h3>Отсутствия</h3><AbsenceList state={data} onAction={setAction} /></>}
           {view === 'readiness' && <CalendarReadiness state={data} from={from} to={to} onAction={setAvailabilityAction} onRefresh={refresh} />}
@@ -164,7 +166,7 @@ export function AuditCalendarPage() {
         </div>}
       </main>
     </div>
-    {data && !denied && meeting && <CalendarMeetingEditor state={data} {...meeting} prefillEnabled={windowsEnabled} onClose={() => setMeeting(null)} onRefresh={refresh} />}
+    {data && !denied && meeting && <CalendarMeetingEditor key={meeting.session} state={data} {...meeting} prefillEnabled={windowsEnabled} onClose={() => setMeeting(null)} onRefresh={refresh} />}
     {data && !denied && action && <CalendarActionEditor action={action} state={data} onClose={() => setAction(null)} onRefresh={refresh} />}
     {data && !denied && restore && <CalendarRestoreEditor plan={restore} state={data} onClose={() => setRestore(null)} onRefresh={refresh} />}
     {data && !denied && availabilityAction && <CalendarAvailabilityAction action={availabilityAction} state={data} onClose={() => setAvailabilityAction(null)} onRefresh={refresh} />}

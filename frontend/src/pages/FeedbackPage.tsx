@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Clipboard, ExternalLink, MessageSquare, Plus, X } from 'lucide-react'
 import { api } from '@/api/client'
 import type {
@@ -14,6 +14,7 @@ import type {
 } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import toast from 'react-hot-toast'
+import { preventBackdropDismiss, useProtectedModal } from '@/hooks/useProtectedModal'
 
 const categoryLabel: Record<FeedbackCategory, string> = {
   improvement: 'Улучшение',
@@ -134,22 +135,53 @@ export function FeedbackPage() {
   const [reviewForm, setReviewForm] = useState<FeedbackRequestUpdate>({})
   const [reviewLinksText, setReviewLinksText] = useState('')
   const [busy, setBusy] = useState(false)
+  const submitting = useRef(false)
+  const mounted = useRef(true)
+  const reviewBaseline = useRef('')
+  const requestSequence = useRef(0)
+  const scope = useMemo(() => ({ authorFilter, categoryFilter, isManager, statusFilter }), [authorFilter, categoryFilter, isManager, statusFilter])
+  const currentScope = useRef(scope)
+  currentScope.current = scope
+  const [mutationError, setMutationError] = useState('')
+  const closeCreate = () => {
+    if (submitting.current) return
+    if ((JSON.stringify(form) !== JSON.stringify(EMPTY_FORM) || formLinksText) && !window.confirm('Закрыть без сохранения обращения?')) return
+    setCreateOpen(false)
+    setForm(EMPTY_FORM)
+    setFormLinksText('')
+  }
+  const closeDetails = () => {
+    if (submitting.current) return
+    if (isManager && reviewBaseline.current !== JSON.stringify([reviewForm, reviewLinksText]) && !window.confirm('Закрыть без сохранения решения?')) return
+    setSelected(null)
+  }
+  const createPanel = useProtectedModal<HTMLDivElement>(createOpen, { onEscape: closeCreate })
+  const detailsPanel = useProtectedModal<HTMLDivElement>(Boolean(selected), { onEscape: closeDetails })
 
   const loadFeedback = useCallback(async () => {
+    if (!mounted.current || currentScope.current !== scope) return
+    const request = ++requestSequence.current
+    const current = () => mounted.current && currentScope.current === scope && request === requestSequence.current
     const params: Record<string, string> = { limit: '200' }
     if (statusFilter !== 'all') params.status = statusFilter
     if (categoryFilter !== 'all') params.category = categoryFilter
     if (isManager && authorFilter !== 'all') params.author_id = authorFilter
     try {
       const data = await api.get<FeedbackRequestListResponse>('/api/feedback', params)
+      if (!current()) return
       setResponse(data)
       setError(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка загрузки')
+      if (current()) setError(e instanceof Error ? e.message : 'Ошибка загрузки')
     } finally {
-      setLoading(false)
+      if (current()) setLoading(false)
     }
-  }, [authorFilter, categoryFilter, isManager, statusFilter])
+  }, [authorFilter, categoryFilter, isManager, statusFilter, scope])
+
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false; requestSequence.current += 1 }
+  }, [])
 
   useEffect(() => {
     loadFeedback()
@@ -186,8 +218,9 @@ export function FeedbackPage() {
 
   const openDetails = (item: FeedbackRequest) => {
     setSelected(item)
+    setMutationError('')
     setReviewLinksText(linksToText(item.evidence_links))
-    setReviewForm({
+    const nextForm: FeedbackRequestUpdate = {
       status: item.status === 'in_review' ? 'triage' : item.status,
       priority: item.priority,
       reviewer_id: item.reviewer_id,
@@ -201,7 +234,9 @@ export function FeedbackPage() {
       decision_reason: item.decision_reason ?? '',
       next_action: item.next_action ?? '',
       target_release: item.target_release ?? '',
-    })
+    }
+    setReviewForm(nextForm)
+    reviewBaseline.current = JSON.stringify([nextForm, linksToText(item.evidence_links)])
   }
 
   const handleCopy = async (item: FeedbackRequest) => {
@@ -214,6 +249,9 @@ export function FeedbackPage() {
   }
 
   const handleCreate = async () => {
+    if (submitting.current) return
+    submitting.current = true
+    setMutationError('')
     setBusy(true)
     try {
       const payload: FeedbackRequestCreate = {
@@ -221,21 +259,25 @@ export function FeedbackPage() {
         evidence_links: parseLinks(formLinksText),
       }
       const created = await api.post<FeedbackRequest>('/api/feedback', payload)
+      if (!mounted.current) return
       toast.success(`Обращение ${created.feedback_code} создано`)
       setCreateOpen(false)
       setForm(EMPTY_FORM)
       setFormLinksText('')
-      setSelected(created)
+      openDetails(created)
       await loadFeedback()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка создания')
+      if (mounted.current) setMutationError(e instanceof Error ? e.message : 'Ошибка создания')
     } finally {
+      submitting.current = false
       setBusy(false)
     }
   }
 
   const handleReviewSave = async () => {
-    if (!selected) return
+    if (!selected || submitting.current) return
+    submitting.current = true
+    setMutationError('')
     setBusy(true)
     try {
       const payload: FeedbackRequestUpdate = {
@@ -252,22 +294,23 @@ export function FeedbackPage() {
         target_release: reviewForm.target_release || null,
       }
       const updated = await api.patch<FeedbackRequest>(`/api/feedback/${selected.id}`, payload)
+      if (!mounted.current) return
       toast.success(`Решение по ${updated.feedback_code} сохранено`)
-      setSelected(updated)
-      setReviewLinksText(linksToText(updated.evidence_links))
+      openDetails(updated)
       await loadFeedback()
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка сохранения')
+      if (mounted.current) setMutationError(e instanceof Error ? e.message : 'Ошибка сохранения')
     } finally {
+      submitting.current = false
       setBusy(false)
     }
   }
 
   if (loading) return <div className="text-slate-500">Загрузка...</div>
-  if (error) return <div className="text-red-600">{error}</div>
 
   return (
     <div className="space-y-6">
+      {error && <div role="alert" className="text-red-600">{error} {response && 'Показаны ранее загруженные данные.'} <button type="button" onClick={() => void loadFeedback()}>Повторить</button></div>}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-slate-900">Обратная связь</h1>
@@ -275,7 +318,12 @@ export function FeedbackPage() {
         </div>
         <button
           type="button"
-          onClick={() => setCreateOpen(true)}
+          onClick={event => {
+            // WebKit pointer activation need not focus buttons before the modal opens.
+            event.currentTarget.focus()
+            setMutationError('')
+            setCreateOpen(true)
+          }}
           className="inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-dark"
         >
           <Plus className="h-4 w-4" />
@@ -342,7 +390,7 @@ export function FeedbackPage() {
           <div className="font-medium text-slate-800">Реестр обращений</div>
           <div className="text-sm text-slate-500">Всего: {response?.total ?? stats.total}</div>
         </div>
-        {items.length === 0 ? (
+        {items.length === 0 && !error ? (
           <div className="flex flex-col items-center gap-2 p-8 text-center text-slate-500">
             <MessageSquare className="h-8 w-8 text-slate-300" />
             <p>Обращений пока нет</p>
@@ -381,7 +429,7 @@ export function FeedbackPage() {
                       </span>
                     </td>
                     <td className="min-w-[280px] px-4 py-3 align-top">
-                      <button type="button" onClick={() => openDetails(item)} className="text-left">
+                      <button type="button" onClick={event => { event.currentTarget.focus(); openDetails(item) }} className="text-left">
                         <div className="font-medium text-slate-900 hover:text-accent-dark">{item.title}</div>
                         <div className="mt-1 flex flex-wrap gap-2 text-xs">
                           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">{categoryLabel[item.category]}</span>
@@ -406,11 +454,12 @@ export function FeedbackPage() {
       </div>
 
       {createOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onPointerDown={preventBackdropDismiss}>
+          <div ref={createPanel} role="dialog" aria-modal="true" aria-labelledby="feedback-create-title" tabIndex={-1} className="max-h-[90dvh] w-full max-w-3xl overflow-y-auto rounded-xl bg-white shadow-xl">
+            <fieldset disabled={busy} className="min-w-0">
             <div className="flex items-center justify-between border-b border-slate-100 p-4">
-              <h2 className="font-semibold text-slate-900">Новое обращение</h2>
-              <button type="button" onClick={() => setCreateOpen(false)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100">
+              <h2 id="feedback-create-title" className="font-semibold text-slate-900">Новое обращение</h2>
+              <button type="button" aria-label="Закрыть обращение" onClick={closeCreate} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -469,16 +518,19 @@ export function FeedbackPage() {
               </section>
             </div>
             <div className="flex justify-end gap-2 border-t border-slate-100 p-4">
-              <button type="button" onClick={() => setCreateOpen(false)} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Отмена</button>
+              {mutationError && <p role="alert">{mutationError}</p>}
+              <button type="button" onClick={closeCreate} className="rounded-lg border border-slate-300 px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Отмена</button>
               <button type="button" onClick={handleCreate} disabled={busy} className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-dark disabled:opacity-50">Создать</button>
             </div>
+            </fieldset>
           </div>
         </div>
       )}
 
       {selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-          <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-white shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onPointerDown={preventBackdropDismiss}>
+          <div ref={detailsPanel} role="dialog" aria-modal="true" aria-labelledby="feedback-detail-title" tabIndex={-1} className="max-h-[90dvh] w-full max-w-4xl overflow-y-auto rounded-xl bg-white shadow-xl">
+            <fieldset disabled={busy} className="min-w-0">
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-4">
               <div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -488,10 +540,10 @@ export function FeedbackPage() {
                   </button>
                   <span className={`rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${statusClass(selected.status)}`}>{statusLabel[selected.status]}</span>
                 </div>
-                <h2 className="mt-2 font-semibold text-slate-900">{selected.title}</h2>
+                <h2 id="feedback-detail-title" className="mt-2 font-semibold text-slate-900">{selected.title}</h2>
                 <p className="mt-1 text-sm text-slate-500">{categoryLabel[selected.category]} · {selected.author_name}</p>
               </div>
-              <button type="button" onClick={() => setSelected(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100">
+              <button type="button" aria-label="Закрыть обращение" onClick={closeDetails} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100">
                 <X className="h-5 w-5" />
               </button>
             </div>
@@ -630,6 +682,7 @@ export function FeedbackPage() {
                       </label>
                     </div>
                     <div className="mt-3 flex justify-end">
+                      {mutationError && <p role="alert">{mutationError}</p>}
                       <button type="button" onClick={handleReviewSave} disabled={busy} className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-dark disabled:opacity-50">Сохранить решение</button>
                     </div>
                   </section>
@@ -674,6 +727,7 @@ export function FeedbackPage() {
                 </section>
               </aside>
             </div>
+            </fieldset>
           </div>
         </div>
       )}

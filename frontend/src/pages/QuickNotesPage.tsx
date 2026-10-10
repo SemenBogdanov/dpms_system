@@ -185,6 +185,36 @@ export function QuickNotesPage() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<NoteFilter>('all')
   const [search, setSearch] = useState('')
+  const listScope = useMemo(() => ({ filter, search, groupView }), [filter, search, groupView])
+  const currentListScope = useRef(listScope)
+  currentListScope.current = listScope
+  const [listError, setListError] = useState('')
+  const [loadedListScope, setLoadedListScope] = useState<typeof listScope | null>(null)
+  const groupsRequest = useRef(0)
+  const [sharedError, setSharedError] = useState('')
+  const sharedRequest = useRef(0)
+  const detailRequest = useRef(0)
+  const detailScope = useMemo(() => ({ id: noteId }), [noteId])
+  const currentDetailScope = useRef(detailScope)
+  currentDetailScope.current = detailScope
+  const [detailError, setDetailError] = useState('')
+  const sliceRequests = useRef<Record<string, number>>({})
+  const [sliceErrors, setSliceErrors] = useState<Record<string, string>>({})
+  const [contactsError, setContactsError] = useState('')
+  const pending = useRef(new Set<string>())
+  const [pendingIds, setPendingIds] = useState(new Set<string>())
+  const begin = (id: string) => {
+    if (pending.current.has(id)) return false
+    pending.current.add(id)
+    setPendingIds(new Set(pending.current))
+    return true
+  }
+  const end = (id: string) => {
+    pending.current.delete(id)
+    setPendingIds(new Set(pending.current))
+  }
+  const saving = useRef(false)
+  const editorSession = useRef(0)
   const [viewMode, setViewMode] = useState<ViewMode>('list')
   const [contacts, setContacts] = useState<Contact[]>([])
   const [sharedNotes, setSharedNotes] = useState<SharedQuickNote[]>([])
@@ -224,8 +254,12 @@ export function QuickNotesPage() {
   }, [refreshAttention])
 
   const loadNotes = useCallback(async () => {
+    const scope = listScope
+    if (currentListScope.current !== scope) return
     const requestId = ++notesRequest.current
+    const current = () => requestId === notesRequest.current && currentListScope.current === scope
     setLoading(true)
+    setListError('')
     try {
       const params: Record<string, string> = {}
       if (filter !== 'all') params.status = filter
@@ -233,23 +267,35 @@ export function QuickNotesPage() {
       if (groupView === 'ungrouped') params.ungrouped = 'true'
       else if (groupView !== 'all') params.group_id = groupView
       const data = await api.get<QuickNote[]>('/api/quick-notes', params)
-      if (requestId !== notesRequest.current) return
+      if (!current()) return
       setNotes(data)
+      setLoadedListScope(scope)
     } catch (e) {
-      if (requestId === notesRequest.current) {
-        setNotes([])
-        toast.error(e instanceof Error ? e.message : 'Ошибка загрузки заметок')
+      if (current()) {
+        setListError(e instanceof Error ? e.message : 'Ошибка загрузки заметок')
       }
     } finally {
-      if (requestId === notesRequest.current) setLoading(false)
+      if (current()) setLoading(false)
     }
-  }, [filter, search, groupView])
+  }, [filter, search, groupView, listScope])
 
   const loadGroups = useCallback(async () => {
-    try { setGroups(await noteGroupsApi.list()); setGroupError('') }
-    catch (error) { setGroupError(error instanceof Error ? error.message : 'Группы недоступны') }
+    const request = ++groupsRequest.current
+    try {
+      const data = await noteGroupsApi.list()
+      if (request === groupsRequest.current) { setGroups(data); setGroupError('') }
+    } catch (error) {
+      if (request === groupsRequest.current) setGroupError(error instanceof Error ? error.message : 'Группы недоступны')
+    }
   }, [])
   const reloadOrganization = async () => { await loadGroups(); await loadNotes() }
+  useEffect(() => () => {
+    notesRequest.current += 1
+    groupsRequest.current += 1
+    sharedRequest.current += 1
+    detailRequest.current += 1
+    editorSession.current += 1
+  }, [])
   useEffect(() => { void loadGroups() }, [loadGroups])
   useEffect(() => { setSelectedNotes([]) }, [groupView, activeTab, search, filter])
 
@@ -257,48 +303,40 @@ export function QuickNotesPage() {
     try {
       const data = await api.get<Contact[]>('/api/contacts')
       setContacts(data)
+      setContactsError('')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка загрузки контактов')
+      setContactsError(e instanceof Error ? e.message : 'Ошибка загрузки контактов')
     }
   }, [])
 
   const loadSharedNotes = useCallback(async () => {
+    const request = ++sharedRequest.current
     setSharedLoading(true)
+    setSharedError('')
     try {
       const data = await api.get<SharedQuickNote[]>('/api/quick-notes/shared')
-      setSharedNotes(data)
+      if (request === sharedRequest.current) setSharedNotes(data)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка загрузки общих заметок')
+      if (request === sharedRequest.current) setSharedError(e instanceof Error ? e.message : 'Ошибка загрузки общих заметок')
     } finally {
-      setSharedLoading(false)
+      if (request === sharedRequest.current) setSharedLoading(false)
     }
   }, [])
 
-  const silentReloadList = useCallback(async () => {
-    try {
-      const params: Record<string, string> = {}
-      if (filter !== 'all') params.status = filter
-      if (search.trim()) params.search = search.trim()
-      const data = await api.get<QuickNote[]>('/api/quick-notes', params)
-      setNotes(data)
-    } catch {
-      /* silent realtime resync */
-    }
-  }, [filter, search])
-
-  const silentReloadShared = useCallback(async () => {
-    try {
-      const data = await api.get<SharedQuickNote[]>('/api/quick-notes/shared')
-      setSharedNotes(data)
-    } catch {
-      /* silent realtime resync */
-    }
-  }, [])
+  const silentReloadList = loadNotes
+  const silentReloadShared = loadSharedNotes
 
   const loadNoteDetail = useCallback(async (id: string) => {
+    const scope = currentDetailScope.current
+    if (scope.id !== id) return
+    const request = ++detailRequest.current
+    const currentRequest = () => currentDetailScope.current === scope && request === detailRequest.current
     setDetailLoading(true)
+    setDetailError('')
     try {
       const data = await api.get<QuickNote | SharedQuickNote>(`/api/quick-notes/${id}`)
+      if (!currentRequest()) return
+      if ((isSharedQuickNote(data) ? data.note.id : data.id) !== id) throw new Error('Ответ не соответствует выбранной заметке')
       setDetail((current) => {
         const next = isSharedQuickNote(data)
           ? { note: data.note, share: data.share }
@@ -313,66 +351,41 @@ export function QuickNotesPage() {
         return next
       })
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка загрузки заметки')
-      navigate('/quick-notes', { replace: true })
+      if (currentRequest()) setDetailError(e instanceof Error ? e.message : 'Ошибка загрузки заметки')
     } finally {
-      setDetailLoading(false)
+      if (currentRequest()) setDetailLoading(false)
     }
-  }, [navigate])
+  }, [])
 
+  const loadSlice = useCallback(async <T,>(id: string, slice: string, apply: (data: T) => void) => {
+    const scope = currentDetailScope.current
+    if (scope.id !== id) return
+    const key = `${slice}:${id}`
+    const request = (sliceRequests.current[key] ?? 0) + 1
+    sliceRequests.current[key] = request
+    const current = () => currentDetailScope.current === scope && sliceRequests.current[key] === request
+    try {
+      const data = await api.get<T>(`/api/quick-notes/${id}/${slice}`)
+      if (!current()) return
+      apply(data)
+      setSliceErrors(errors => ({ ...errors, [key]: '' }))
+    } catch (e) {
+      if (current()) setSliceErrors(errors => ({ ...errors, [key]: e instanceof Error ? e.message : 'Не удалось загрузить данные' }))
+    }
+  }, [])
+
+  const loadNoteShares = useCallback((id: string) => loadSlice<QuickNoteShare[]>(id, 'shares', data => {
+    setSharesByNote(current => ({ ...current, [id]: data }))
+  }), [loadSlice])
+  const loadComments = useCallback((id: string) => loadSlice<QuickNoteComment[]>(id, 'comments', data => {
+    setCommentsByNote(current => ({ ...current, [id]: data }))
+  }), [loadSlice])
+  const loadAttachments = useCallback((id: string) => loadSlice<QuickNoteAttachment[]>(id, 'attachments', data => {
+    setAttachmentsByNote(current => ({ ...current, [id]: data }))
+  }), [loadSlice])
   const silentSyncSlices = useCallback(async (id: string) => {
-    try {
-      const data = await api.get<QuickNote | SharedQuickNote>(`/api/quick-notes/${id}`)
-      setDetail(isSharedQuickNote(data) ? { note: data.note, share: data.share } : { note: data })
-    } catch {
-      /* silent realtime resync */
-    }
-    try {
-      const data = await api.get<QuickNoteComment[]>(`/api/quick-notes/${id}/comments`)
-      setCommentsByNote((current) => ({ ...current, [id]: data }))
-    } catch {
-      /* silent realtime resync */
-    }
-    try {
-      const data = await api.get<QuickNoteAttachment[]>(`/api/quick-notes/${id}/attachments`)
-      setAttachmentsByNote((current) => ({ ...current, [id]: data }))
-    } catch {
-      /* silent realtime resync */
-    }
-    try {
-      const data = await api.get<QuickNoteShare[]>(`/api/quick-notes/${id}/shares`)
-      setSharesByNote((current) => ({ ...current, [id]: data }))
-    } catch {
-      /* silent realtime resync */
-    }
-  }, [])
-
-  const loadNoteShares = useCallback(async (noteId: string) => {
-    try {
-      const data = await api.get<QuickNoteShare[]>(`/api/quick-notes/${noteId}/shares`)
-      setSharesByNote((current) => ({ ...current, [noteId]: data }))
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка загрузки доступа')
-    }
-  }, [])
-
-  const loadComments = useCallback(async (noteId: string) => {
-    try {
-      const data = await api.get<QuickNoteComment[]>(`/api/quick-notes/${noteId}/comments`)
-      setCommentsByNote((current) => ({ ...current, [noteId]: data }))
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка загрузки обсуждения')
-    }
-  }, [])
-
-  const loadAttachments = useCallback(async (noteId: string) => {
-    try {
-      const data = await api.get<QuickNoteAttachment[]>(`/api/quick-notes/${noteId}/attachments`)
-      setAttachmentsByNote((current) => ({ ...current, [noteId]: data }))
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка загрузки вложений')
-    }
-  }, [])
+    await Promise.all([loadNoteDetail(id), loadComments(id), loadAttachments(id), loadNoteShares(id)])
+  }, [loadNoteDetail, loadComments, loadAttachments, loadNoteShares])
 
   useEffect(() => {
     loadNotes()
@@ -465,6 +478,8 @@ export function QuickNotesPage() {
   const isFormDirty = useCallback(() => formDirtyFor(form, editing), [form, editing])
 
   const openCreate = () => {
+    if (saving.current) return
+    editorSession.current += 1
     setEditing(null)
     setForm(emptyForm)
     setRemoteUpdated(false)
@@ -473,6 +488,8 @@ export function QuickNotesPage() {
   }
 
   const openEdit = (note: QuickNote) => {
+    if (saving.current) return
+    editorSession.current += 1
     setEditing(note)
     setForm({
       title: note.title,
@@ -486,6 +503,7 @@ export function QuickNotesPage() {
   }
 
   const forceCloseNoteModal = () => {
+    editorSession.current += 1
     setNoteModalOpen(false)
     setEditing(null)
     setForm(emptyForm)
@@ -494,6 +512,7 @@ export function QuickNotesPage() {
   }
 
   const confirmDiscardOrClose = () => {
+    if (saving.current) return
     if (isFormDirty()) {
       if (!window.confirm('Есть несохранённые изменения. Закрыть без сохранения?')) return
     }
@@ -501,23 +520,35 @@ export function QuickNotesPage() {
   }
 
   const loadFreshVersion = async () => {
-    if (!editing) return
+    if (!editing || saving.current) return
     if (!window.confirm('Загрузить актуальную версию? Несохранённые изменения будут заменены.')) return
+    const session = editorSession.current
+    saving.current = true
+    setBusy(true)
     try {
       const data = await api.get<QuickNote | SharedQuickNote>(`/api/quick-notes/${editing.id}`)
       const fresh = isSharedQuickNote(data) ? data.note : data
+      if (editorSession.current !== session) return
+      if (fresh.id !== editing.id) throw new Error('Ответ не соответствует выбранной заметке')
+      saving.current = false
       openEdit(fresh)
       toast.success('Загружена актуальная версия')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка загрузки версии')
+      if (editorSession.current === session) toast.error(e instanceof Error ? e.message : 'Ошибка загрузки версии')
+    } finally {
+      saving.current = false
+      setBusy(false)
     }
   }
 
   const handleSave = async () => {
+    if (saving.current) return
     if (!form.body.trim()) {
       toast.error('Введите текст заметки')
       return
     }
+    saving.current = true
+    const session = editorSession.current
     setBusy(true)
     try {
       if (editing) {
@@ -529,7 +560,8 @@ export function QuickNotesPage() {
           base_revision: editing.revision,
         }
         const updated = await api.patch<QuickNote>(`/api/quick-notes/${editing.id}`, payload)
-        setDetail((current) => (current && current.note.id === updated.id ? { ...current, note: updated } : current))
+        if (session !== editorSession.current) return
+        setDetail((current) => (current && current.note.id === updated.id && current.note.revision <= updated.revision ? { ...current, note: updated } : current))
         setRemoteUpdated(false)
         setConflict(null)
         toast.success('Заметка сохранена')
@@ -541,6 +573,7 @@ export function QuickNotesPage() {
           context: form.context.trim() || null,
           tags: parseTags(form.tagsText),
         } satisfies QuickNoteCreate)
+        if (session !== editorSession.current) return
         toast.success('Заметка создана')
       }
       forceCloseNoteModal()
@@ -548,6 +581,7 @@ export function QuickNotesPage() {
       await loadGroups()
       await silentReloadShared()
     } catch (e) {
+      if (session !== editorSession.current) return
       const message = e instanceof Error ? e.message : 'Ошибка сохранения'
       const isNetwork = e instanceof Error && e.name === 'ApiUnavailableError'
       const looksConflict = /устарел|конфликт|conflict|409|версия/i.test(message)
@@ -558,39 +592,43 @@ export function QuickNotesPage() {
         toast.error(message)
       }
     } finally {
+      saving.current = false
       setBusy(false)
     }
   }
 
   const updateStatus = async (note: QuickNote, status: QuickNoteStatus) => {
+    if (!begin(note.id)) return
     try {
       const updated = await api.patch<QuickNote>(`/api/quick-notes/${note.id}`, {
         status,
         base_revision: note.revision,
       })
-      setDetail((current) => (current && current.note.id === updated.id ? { ...current, note: updated } : current))
+      setDetail((current) => (current && current.note.id === updated.id && current.note.revision <= updated.revision ? { ...current, note: updated } : current))
       await loadNotes()
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Ошибка статуса'
       if (/устарел|конфликт|conflict|409|версия/i.test(message)) {
         toast.error('Версия устарела — обновите заметку')
-        if (noteId) void loadNoteDetail(noteId)
+        if (currentDetailScope.current.id === note.id) void loadNoteDetail(note.id)
       } else {
         toast.error(message)
       }
-    }
+    } finally { end(note.id) }
   }
 
   const deleteNote = async (note: QuickNote) => {
+    if (pending.current.has(note.id)) return
     if (!window.confirm('Удалить заметку?')) return
+    if (!begin(note.id)) return
     try {
       await api.delete(`/api/quick-notes/${note.id}`)
-      if (detail?.note.id === note.id) navigate('/quick-notes', { replace: true })
+      if (currentDetailScope.current.id === note.id) navigate('/quick-notes', { replace: true })
       await loadNotes()
       toast.success('Заметка удалена')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка удаления')
-    }
+    } finally { end(note.id) }
   }
 
   const copyNote = async (note: QuickNote) => {
@@ -603,6 +641,7 @@ export function QuickNotesPage() {
   }
 
   const promoteToTask = async (note: QuickNote) => {
+    if (!begin(note.id)) return
     setPromotingNoteId(note.id)
     try {
       await api.post<PersonalTask>('/api/personal-tasks', {
@@ -616,12 +655,13 @@ export function QuickNotesPage() {
         source_quick_note_id: note.id,
       })
       await loadNotes()
-      if (detail?.note.id === note.id) await loadNoteDetail(note.id)
+      if (currentDetailScope.current.id === note.id) await loadNoteDetail(note.id)
       toast.success('Личная задача создана')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка создания задачи')
     } finally {
-      setPromotingNoteId(null)
+      end(note.id)
+      setPromotingNoteId(current => current === note.id ? null : current)
     }
   }
 
@@ -641,6 +681,7 @@ export function QuickNotesPage() {
       toast.error('Выберите контакты')
       return
     }
+    if (!begin(`share:${note.id}`)) return
     setSharingBusy(note.id)
     try {
       await api.post<QuickNoteShare[]>(`/api/quick-notes/${note.id}/shares`, { recipient_ids: selected })
@@ -650,40 +691,44 @@ export function QuickNotesPage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка шаринга')
     } finally {
-      setSharingBusy(null)
+      end(`share:${note.id}`)
+      setSharingBusy(current => current === note.id ? null : current)
     }
   }
 
   const revokeShare = async (noteId: string, shareId: string) => {
+    if (!begin(`revoke:${shareId}`)) return
     try {
       await api.delete(`/api/quick-notes/shares/${shareId}`)
       await loadNoteShares(noteId)
       toast.success('Доступ закрыт')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка отзыва доступа')
-    }
+    } finally { end(`revoke:${shareId}`) }
   }
 
   const sendComment = async (noteId: string) => {
     const draft = commentDrafts[noteId] ?? ''
     const replyTo = replyToByNote[noteId]
     if (!draft.trim()) return
+    if (!begin(`comment:${noteId}`)) return
     try {
       await api.post<QuickNoteComment>(`/api/quick-notes/${noteId}/comments`, {
         body: draft.trim(),
         parent_id: replyTo?.id ?? null,
       })
-      setCommentDrafts((current) => ({ ...current, [noteId]: '' }))
-      setReplyToByNote((current) => ({ ...current, [noteId]: null }))
+      setCommentDrafts((current) => current[noteId] === draft ? { ...current, [noteId]: '' } : current)
+      setReplyToByNote((current) => current[noteId] === replyTo ? { ...current, [noteId]: null } : current)
       await loadComments(noteId)
       toast.success('Комментарий отправлен')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка отправки комментария')
-    }
+    } finally { end(`comment:${noteId}`) }
   }
 
   const uploadAttachment = async (noteId: string, file: File | null) => {
     if (!file) return
+    if (!begin(`upload:${noteId}`)) return
     const body = new FormData()
     body.append('file', file)
     setUploadingNoteId(noteId)
@@ -694,7 +739,8 @@ export function QuickNotesPage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка загрузки файла')
     } finally {
-      setUploadingNoteId(null)
+      end(`upload:${noteId}`)
+      setUploadingNoteId(current => current === noteId ? null : current)
     }
   }
 
@@ -715,14 +761,16 @@ export function QuickNotesPage() {
   }
 
   const deleteAttachment = async (noteId: string, attachment: QuickNoteAttachment) => {
+    if (pending.current.has(`file:${attachment.id}`)) return
     if (!window.confirm(`Удалить файл «${attachment.original_filename}»?`)) return
+    if (!begin(`file:${attachment.id}`)) return
     try {
       await api.delete(`/api/quick-notes/${noteId}/attachments/${attachment.id}`)
       await loadAttachments(noteId)
       toast.success('Файл удален')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка удаления файла')
-    }
+    } finally { end(`file:${attachment.id}`) }
   }
 
   const renderDiscussion = (noteId: string) => {
@@ -744,7 +792,8 @@ export function QuickNotesPage() {
           </div>
         </div>
         <div className="mt-3 max-h-[46vh] space-y-2 overflow-auto pr-1">
-          {comments.length === 0 ? (
+          {sliceErrors[`comments:${noteId}`] && <p role="alert">{sliceErrors[`comments:${noteId}`]} <button type="button" onClick={() => void loadComments(noteId)}>Повторить</button></p>}
+          {comments.length === 0 && !sliceErrors[`comments:${noteId}`] ? (
             <div className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-4 text-sm text-slate-500">
               Комментариев пока нет.
             </div>
@@ -759,6 +808,7 @@ export function QuickNotesPage() {
                   <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-5 text-slate-600">{comment.body}</p>
                   <button
                     type="button"
+                    disabled={pendingIds.has(`comment:${noteId}`)}
                     onClick={() => setReplyToByNote((current) => ({ ...current, [noteId]: comment }))}
                     className="mt-2 text-xs font-medium text-primary hover:underline"
                   >
@@ -781,12 +831,13 @@ export function QuickNotesPage() {
         {replyTo && (
           <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-primary/10 px-3 py-2 text-xs text-primary">
             <span className="truncate">Ответ: {replyTo.author_name}</span>
-            <button type="button" onClick={() => setReplyToByNote((current) => ({ ...current, [noteId]: null }))} className="font-medium hover:underline">
+            <button type="button" disabled={pendingIds.has(`comment:${noteId}`)} onClick={() => setReplyToByNote((current) => ({ ...current, [noteId]: null }))} className="font-medium hover:underline">
               сбросить
             </button>
           </div>
         )}
         <textarea
+          disabled={pendingIds.has(`comment:${noteId}`)}
           value={draft}
           onChange={(event) => setCommentDrafts((current) => ({ ...current, [noteId]: event.target.value }))}
           rows={3}
@@ -797,7 +848,7 @@ export function QuickNotesPage() {
           <button
             type="button"
             onClick={() => sendComment(noteId)}
-            disabled={!draft.trim()}
+            disabled={!draft.trim() || pendingIds.has(`comment:${noteId}`)}
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
           >
             <Send className="h-4 w-4" />
@@ -822,7 +873,9 @@ export function QuickNotesPage() {
           </div>
         </div>
         <p className="mt-2 text-xs text-slate-500">Получатели могут читать заметку и оставлять комментарии.</p>
-        {acceptedContacts.length === 0 ? (
+        {contactsError && <p role="alert">{contactsError} <button type="button" onClick={() => void loadContacts()}>Повторить</button></p>}
+        {sliceErrors[`shares:${note.id}`] && <p role="alert">{sliceErrors[`shares:${note.id}`]} <button type="button" onClick={() => void loadNoteShares(note.id)}>Повторить</button></p>}
+        {acceptedContacts.length === 0 && !contactsError ? (
           <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-500">
             Добавьте контакты в разделе <Link className="font-medium text-primary hover:underline" to="/contacts">Контакты</Link>.
           </div>
@@ -842,7 +895,7 @@ export function QuickNotesPage() {
                   <input
                     type="checkbox"
                     checked={alreadyShared || selected.includes(recipientId)}
-                    disabled={alreadyShared}
+                    disabled={alreadyShared || pendingIds.has(`share:${note.id}`)}
                     onChange={() => toggleRecipient(note.id, recipientId)}
                     className="mt-1"
                   />
@@ -862,7 +915,7 @@ export function QuickNotesPage() {
           <button
             type="button"
             onClick={() => shareNote(note)}
-            disabled={sharingBusy === note.id || selected.length === 0}
+            disabled={sharingBusy === note.id || pendingIds.has(`share:${note.id}`) || selected.length === 0}
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
           >
             <Share2 className="h-4 w-4" />
@@ -879,6 +932,7 @@ export function QuickNotesPage() {
                 </div>
                 <button
                   type="button"
+                  disabled={pendingIds.has(`revoke:${share.id}`)}
                   onClick={() => revokeShare(note.id, share.id)}
                   className="rounded-md border border-red-100 px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-50"
                 >
@@ -908,14 +962,15 @@ export function QuickNotesPage() {
               <input
                 type="file"
                 className="hidden"
-                disabled={uploadingNoteId === note.id}
+                disabled={uploadingNoteId === note.id || pendingIds.has(`upload:${note.id}`)}
                 onChange={(event) => void uploadAttachment(note.id, event.target.files?.[0] ?? null)}
                 accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xls,.xlsx,.pptx,.txt,.md,.csv"
               />
             </label>
           )}
         </div>
-        {attachments.length === 0 ? (
+        {sliceErrors[`attachments:${note.id}`] && <p role="alert">{sliceErrors[`attachments:${note.id}`]} <button type="button" onClick={() => void loadAttachments(note.id)}>Повторить</button></p>}
+        {attachments.length === 0 && !sliceErrors[`attachments:${note.id}`] ? (
           <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-white p-3 text-sm text-slate-500">
             Файлов пока нет.
           </div>
@@ -940,6 +995,7 @@ export function QuickNotesPage() {
                 {canUpload && (
                   <button
                     type="button"
+                    disabled={pendingIds.has(`file:${attachment.id}`)}
                     onClick={() => void deleteAttachment(note.id, attachment)}
                     className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600"
                     title="Удалить файл"
@@ -996,7 +1052,7 @@ export function QuickNotesPage() {
               <button type="button" onClick={() => openEdit(note)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50" title="Редактировать" aria-label="Редактировать заметку">
                 <Pencil className="h-4 w-4" />
               </button>
-              <button type="button" onClick={() => promoteToTask(note)} disabled={promotingNoteId === note.id} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50" title="В личную задачу" aria-label="Создать личную задачу из заметки">
+              <button type="button" onClick={() => promoteToTask(note)} disabled={pendingIds.has(note.id) || promotingNoteId === note.id} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50" title="В личную задачу" aria-label="Создать личную задачу из заметки">
                 <ListTodo className="h-4 w-4" />
               </button>
             </>
@@ -1006,7 +1062,7 @@ export function QuickNotesPage() {
     )
   }
 
-  const detailNote = detail?.note
+  const detailNote = detail && detail.note.id === noteId ? detail.note : undefined
   const detailIsOwner = Boolean(detail && !detail.share)
   const showEditorWarning = remoteUpdated || conflict !== null
 
@@ -1129,20 +1185,24 @@ export function QuickNotesPage() {
       {activeTab === 'mine' ? (
         <section className={cn('grid gap-3', viewMode === 'preview' ? 'lg:grid-cols-2' : '')}>
           {loading && <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-500">Загрузка...</div>}
-          {!loading && notes.length === 0 && (
+          {listError && <p role="alert">{listError} {notes.length > 0 && 'Показаны ранее загруженные данные.'} <button type="button" onClick={() => void loadNotes()}>Повторить</button></p>}
+          {!loading && !listError && notes.length === 0 && (
             <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
               Заметок пока нет.
             </div>
           )}
-          {activeGroup?.collapsed ? <button type="button" className="min-h-11 text-left text-sm text-primary" onClick={async () => {
+          {activeGroup?.collapsed ? <button type="button" disabled={pendingIds.has(`group:${activeGroup.id}`)} className="min-h-11 text-left text-sm text-primary" onClick={async () => {
+            if (!begin(`group:${activeGroup.id}`)) return
             try { await noteGroupsApi.update(activeGroup, { collapsed: false }); await loadGroups() }
             catch (error) { toast.error(error instanceof Error ? error.message : 'Не удалось развернуть группу') }
-          }}>Развернуть: {activeGroup.title}</button> : notes.map((note) => renderNoteCard(note))}
+            finally { end(`group:${activeGroup.id}`) }
+          }}>Развернуть: {activeGroup.title}</button> : loadedListScope === listScope && notes.map((note) => renderNoteCard(note))}
         </section>
       ) : (
         <section className={cn('grid gap-3', viewMode === 'preview' ? 'lg:grid-cols-2' : '')}>
           {sharedLoading && <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-500">Загрузка...</div>}
-          {!sharedLoading && sharedNotes.length === 0 && (
+          {sharedError && <p role="alert">{sharedError} <button type="button" onClick={() => void loadSharedNotes()}>Повторить</button></p>}
+          {!sharedLoading && !sharedError && sharedNotes.length === 0 && (
             <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500">
               Вам пока не открывали заметки.
             </div>
@@ -1158,13 +1218,15 @@ export function QuickNotesPage() {
       {noteId && detailLoading && (
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-sm text-slate-500">Загрузка заметки...</div>
       )}
+      {noteId && detailError && <div role="alert">{detailError} <button type="button" onClick={() => void loadNoteDetail(noteId)}>Повторить</button> <Link to="/quick-notes">К списку заметок</Link></div>}
 
       {noteModalOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
           onPointerDown={preventBackdropDismiss}
         >
-          <div ref={notePanelRef} tabIndex={-1} className="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-xl border border-slate-200 bg-white p-4 shadow-2xl outline-none">
+          <div ref={notePanelRef} role="dialog" aria-modal="true" aria-label={editing ? 'Редактирование заметки' : 'Новая заметка'} tabIndex={-1} className="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-xl border border-slate-200 bg-white p-4 shadow-2xl outline-none">
+            <fieldset disabled={busy} className="min-w-0">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-base font-semibold text-slate-900">
                 <FileText className="h-5 w-5 text-primary" />
@@ -1238,6 +1300,7 @@ export function QuickNotesPage() {
                 {busy ? 'Сохранение...' : editing ? 'Сохранить' : 'Создать'}
               </button>
             </div>
+            </fieldset>
           </div>
         </div>
       )}
@@ -1255,19 +1318,19 @@ export function QuickNotesPage() {
                     <button type="button" onClick={() => openEdit(detailNote)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50" title="Редактировать" aria-label="Редактировать заметку">
                       <Pencil className="h-4 w-4" />
                     </button>
-                    <button type="button" onClick={() => promoteToTask(detailNote)} disabled={promotingNoteId === detailNote.id} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50" title="В задачу" aria-label="Создать личную задачу из заметки">
+                    <button type="button" onClick={() => promoteToTask(detailNote)} disabled={pendingIds.has(detailNote.id) || promotingNoteId === detailNote.id} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50" title="В задачу" aria-label="Создать личную задачу из заметки">
                       <ListTodo className="h-4 w-4" />
                     </button>
-                    <button type="button" onClick={() => updateStatus(detailNote, 'processed')} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-100 text-emerald-700 hover:bg-emerald-50" title="Разобрано" aria-label="Отметить заметку разобранной">
+                    <button type="button" disabled={pendingIds.has(detailNote.id)} onClick={() => updateStatus(detailNote, 'processed')} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-emerald-100 text-emerald-700 hover:bg-emerald-50" title="Разобрано" aria-label="Отметить заметку разобранной">
                       <CheckCircle2 className="h-4 w-4" />
                     </button>
-                    <button type="button" onClick={() => updateStatus(detailNote, 'draft')} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50" title="Черновик" aria-label="Вернуть заметку в черновики">
+                    <button type="button" disabled={pendingIds.has(detailNote.id)} onClick={() => updateStatus(detailNote, 'draft')} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50" title="Черновик" aria-label="Вернуть заметку в черновики">
                       <RotateCcw className="h-4 w-4" />
                     </button>
-                    <button type="button" onClick={() => updateStatus(detailNote, 'archived')} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50" title="Архив" aria-label="Перенести заметку в архив">
+                    <button type="button" disabled={pendingIds.has(detailNote.id)} onClick={() => updateStatus(detailNote, 'archived')} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50" title="Архив" aria-label="Перенести заметку в архив">
                       <Archive className="h-4 w-4" />
                     </button>
-                    <button type="button" onClick={() => deleteNote(detailNote)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-100 text-red-600 hover:bg-red-50" title="Удалить" aria-label="Удалить заметку">
+                    <button type="button" disabled={pendingIds.has(detailNote.id)} onClick={() => deleteNote(detailNote)} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-red-100 text-red-600 hover:bg-red-50" title="Удалить" aria-label="Удалить заметку">
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </>

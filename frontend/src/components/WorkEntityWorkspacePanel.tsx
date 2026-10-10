@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   AlertTriangle,
   Archive,
@@ -214,7 +214,7 @@ function Dialog({
         ref={panelRef}
         tabIndex={-1}
         className={cn(
-          'max-h-[94vh] w-full overflow-y-auto rounded-t-lg bg-white shadow-2xl sm:rounded-lg',
+          'max-h-[calc(100dvh-2rem)] w-full overflow-y-auto rounded-t-lg bg-white shadow-2xl sm:rounded-lg',
           wide ? 'sm:max-w-4xl' : 'sm:max-w-xl',
         )}
       >
@@ -345,6 +345,8 @@ export function WorkEntityWorkspacePanel({
 }) {
   const [workspace, setWorkspace] = useState<WorkEntityWorkspace | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const loadRevision = useRef(0)
   const [busy, setBusy] = useState(false)
 
   const [expandedTaskId, setExpandedTaskId] = useState('')
@@ -390,22 +392,26 @@ export function WorkEntityWorkspacePanel({
   const [waivingDependencyId, setWaivingDependencyId] = useState<string | null>(null)
   const [dependencyWaiverReason, setDependencyWaiverReason] = useState('')
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (propagate = false) => {
+    const revision = ++loadRevision.current
     setLoading(true)
+    setLoadError(null)
     try {
-      setWorkspace(
-        await api.get<WorkEntityWorkspace>(`/api/work-entities/${entity.id}/workspace`),
-      )
+      const data = await api.get<WorkEntityWorkspace>(`/api/work-entities/${entity.id}/workspace`)
+      if (revision === loadRevision.current) setWorkspace(data)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось загрузить рабочее пространство')
+      if (revision !== loadRevision.current) return
+      setLoadError(error instanceof Error ? error.message : 'Не удалось загрузить рабочее пространство')
+      if (propagate) throw error
     } finally {
-      setLoading(false)
+      if (revision === loadRevision.current) setLoading(false)
     }
   }, [entity.id])
 
   useEffect(() => {
     setWorkspace(null)
     void load()
+    return () => { loadRevision.current += 1 }
   }, [load])
 
   useEffect(() => {
@@ -421,8 +427,13 @@ export function WorkEntityWorkspacePanel({
     setExecutionContractTask(null)
   }, [entity.status])
 
-  const refresh = async () => {
-    await Promise.all([load(), Promise.resolve(onChanged())])
+  const refresh = async (propagate = false) => {
+    try {
+      await Promise.all([load(true), Promise.resolve(onChanged())])
+    } catch (error) {
+      setLoadError('Не удалось обновить данные проекта. Повторите загрузку.')
+      if (propagate) throw error
+    }
   }
 
   const workspaceMutable = !['done', 'archived'].includes(entity.status)
@@ -948,10 +959,11 @@ export function WorkEntityWorkspacePanel({
     )
   }
 
-  if (!workspace) return null
+  if (!workspace) return <div role="alert" className="p-4 text-red-700">{loadError || 'План недоступен'} <button type="button" onClick={() => void load()}>Повторить загрузку плана</button></div>
 
   return (
     <div className="space-y-5">
+      {loadError && <div role="alert" className="text-red-700">{loadError}. Показаны последние загруженные данные. <button type="button" onClick={() => void load()}>Повторить загрузку плана</button></div>}
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Операции проекта</h3>
@@ -2232,7 +2244,7 @@ export function WorkEntityWorkspacePanel({
 
               {reschedulePreview.conflicts.length > 0 && (
                 <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3">
-                  <p className="flex items-center gap-2 text-sm font-semibold text-red-800">
+                  <p className="flex items-center gap-2 text-sm font-semibold text-red-700">
                     <AlertTriangle className="h-4 w-4" />
                     Автоматическое применение остановлено
                   </p>
@@ -2444,7 +2456,7 @@ export function WorkEntityWorkspacePanel({
           entityId={entity.id}
           operation={executionContractTask}
           onClose={() => setExecutionContractTask(null)}
-          onChanged={refresh}
+          onChanged={() => refresh(true)}
         />
       )}
     </div>

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft,
   BookOpenCheck,
@@ -43,6 +43,7 @@ import type {
   User,
 } from '@/api/types'
 import { cn } from '@/lib/utils'
+import { preventBackdropDismiss, useProtectedModal } from '@/hooks/useProtectedModal'
 
 type SectionKey = 'home' | 'assessment' | 'plan' | 'constructor'
 
@@ -81,7 +82,14 @@ const growthToolbarButtonClass =
 const growthModalBackdropClass =
   'fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4 py-6 backdrop-blur-md'
 const growthModalPanelClass =
-  'w-full rounded-lg border border-cyan-300/35 bg-white shadow-[0_0_0_1px_rgba(14,165,233,0.18),0_28px_80px_rgba(2,6,23,0.38),0_0_44px_rgba(14,165,233,0.18)] dark:bg-slate-900'
+  'flex w-full max-h-[calc(100dvh-3rem)] flex-col overflow-hidden [overflow-wrap:anywhere] [&>div:first-child]:shrink-0 [&>div:last-child]:min-h-0 [&>div:last-child]:overflow-y-auto rounded-lg border border-cyan-300/35 bg-white shadow-[0_0_0_1px_rgba(14,165,233,0.18),0_28px_80px_rgba(2,6,23,0.38),0_0_44px_rgba(14,165,233,0.18)] dark:bg-slate-900'
+
+function CompetenciesModal({ children, busy = false, title = 'Развитие компетенций' }: { children: ReactNode; busy?: boolean; title?: string }) {
+  const ref = useProtectedModal<HTMLDivElement>()
+  return <div ref={ref} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} className={growthModalBackdropClass} onPointerDown={preventBackdropDismiss}>
+    <fieldset disabled={busy} className="contents">{children}</fieldset>
+  </div>
+}
 
 const planStatusLabel: Record<DevelopmentPlanStatus, string> = {
   planned: 'Запланировано',
@@ -186,7 +194,7 @@ function statusBadgeClass(status: string): string {
   if (status === 'completed' || status === 'done' || status === 'assessment_completed') return 'bg-emerald-50 text-emerald-700'
   if (status === 'in_progress') return 'bg-amber-50 text-amber-700'
   if (status === 'assigned') return 'bg-sky-50 text-sky-700'
-  if (status === 'cancelled') return 'bg-rose-50 text-rose-700'
+  if (status === 'cancelled') return 'bg-rose-50 text-red-700'
   if (status === 'planned') return 'bg-slate-100 text-slate-600'
   return 'bg-slate-100 text-slate-600'
 }
@@ -284,7 +292,7 @@ function DevelopmentReportContent({
                   <button
                     type="button"
                     onClick={() => onDeleteAssessment(assessment.attempt_id)}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-rose-200 text-rose-700 hover:bg-rose-50"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50"
                     title="Удалить результат оценки"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -304,7 +312,18 @@ function DevelopmentReportContent({
 
 export function CompetenciesPage() {
   const { assignmentId } = useParams<{ assignmentId?: string }>()
-  const [section, setSection] = useState<SectionKey>('home')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedSection = searchParams.get('section')
+  const setSection = useCallback((next: SectionKey) => {
+    setSearchParams((current) => {
+      const params = new URLSearchParams(current)
+      if (next === 'home') params.delete('section')
+      else params.set('section', next)
+      return params
+    })
+  }, [setSearchParams])
+  const setSectionRef = useRef(setSection)
+  setSectionRef.current = setSection
   const [access, setAccess] = useState<CompetencyAccess | null>(null)
   const [competencies, setCompetencies] = useState<CompetencySummary[]>([])
   const [descriptionCompetency, setDescriptionCompetency] = useState<CompetencySummary | null>(null)
@@ -313,7 +332,17 @@ export function CompetenciesPage() {
   const [constructorItems, setConstructorItems] = useState<CompetencySummary[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
+  const [hasLoaded, setHasLoaded] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const loadRevision = useRef(0)
+  const mutationPending = useRef(false)
+  const assignmentRevision = useRef(0)
+  const [assignLoading, setAssignLoading] = useState(false)
+  const [assignError, setAssignError] = useState<string | null>(null)
+  const [assignLoaded, setAssignLoaded] = useState(false)
+  const assignInitial = useRef('')
+  const [pendingAssignment, setPendingAssignment] = useState<{ competencyId: string; userId: string } | null>(null)
   const [startingCompetencyId, setStartingCompetencyId] = useState<string | null>(null)
   const [activeAttempt, setActiveAttempt] = useState<CompetencyAttemptStartResponse | null>(null)
   const [questionIndex, setQuestionIndex] = useState(0)
@@ -343,24 +372,41 @@ export function CompetenciesPage() {
 
   const canUseDevelopment = Boolean(access?.development_enabled)
   const canUseConstructor = Boolean(access?.constructor_enabled)
+  const section: SectionKey = requestedSection === 'constructor' && canUseConstructor
+    ? 'constructor'
+    : (requestedSection === 'assessment' || requestedSection === 'plan') && canUseDevelopment
+      ? requestedSection
+      : !canUseDevelopment && canUseConstructor ? 'constructor' : 'home'
   const activeQuestion: CompetencyQuestionRead | null = activeAttempt?.questions[questionIndex] ?? null
   const completedCount = useMemo(() => competencies.filter((item) => item.status === 'completed').length, [competencies])
+  const hasUnsavedInput = JSON.stringify(constructorForm) !== JSON.stringify(createInitialConstructorForm())
+    || Boolean(editingCompetency && editForm && JSON.stringify(editForm) !== JSON.stringify(formFromConstructorDetail(editingCompetency)))
+    || Boolean(importResponseOpen && importResponseText.trim())
+    || Boolean(assignCompetency && assignLoaded && assignInitial.current !== JSON.stringify([assignVisibility, [...assignSelectedIds].sort()]))
+
+  useEffect(() => {
+    if (!hasUnsavedInput) return
+    const protect = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
+    window.addEventListener('beforeunload', protect)
+    return () => window.removeEventListener('beforeunload', protect)
+  }, [hasUnsavedInput])
 
   const loadAll = useCallback(async () => {
+    const revision = ++loadRevision.current
+    const current = () => revision === loadRevision.current
     setLoading(true)
+    setLoadError(null)
     try {
       const accessData = await api.get<CompetencyAccess>('/api/competencies/access')
+      if (!current()) return
       setAccess(accessData)
-
-      if (!accessData.development_enabled && accessData.constructor_enabled) {
-        setSection('constructor')
-      }
 
       if (accessData.development_enabled) {
         const [competencyData, planData] = await Promise.all([
           api.get<CompetencyListResponse>('/api/competencies/my'),
           api.get<DevelopmentPlanItem[]>('/api/competencies/development-plan/my'),
         ])
+        if (!current()) return
         setCompetencies(competencyData.competencies)
         setPlanItems(planData)
       } else {
@@ -373,21 +419,24 @@ export function CompetenciesPage() {
           api.get<CompetencySummary[]>('/api/competencies/constructor'),
           api.get<User[]>('/api/users?is_active=true'),
         ])
+        if (!current()) return
         setConstructorItems(constructorData)
         setUsers(userData)
       } else {
         setConstructorItems([])
         setUsers([])
       }
+      setHasLoaded(true)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Ошибка загрузки раздела')
+      if (current()) setLoadError(e instanceof Error ? e.message : 'Ошибка загрузки раздела')
     } finally {
-      setLoading(false)
+      if (current()) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
     loadAll()
+    return () => { loadRevision.current += 1; assignmentRevision.current += 1 }
   }, [loadAll])
 
   useEffect(() => {
@@ -405,7 +454,7 @@ export function CompetenciesPage() {
           }
           return [data, ...prev]
         })
-        setSection('assessment')
+        setSectionRef.current('assessment')
       } catch (e) {
         if (!cancelled) {
           toast.error(e instanceof Error ? e.message : 'Назначение не найдено')
@@ -752,30 +801,53 @@ export function CompetenciesPage() {
   }
 
   const createCustomCompetency = async () => {
+    if (mutationPending.current || pendingAssignment) return
     const payload = buildConstructorPayload(constructorForm)
     if (!payload) return
+    mutationPending.current = true
+    const targetUserId = constructorForm.target_user_id
     setBusy(true)
     try {
       const competency = await api.post<CompetencySummary>('/api/competencies/constructor', payload)
-      if (constructorForm.target_user_id) {
-        const assignment = await api.post<ConstructorAssignmentRead>(`/api/competencies/constructor/${competency.id}/assign`, {
-          target_user_id: constructorForm.target_user_id,
-        })
-        setLastAssignment(assignment)
-      } else {
-        setLastAssignment(null)
-      }
       setConstructorForm(createInitialConstructorForm())
-      await loadAll()
+      setConstructorItems((items) => [competency, ...items.filter((item) => item.id !== competency.id)])
+      setLastAssignment(null)
       toast.success('Компетенция создана')
+      if (targetUserId) {
+        const pending = { competencyId: competency.id, userId: targetUserId }
+        setPendingAssignment(pending)
+        try {
+          const assignment = await api.post<ConstructorAssignmentRead>(`/api/competencies/constructor/${competency.id}/assign`, { target_user_id: targetUserId })
+          setLastAssignment(assignment)
+          setPendingAssignment(null)
+        } catch {
+          toast.error('Опрос создан. Назначение не выполнено; повторите только назначение.')
+        }
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось создать компетенцию')
     } finally {
+      mutationPending.current = false
       setBusy(false)
     }
   }
 
+  const retryAssignment = async () => {
+    if (!pendingAssignment || mutationPending.current) return
+    mutationPending.current = true
+    setBusy(true)
+    try {
+      const assignment = await api.post<ConstructorAssignmentRead>(`/api/competencies/constructor/${pendingAssignment.competencyId}/assign`, { target_user_id: pendingAssignment.userId })
+      setLastAssignment(assignment)
+      setPendingAssignment(null)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Назначение не выполнено')
+    } finally { mutationPending.current = false; setBusy(false) }
+  }
+
   const openEditCompetency = async (item: CompetencySummary) => {
+    if (mutationPending.current || busy) return
+    mutationPending.current = true
     setBusy(true)
     try {
       const detail = await api.get<ConstructorCompetencyDetail>(`/api/competencies/constructor/${item.id}`)
@@ -784,12 +856,13 @@ export function CompetenciesPage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось открыть редактирование')
     } finally {
+      mutationPending.current = false
       setBusy(false)
     }
   }
 
   const saveEditCompetency = async () => {
-    if (!editingCompetency || !editForm) return
+    if (!editingCompetency || !editForm || mutationPending.current) return
     const fullPayload = buildConstructorPayload(editForm)
     if (!fullPayload) return
     const payload: ConstructorCompetencyUpdate = editingCompetency.can_edit_content
@@ -800,6 +873,7 @@ export function CompetenciesPage() {
           department: editForm.department.trim() || null,
           visibility: editForm.visibility,
         }
+    mutationPending.current = true
     setBusy(true)
     try {
       await api.patch<ConstructorCompetencyDetail>(`/api/competencies/constructor/${editingCompetency.id}`, payload)
@@ -810,26 +884,35 @@ export function CompetenciesPage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось обновить компетенцию')
     } finally {
+      mutationPending.current = false
       setBusy(false)
     }
   }
 
   const openAssignCompetency = async (item: CompetencySummary) => {
+    const revision = ++assignmentRevision.current
     setAssignCompetency(item)
     setAssignVisibility(item.visibility === 'all' ? 'all' : 'assigned')
-    setBusy(true)
+    setAssignLoading(true)
+    setAssignLoaded(false)
+    setAssignError(null)
+    setAssignSelectedIds([])
     try {
       const reportData = await api.get<ConstructorReportResponse>(`/api/competencies/constructor/${item.id}/report`)
+      if (revision !== assignmentRevision.current) return
       setAssignSelectedIds(reportData.rows.filter((row) => row.assignment_status).map((row) => row.user_id))
-    } catch {
-      setAssignSelectedIds([])
+      assignInitial.current = JSON.stringify([item.visibility === 'all' ? 'all' : 'assigned', reportData.rows.filter((row) => row.assignment_status).map((row) => row.user_id).sort()])
+      setAssignLoaded(true)
+    } catch (error) {
+      if (revision === assignmentRevision.current) setAssignError(error instanceof Error ? error.message : 'Не удалось прочитать назначения')
     } finally {
-      setBusy(false)
+      if (revision === assignmentRevision.current) setAssignLoading(false)
     }
   }
 
   const saveAssignments = async () => {
-    if (!assignCompetency) return
+    if (!assignCompetency || !assignLoaded || assignLoading || assignError || mutationPending.current) return
+    mutationPending.current = true
     const payload: ConstructorAssignmentSet = {
       target_user_ids: assignVisibility === 'all' ? [] : assignSelectedIds,
       visibility: assignVisibility,
@@ -844,6 +927,7 @@ export function CompetenciesPage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось обновить доступ')
     } finally {
+      mutationPending.current = false
       setBusy(false)
     }
   }
@@ -881,12 +965,35 @@ export function CompetenciesPage() {
     setResult(null)
   }
 
-  if (loading) {
+  const closeEdit = () => {
+    if (mutationPending.current || busy) return
+    if (editingCompetency && editForm && JSON.stringify(editForm) !== JSON.stringify(formFromConstructorDetail(editingCompetency)) && !window.confirm('Удалить несохранённые изменения опроса?')) return
+    setEditingCompetency(null)
+    setEditForm(null)
+  }
+  const closeAssignments = () => {
+    if (mutationPending.current || busy) return
+    if (assignLoaded && assignInitial.current !== JSON.stringify([assignVisibility, [...assignSelectedIds].sort()]) && !window.confirm('Удалить несохранённые изменения доступа?')) return
+    assignmentRevision.current += 1
+    setAssignCompetency(null)
+  }
+  const closeImport = () => {
+    if (busy) return
+    if (importResponseText.trim() && !window.confirm('Закрыть импорт? Введённый текст останется до следующего открытия.')) return
+    setImportResponseOpen(false)
+  }
+
+  if (loading && !hasLoaded) {
     return <div className="text-slate-500">Загрузка...</div>
+  }
+
+  if (!hasLoaded && loadError) {
+    return <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">{loadError} <button type="button" onClick={() => void loadAll()} className="underline">Повторить загрузку раздела</button></div>
   }
 
   return (
     <div className="space-y-5">
+      {loadError && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">{loadError} <button type="button" disabled={loading} onClick={() => void loadAll()} className="underline">Повторить загрузку раздела</button></div>}
       <div className="relative overflow-hidden rounded-lg border border-slate-800 bg-[radial-gradient(circle_at_78%_35%,rgba(14,165,233,0.28),transparent_34%),linear-gradient(135deg,#020617_0%,#07111f_48%,#020617_100%)] px-5 py-5 shadow-sm shadow-cyan-950/30">
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-cyan-400/70 to-transparent" />
         <div className="relative grid gap-5 lg:grid-cols-[minmax(0,1fr)_460px]">
@@ -1063,7 +1170,7 @@ export function CompetenciesPage() {
                       <button
                         type="button"
                         onClick={() => deleteAssessmentAttempt(competency.latest_attempt_id!)}
-                        className="inline-flex items-center gap-1 rounded-md border border-rose-200 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50"
+                        className="inline-flex items-center gap-1 rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
                         title="Сбросить результат оценки"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -1212,7 +1319,7 @@ export function CompetenciesPage() {
                       <button
                         type="button"
                         onClick={() => deletePlanItem(item)}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-rose-200 text-rose-700 hover:bg-rose-50"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50"
                         title="Удалить пункт ИПР"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -1239,7 +1346,7 @@ export function CompetenciesPage() {
           <div className="grid gap-4 xl:grid-cols-[460px_minmax(0,1fr)]">
             <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <h2 className="font-medium text-slate-900">Создать custom-компетенцию</h2>
-              <div className="mt-4 space-y-3">
+              <fieldset disabled={busy || mutationPending.current} className="mt-4 min-w-0 space-y-3">
                 <input
                   value={constructorForm.title}
                   onChange={(e) => setConstructorForm((prev) => ({ ...prev, title: e.target.value }))}
@@ -1328,19 +1435,22 @@ export function CompetenciesPage() {
                 </select>
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || Boolean(pendingAssignment)}
                   onClick={createCustomCompetency}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
                 >
                   <Send className="h-4 w-4" />
                   Создать
                 </button>
+                {pendingAssignment && <div role="alert" className="text-sm text-amber-900">Опрос создан: {pendingAssignment.competencyId}. Назначение не выполнено.
+                  <button type="button" disabled={busy} onClick={() => void retryAssignment()} className="ml-2 underline">Повторить назначение</button>
+                </div>}
                 {lastAssignment && (
-                  <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                    Назначение создано. Внутренняя ссылка: {lastAssignment.link}
+                  <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                    Назначение создано. <Link to={lastAssignment.link} className="underline">Открыть назначение</Link>
                   </p>
                 )}
-              </div>
+              </fieldset>
             </section>
             <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <h2 className="font-medium text-slate-900">Созданные компетенции</h2>
@@ -1395,7 +1505,7 @@ export function CompetenciesPage() {
                       <button
                         type="button"
                         onClick={() => setDeleteCompetency(item)}
-                        className="inline-flex items-center gap-1 rounded-md border border-rose-200 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50"
+                        className="inline-flex items-center gap-1 rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
                       >
                         <Trash2 className="h-4 w-4" />
                         Удалить
@@ -1410,7 +1520,7 @@ export function CompetenciesPage() {
       )}
 
       {aiPrompt && (
-        <div className={growthModalBackdropClass}>
+        <CompetenciesModal busy={busy}>
           <div className={cn(growthModalPanelClass, 'max-w-4xl')}>
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <div>
@@ -1453,11 +1563,11 @@ export function CompetenciesPage() {
               </div>
             </div>
           </div>
-        </div>
+        </CompetenciesModal>
       )}
 
       {importResponseOpen && (
-        <div className={growthModalBackdropClass}>
+        <CompetenciesModal busy={busy}>
           <div className={cn(growthModalPanelClass, 'max-w-3xl')}>
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <div>
@@ -1466,7 +1576,7 @@ export function CompetenciesPage() {
               </div>
               <button
                 type="button"
-                onClick={() => setImportResponseOpen(false)}
+                onClick={closeImport}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50"
                 title="Закрыть"
               >
@@ -1483,7 +1593,7 @@ export function CompetenciesPage() {
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setImportResponseOpen(false)}
+                  onClick={closeImport}
                   className="rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
                   Отмена
@@ -1499,11 +1609,11 @@ export function CompetenciesPage() {
               </div>
             </div>
           </div>
-        </div>
+        </CompetenciesModal>
       )}
 
       {developmentReport && (
-        <div className={growthModalBackdropClass}>
+        <CompetenciesModal busy={busy}>
           <div className={cn(growthModalPanelClass, 'max-w-5xl')}>
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <div>
@@ -1523,11 +1633,11 @@ export function CompetenciesPage() {
               <DevelopmentReportContent report={developmentReport} />
             </div>
           </div>
-        </div>
+        </CompetenciesModal>
       )}
 
       {adminPlanReport && (
-        <div className={growthModalBackdropClass}>
+        <CompetenciesModal busy={busy}>
           <div className={cn(growthModalPanelClass, 'max-w-6xl')}>
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <div>
@@ -1603,11 +1713,11 @@ export function CompetenciesPage() {
               </div>
             </div>
           </div>
-        </div>
+        </CompetenciesModal>
       )}
 
       {descriptionCompetency && (
-        <div className={growthModalBackdropClass}>
+        <CompetenciesModal busy={busy}>
           <div className={cn(growthModalPanelClass, 'max-w-3xl')}>
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <div>
@@ -1645,11 +1755,11 @@ export function CompetenciesPage() {
               </div>
             </div>
           </div>
-        </div>
+        </CompetenciesModal>
       )}
 
       {helpModal && (
-        <div className={growthModalBackdropClass}>
+        <CompetenciesModal busy={busy}>
           <div className={cn(growthModalPanelClass, 'max-w-3xl')}>
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <h2 className="font-medium text-slate-900">
@@ -1712,11 +1822,11 @@ export function CompetenciesPage() {
               )}
             </div>
           </div>
-        </div>
+        </CompetenciesModal>
       )}
 
       {editingCompetency && editForm && (
-        <div className={growthModalBackdropClass}>
+        <CompetenciesModal busy={busy || mutationPending.current} title="Редактировать компетенцию">
           <div className={cn(growthModalPanelClass, 'max-w-4xl')}>
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <div>
@@ -1729,10 +1839,7 @@ export function CompetenciesPage() {
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setEditingCompetency(null)
-                  setEditForm(null)
-                }}
+                onClick={closeEdit}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50"
                 title="Закрыть"
               >
@@ -1819,10 +1926,7 @@ export function CompetenciesPage() {
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    setEditingCompetency(null)
-                    setEditForm(null)
-                  }}
+                  onClick={closeEdit}
                   className="rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
                   Отмена
@@ -1838,17 +1942,17 @@ export function CompetenciesPage() {
               </div>
             </div>
           </div>
-        </div>
+        </CompetenciesModal>
       )}
 
       {assignCompetency && (
-        <div className={growthModalBackdropClass}>
+        <CompetenciesModal busy={busy || mutationPending.current} title="Доступ к опросу">
           <div className={cn(growthModalPanelClass, 'max-w-2xl')}>
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <h2 className="font-medium text-slate-900">Доступ к опросу</h2>
               <button
                 type="button"
-                onClick={() => setAssignCompetency(null)}
+                onClick={closeAssignments}
                 className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-slate-500 hover:bg-slate-50"
                 title="Закрыть"
               >
@@ -1856,6 +1960,9 @@ export function CompetenciesPage() {
               </button>
             </div>
             <div className="space-y-4 px-5 py-5">
+              {assignLoading && <p role="status">Загрузка назначений...</p>}
+              {assignError && <div role="alert" className="text-red-700">{assignError} <button type="button" onClick={() => void openAssignCompetency(assignCompetency)} className="underline">Повторить загрузку назначений</button></div>}
+              <fieldset disabled={!assignLoaded || busy} className="min-w-0 space-y-4">
               <select
                 value={assignVisibility}
                 onChange={(e) => setAssignVisibility(e.target.value as 'assigned' | 'all')}
@@ -1883,34 +1990,35 @@ export function CompetenciesPage() {
                   ))}
                 </div>
               ) : (
-                <p className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                <p className="rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700">
                   Опрос будет виден всем активным сотрудникам, у которых включен раздел развития компетенций.
                 </p>
               )}
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setAssignCompetency(null)}
+                  onClick={closeAssignments}
                   className="rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
                   Отмена
                 </button>
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={busy || !assignLoaded || assignLoading || Boolean(assignError)}
                   onClick={saveAssignments}
                   className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
                 >
                   Сохранить
                 </button>
               </div>
+              </fieldset>
             </div>
           </div>
-        </div>
+        </CompetenciesModal>
       )}
 
       {report && (
-        <div className={growthModalBackdropClass}>
+        <CompetenciesModal busy={busy}>
           <div className={cn(growthModalPanelClass, 'max-w-5xl')}>
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <div>
@@ -1955,11 +2063,11 @@ export function CompetenciesPage() {
               </div>
             </div>
           </div>
-        </div>
+        </CompetenciesModal>
       )}
 
       {deleteCompetency && (
-        <div className={growthModalBackdropClass}>
+        <CompetenciesModal busy={busy}>
           <div className={cn(growthModalPanelClass, 'max-w-md')}>
             <div className="border-b border-slate-100 px-5 py-4">
               <h2 className="font-medium text-slate-900">Удалить опрос</h2>
@@ -1987,12 +2095,12 @@ export function CompetenciesPage() {
               </div>
             </div>
           </div>
-        </div>
+        </CompetenciesModal>
       )}
 
       {pendingStartCompetency && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4 py-6">
-          <div className="w-full max-w-xl rounded-lg bg-white shadow-xl">
+        <CompetenciesModal busy={busy}>
+          <div className={cn(growthModalPanelClass, 'max-w-xl')}>
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <h2 className="font-medium text-slate-900">Начать оценку</h2>
               <button
@@ -2032,12 +2140,12 @@ export function CompetenciesPage() {
               </div>
             </div>
           </div>
-        </div>
+        </CompetenciesModal>
       )}
 
       {activeAttempt && activeQuestion && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4 py-6">
-          <div className="w-full max-w-2xl rounded-lg bg-white shadow-xl">
+        <CompetenciesModal busy={busy} title={activeAttempt.competency_title}>
+          <div className={cn(growthModalPanelClass, 'max-w-2xl')}>
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <div>
                 <h2 className="font-medium text-slate-900">{activeAttempt.competency_title}</h2>
@@ -2050,6 +2158,7 @@ export function CompetenciesPage() {
                 <Timer className="h-4 w-4" />
                 {secondsLeft}
               </div>
+              <button type="button" aria-label="Прервать оценку" title="Прервать оценку" onClick={() => { if (!busy && window.confirm('Закрыть текущую оценку?')) setActiveAttempt(null) }} className="h-11 w-11 shrink-0"><X className="mx-auto h-5 w-5" /></button>
             </div>
             <div className="space-y-4 px-5 py-5">
               <p className="text-base font-medium leading-7 text-slate-900">{activeQuestion.text}</p>
@@ -2069,11 +2178,11 @@ export function CompetenciesPage() {
               </div>
             </div>
           </div>
-        </div>
+        </CompetenciesModal>
       )}
 
       {result && (
-        <div className={growthModalBackdropClass}>
+        <CompetenciesModal busy={busy} title={`Результат оценки: ${result.competency_title}`}>
           <div className={cn(growthModalPanelClass, 'max-w-2xl')}>
             <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
               <div className="flex items-center gap-3">
@@ -2124,7 +2233,7 @@ export function CompetenciesPage() {
               </button>
             </div>
           </div>
-        </div>
+        </CompetenciesModal>
       )}
     </div>
   )

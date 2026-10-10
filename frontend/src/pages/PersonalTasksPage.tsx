@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Archive,
   ArchiveRestore,
@@ -375,7 +375,7 @@ function timelineTicks(start: number, end: number, due: number | null) {
 
 export function PersonalTasksPage() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const requestedTaskId = searchParams.get('task')
   const [tasks, setTasks] = useState<PersonalTask[]>([])
   const [quickNotes, setQuickNotes] = useState<QuickNote[]>([])
@@ -395,20 +395,45 @@ export function PersonalTasksPage() {
   const [statusDialog, setStatusDialog] = useState<StatusDialog | null>(null)
   const [statusContext, setStatusContext] = useState(emptyStatusContext)
   const [statusBusy, setStatusBusy] = useState(false)
-  const [statusActionTaskId, setStatusActionTaskId] = useState<string | null>(null)
-  const [eventForm, setEventForm] = useState(emptyEventForm)
-  const [checkpointForm, setCheckpointForm] = useState(emptyCheckpointForm)
+  const [eventDrafts, setEventDrafts] = useState<Record<string, typeof emptyEventForm>>({})
+  const [checkpointDrafts, setCheckpointDrafts] = useState<Record<string, typeof emptyCheckpointForm>>({})
   const [eventFormTaskId, setEventFormTaskId] = useState<string | null>(null)
   const [checkpointFormTaskId, setCheckpointFormTaskId] = useState<string | null>(null)
+  const eventForm = eventDrafts[eventFormTaskId || ''] || emptyEventForm
+  const checkpointForm = checkpointDrafts[checkpointFormTaskId || ''] || emptyCheckpointForm
+  const setEventForm = (update: (previous: typeof emptyEventForm) => typeof emptyEventForm) => {
+    if (eventFormTaskId) setEventDrafts((previous) => ({ ...previous, [eventFormTaskId]: update(previous[eventFormTaskId] || emptyEventForm) }))
+  }
+  const setCheckpointForm = (update: (previous: typeof emptyCheckpointForm) => typeof emptyCheckpointForm) => {
+    if (checkpointFormTaskId) setCheckpointDrafts((previous) => ({ ...previous, [checkpointFormTaskId]: update(previous[checkpointFormTaskId] || emptyCheckpointForm) }))
+  }
+  const pendingForms = useRef(new Set<string>())
+  const [busyForms, setBusyForms] = useState<Set<string>>(new Set())
+  const tasksGeneration = useRef(0)
+  const [tasksLoading, setTasksLoading] = useState(true)
+  const [tasksError, setTasksError] = useState('')
+  const [detailsErrors, setDetailsErrors] = useState<Record<string, string>>({})
+  const detailsGeneration = useRef<Record<string, number>>({})
   const [deadlineCompact, setDeadlineCompact] = useState(true)
   const [trackerBusyId, setTrackerBusyId] = useState<string | null>(null)
+  const taskQuery = useRef({ filter, search })
+  taskQuery.current = { filter, search }
   const loadTasks = useCallback(async () => {
+    const generation = ++tasksGeneration.current
+    setTasksLoading(true)
+    setTasksError('')
     const params = new URLSearchParams()
-    params.set('status', filter)
-    if (search.trim()) params.set('search', search.trim())
-    const data = await api.get<PersonalTask[]>(`/api/personal-tasks?${params.toString()}`)
-    setTasks(data)
-  }, [filter, search])
+    params.set('status', taskQuery.current.filter)
+    if (taskQuery.current.search.trim()) params.set('search', taskQuery.current.search.trim())
+    try {
+      const data = await api.get<PersonalTask[]>(`/api/personal-tasks?${params.toString()}`)
+      if (generation === tasksGeneration.current) setTasks(data)
+    } catch (error) {
+      if (generation === tasksGeneration.current) setTasksError(error instanceof Error ? error.message : 'Ошибка загрузки личных задач')
+    } finally {
+      if (generation === tasksGeneration.current) setTasksLoading(false)
+    }
+  }, [])
 
   const loadQuickNotes = useCallback(async () => {
     const data = await api.get<QuickNote[]>('/api/quick-notes?status=draft')
@@ -426,12 +451,20 @@ export function PersonalTasksPage() {
   }, [])
 
   const loadTaskDetails = useCallback(async (taskId: string) => {
-    const [eventData, checkpointData] = await Promise.all([
-      api.get<PersonalTaskEvent[]>(`/api/personal-tasks/${taskId}/events`),
-      api.get<PersonalTaskCheckpoint[]>(`/api/personal-tasks/${taskId}/checkpoints`),
-    ])
-    setEvents((prev) => ({ ...prev, [taskId]: eventData }))
-    setCheckpoints((prev) => ({ ...prev, [taskId]: checkpointData }))
+    const generation = (detailsGeneration.current[taskId] || 0) + 1
+    detailsGeneration.current[taskId] = generation
+    setDetailsErrors((previous) => ({ ...previous, [taskId]: '' }))
+    try {
+      const [eventData, checkpointData] = await Promise.all([
+        api.get<PersonalTaskEvent[]>(`/api/personal-tasks/${taskId}/events`),
+        api.get<PersonalTaskCheckpoint[]>(`/api/personal-tasks/${taskId}/checkpoints`),
+      ])
+      if (detailsGeneration.current[taskId] !== generation) return
+      setEvents((prev) => ({ ...prev, [taskId]: eventData }))
+      setCheckpoints((prev) => ({ ...prev, [taskId]: checkpointData }))
+    } catch (error) {
+      if (detailsGeneration.current[taskId] === generation) setDetailsErrors((previous) => ({ ...previous, [taskId]: error instanceof Error ? error.message : 'Ошибка загрузки истории' }))
+    }
   }, [])
 
   const removeCheckpointFromDeadlines = useCallback((checkpointId: string) => {
@@ -440,7 +473,7 @@ export function PersonalTasksPage() {
 
   useEffect(() => {
     void loadTasks().catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка загрузки личных задач'))
-  }, [loadTasks])
+  }, [filter, search, loadTasks])
 
   useEffect(() => {
     void loadQuickNotes().catch(() => undefined)
@@ -455,14 +488,9 @@ export function PersonalTasksPage() {
   }, [loadDeadlineTrackers])
 
   useEffect(() => {
-    if (!requestedTaskId) return
-    if (filter !== 'all') {
-      setFilter('all')
-      return
-    }
-    if (!tasks.some((task) => task.id === requestedTaskId) || expandedId === requestedTaskId) {
-      return
-    }
+    if (!requestedTaskId) { setExpandedId(null); return }
+    setFilter('all')
+    setSearch('')
     setExpandedId(requestedTaskId)
     void loadTaskDetails(requestedTaskId)
     window.requestAnimationFrame(() => {
@@ -470,7 +498,21 @@ export function PersonalTasksPage() {
         .getElementById(`personal-task-${requestedTaskId}`)
         ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
-  }, [expandedId, filter, loadTaskDetails, requestedTaskId, tasks])
+  }, [loadTaskDetails, requestedTaskId])
+
+  const selectTask = (id: string | null) => {
+    setExpandedId(id)
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous)
+      if (id) next.set('task', id)
+      else next.delete('task')
+      return next
+    })
+  }
+
+  useEffect(() => {
+    if (expandedId) document.getElementById(`personal-task-${expandedId}`)?.scrollIntoView({ block: 'nearest' })
+  }, [expandedId, tasks])
 
   const stats = useMemo(() => {
     const active = tasks.filter((task) => !['done', 'archived'].includes(task.status)).length
@@ -498,15 +540,7 @@ export function PersonalTasksPage() {
   }
 
   const toggleTaskDetails = (task: PersonalTask) => {
-    setExpandedId((current) => {
-      const next = current === task.id ? null : task.id
-      if (next) {
-        setEventForm(emptyEventForm)
-        setCheckpointForm(emptyCheckpointForm)
-        void loadTaskDetails(task.id).catch((e) => toast.error(e instanceof Error ? e.message : 'Ошибка загрузки истории'))
-      }
-      return next
-    })
+    selectTask(expandedId === task.id ? null : task.id)
   }
 
   const editTask = (task: PersonalTask, trigger: HTMLButtonElement) => {
@@ -529,8 +563,9 @@ export function PersonalTasksPage() {
     changes: PersonalTaskUpdate = {},
   ): Promise<boolean> => {
     if (task.status === status && Object.keys(changes).length === 0) return true
-    if (statusActionTaskId === task.id) return false
-    setStatusActionTaskId(task.id)
+    const pendingKey = `status:${task.id}`
+    if (pendingForms.current.has(pendingKey)) return false
+    pendingForms.current.add(pendingKey); setBusyForms(new Set(pendingForms.current))
     try {
       await api.patch<PersonalTask>(`/api/personal-tasks/${task.id}`, { ...changes, status })
       await Promise.all([loadTasks(), loadDeadlines(), loadTaskDetails(task.id)])
@@ -548,7 +583,7 @@ export function PersonalTasksPage() {
       toast.error(e instanceof Error ? e.message : 'Ошибка статуса')
       return false
     } finally {
-      setStatusActionTaskId(null)
+      pendingForms.current.delete(pendingKey); setBusyForms(new Set(pendingForms.current))
     }
   }
 
@@ -707,6 +742,8 @@ export function PersonalTasksPage() {
   }
 
   const createEvent = async (task: PersonalTask) => {
+    const pendingKey = `event:${task.id}`
+    if (eventFormTaskId !== task.id || pendingForms.current.has(pendingKey)) return
     if (!eventForm.title.trim() && !eventForm.body.trim()) {
       toast.error('Заполните заголовок или заметку')
       return
@@ -718,6 +755,8 @@ export function PersonalTasksPage() {
       if (!ok) return
     }
     try {
+      pendingForms.current.add(pendingKey)
+      setBusyForms(new Set(pendingForms.current))
       const payload: PersonalTaskEventCreate = {
         event_type: eventForm.eventType,
         title: eventForm.title || null,
@@ -727,15 +766,20 @@ export function PersonalTasksPage() {
         due_at: toPayloadDate(eventForm.dueAt),
       }
       await api.post<PersonalTaskEvent>(`/api/personal-tasks/${task.id}/events`, payload)
-      setEventForm(emptyEventForm)
-      await Promise.all([loadTasks(), loadDeadlines(), loadTaskDetails(task.id)])
+      setEventDrafts((previous) => previous[task.id] === eventForm ? { ...previous, [task.id]: emptyEventForm } : previous)
       toast.success('Запись добавлена')
+      void Promise.all([loadTasks(), loadDeadlines(), loadTaskDetails(task.id)]).catch(() => toast.error('Запись сохранена, не удалось обновить список'))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка записи')
+    } finally {
+      pendingForms.current.delete(pendingKey)
+      setBusyForms(new Set(pendingForms.current))
     }
   }
 
   const createCheckpoint = async (task: PersonalTask) => {
+    const pendingKey = `checkpoint:${task.id}`
+    if (checkpointFormTaskId !== task.id || pendingForms.current.has(pendingKey)) return
     if (!checkpointForm.title.trim()) {
       toast.error('Укажите этап')
       return
@@ -747,6 +791,8 @@ export function PersonalTasksPage() {
       if (!ok) return
     }
     try {
+      pendingForms.current.add(pendingKey)
+      setBusyForms(new Set(pendingForms.current))
       const payload: PersonalTaskCheckpointCreate = {
         title: checkpointForm.title,
         status: checkpointForm.status,
@@ -756,15 +802,21 @@ export function PersonalTasksPage() {
         due_at: toPayloadDate(checkpointForm.dueAt),
       }
       await api.post<PersonalTaskCheckpoint>(`/api/personal-tasks/${task.id}/checkpoints`, payload)
-      setCheckpointForm(emptyCheckpointForm)
-      await Promise.all([loadTasks(), loadDeadlines(), loadTaskDetails(task.id)])
+      setCheckpointDrafts((previous) => previous[task.id] === checkpointForm ? { ...previous, [task.id]: emptyCheckpointForm } : previous)
       toast.success('Этап добавлен')
+      void Promise.all([loadTasks(), loadDeadlines(), loadTaskDetails(task.id)]).catch(() => toast.error('Этап сохранен, не удалось обновить список'))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка этапа')
+    } finally {
+      pendingForms.current.delete(pendingKey)
+      setBusyForms(new Set(pendingForms.current))
     }
   }
 
   const updateCheckpointStatus = async (task: PersonalTask, checkpoint: PersonalTaskCheckpoint, status: PersonalTaskCheckpointStatus) => {
+    const pendingKey = `checkpoint-action:${checkpoint.id}`
+    if (pendingForms.current.has(pendingKey)) return
+    pendingForms.current.add(pendingKey); setBusyForms(new Set(pendingForms.current))
     try {
       await api.patch<PersonalTaskCheckpoint>(`/api/personal-tasks/${task.id}/checkpoints/${checkpoint.id}`, { status })
       if (status === 'done') removeCheckpointFromDeadlines(checkpoint.id)
@@ -772,11 +824,15 @@ export function PersonalTasksPage() {
       if (status === 'done') removeCheckpointFromDeadlines(checkpoint.id)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка этапа')
+    } finally {
+      pendingForms.current.delete(pendingKey); setBusyForms(new Set(pendingForms.current))
     }
   }
 
   const deleteCheckpoint = async (task: PersonalTask, checkpoint: PersonalTaskCheckpoint) => {
-    if (!window.confirm('Удалить этап контроля?')) return
+    const pendingKey = `checkpoint-action:${checkpoint.id}`
+    if (pendingForms.current.has(pendingKey) || !window.confirm('Удалить этап контроля?')) return
+    pendingForms.current.add(pendingKey); setBusyForms(new Set(pendingForms.current))
     try {
       await api.delete(`/api/personal-tasks/${task.id}/checkpoints/${checkpoint.id}`)
       removeCheckpointFromDeadlines(checkpoint.id)
@@ -785,6 +841,8 @@ export function PersonalTasksPage() {
       toast.success('Этап удален')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Ошибка удаления этапа')
+    } finally {
+      pendingForms.current.delete(pendingKey); setBusyForms(new Set(pendingForms.current))
     }
   }
 
@@ -877,8 +935,9 @@ export function PersonalTasksPage() {
                   key={`${item.item_type}-${item.item_id}`}
                   type="button"
                   onClick={() => {
-                    const task = tasks.find((candidate) => candidate.id === item.task_id)
-                    if (task) toggleTaskDetails(task)
+                    setFilter('all')
+                    setSearch('')
+                    selectTask(item.task_id)
                   }}
                   className={cn(
                     'rounded-lg border border-slate-200 text-left hover:bg-slate-50',
@@ -958,7 +1017,7 @@ export function PersonalTasksPage() {
             <Search className="h-4 w-4 shrink-0 text-slate-400" />
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); if (requestedTaskId) selectTask(null) }}
               placeholder="Поиск по названию, проекту, заметкам"
               className="min-w-0 flex-1 bg-transparent text-sm outline-none"
             />
@@ -968,7 +1027,7 @@ export function PersonalTasksPage() {
               <button
                 key={item.value}
                 type="button"
-                onClick={() => setFilter(item.value)}
+                onClick={() => { setFilter(item.value); selectTask(null) }}
                 className={cn(
                   'shrink-0 rounded-lg border px-3 py-2 text-sm',
                   filter === item.value
@@ -983,7 +1042,10 @@ export function PersonalTasksPage() {
         </div>
 
         <div className="divide-y divide-slate-200">
-          {sortedTasks.length === 0 ? (
+          {tasksError && <div role="alert">{tasksError}<button type="button" onClick={() => void loadTasks()}>Повторить загрузку задач</button></div>}
+          {tasksLoading && <p role="status">Загрузка задач...</p>}
+          {requestedTaskId && !tasksLoading && !tasksError && !tasks.some((task) => task.id === requestedTaskId) && <div role="alert">Задача недоступна в текущем списке.<button type="button" onClick={() => void loadTasks()}>Повторить открытие задачи</button></div>}
+          {!tasksLoading && !tasksError && sortedTasks.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 px-4 py-12 text-center text-slate-500">
               <Inbox className="h-8 w-8 text-slate-300" />
               <p className="text-sm">Личных задач пока нет.</p>
@@ -1061,7 +1123,7 @@ export function PersonalTasksPage() {
                       <button
                         type="button"
                         onClick={() => {
-                          setExpandedId(task.id)
+                          selectTask(task.id)
                           setEventFormTaskId((value) => (value === task.id ? null : task.id))
                           setCheckpointFormTaskId(null)
                         }}
@@ -1073,7 +1135,7 @@ export function PersonalTasksPage() {
                       <button
                         type="button"
                         onClick={() => {
-                          setExpandedId(task.id)
+                          selectTask(task.id)
                           setCheckpointFormTaskId((value) => (value === task.id ? null : task.id))
                           setEventFormTaskId(null)
                         }}
@@ -1089,7 +1151,7 @@ export function PersonalTasksPage() {
                           <ActionButton
                             label="Сделать следующей: задача готова и будет выполняться сразу после текущей работы"
                             onClick={() => void openStatusTransition(task, 'next')}
-                            disabled={statusActionTaskId === task.id}
+                            disabled={busyForms.has(`status:${task.id}`)}
                             active={task.status === 'next'}
                             tone="next"
                           >
@@ -1098,7 +1160,7 @@ export function PersonalTasksPage() {
                           <ActionButton
                             label="Начать работу над задачей"
                             onClick={() => void openStatusTransition(task, 'in_progress')}
-                            disabled={statusActionTaskId === task.id}
+                            disabled={busyForms.has(`status:${task.id}`)}
                             active={task.status === 'in_progress'}
                             tone="success"
                           >
@@ -1107,7 +1169,7 @@ export function PersonalTasksPage() {
                           <ActionButton
                             label="Перевести в ожидание и указать, что или кого ждем"
                             onClick={() => void openStatusTransition(task, 'waiting')}
-                            disabled={statusActionTaskId === task.id}
+                            disabled={busyForms.has(`status:${task.id}`)}
                             active={task.status === 'waiting'}
                             tone="waiting"
                           >
@@ -1116,7 +1178,7 @@ export function PersonalTasksPage() {
                           <ActionButton
                             label="Зафиксировать препятствие, которое требует устранения или эскалации"
                             onClick={() => void openStatusTransition(task, 'blocked')}
-                            disabled={statusActionTaskId === task.id}
+                            disabled={busyForms.has(`status:${task.id}`)}
                             active={task.status === 'blocked'}
                             tone="danger"
                           >
@@ -1143,7 +1205,7 @@ export function PersonalTasksPage() {
                           <ActionButton label="Редактировать задачу" onClick={(event) => editTask(task, event.currentTarget)}>
                             <Pencil className="h-4 w-4" aria-hidden="true" />
                           </ActionButton>
-                          <ActionButton label="Перенести задачу в архив" onClick={() => void updateStatus(task, 'archived')} disabled={statusActionTaskId === task.id}>
+                          <ActionButton label="Перенести задачу в архив" onClick={() => void updateStatus(task, 'archived')} disabled={busyForms.has(`status:${task.id}`)}>
                             <Archive className="h-4 w-4" aria-hidden="true" />
                           </ActionButton>
                           <span className="mx-0.5 hidden h-6 w-px bg-slate-200 sm:block dark:bg-slate-700" aria-hidden="true" />
@@ -1151,7 +1213,7 @@ export function PersonalTasksPage() {
                             label="Готово: завершить задачу"
                             shortLabel="Готово"
                             onClick={() => void openStatusTransition(task, 'done')}
-                            disabled={statusActionTaskId === task.id}
+                            disabled={busyForms.has(`status:${task.id}`)}
                             active={task.status === 'done'}
                             tone="success"
                             showLabel
@@ -1167,7 +1229,7 @@ export function PersonalTasksPage() {
                           <ActionButton
                             label="Вернуть задачу из архива в план"
                             onClick={() => void updateStatus(task, 'planned')}
-                            disabled={statusActionTaskId === task.id}
+                            disabled={busyForms.has(`status:${task.id}`)}
                             tone="primary"
                           >
                             <ArchiveRestore className="h-4 w-4" aria-hidden="true" />
@@ -1294,33 +1356,33 @@ export function PersonalTasksPage() {
                               </div>
                               {checkpoint.notes && <p className="mt-2 whitespace-pre-wrap text-xs text-slate-600">{checkpoint.notes}</p>}
                               <div className="mt-3 flex flex-wrap gap-2">
-                                <button type="button" onClick={() => void updateCheckpointStatus(task, checkpoint, 'in_progress')} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
+                                <button type="button" disabled={busyForms.has(`checkpoint-action:${checkpoint.id}`)} onClick={() => void updateCheckpointStatus(task, checkpoint, 'in_progress')} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
                                   В работу
                                 </button>
-                                <button type="button" onClick={() => void updateCheckpointStatus(task, checkpoint, 'waiting')} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
+                                <button type="button" disabled={busyForms.has(`checkpoint-action:${checkpoint.id}`)} onClick={() => void updateCheckpointStatus(task, checkpoint, 'waiting')} className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">
                                   Ожидание
                                 </button>
-                                <button type="button" onClick={() => void updateCheckpointStatus(task, checkpoint, 'done')} className="rounded border border-emerald-200 px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50">
+                                <button type="button" disabled={busyForms.has(`checkpoint-action:${checkpoint.id}`)} onClick={() => void updateCheckpointStatus(task, checkpoint, 'done')} className="rounded border border-emerald-200 px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50">
                                   Готово
                                 </button>
-                                <button type="button" onClick={() => void deleteCheckpoint(task, checkpoint)} className="rounded border border-rose-200 px-2 py-1 text-xs text-rose-600 hover:bg-rose-50">
+                                <button type="button" disabled={busyForms.has(`checkpoint-action:${checkpoint.id}`)} onClick={() => void deleteCheckpoint(task, checkpoint)} className="rounded border border-rose-200 px-2 py-1 text-xs text-rose-600 hover:bg-rose-50">
                                   Удалить
                                 </button>
                               </div>
                             </div>
                             )
                           })}
-                          {(checkpoints[task.id] || []).length === 0 && (
+                          {!detailsErrors[task.id] && checkpoints[task.id]?.length === 0 && (
                             <p className="rounded-lg border border-dashed border-slate-200 p-3 text-xs text-slate-400">Этапы пока не добавлены.</p>
                           )}
                         </div>
                         {checkpointFormTaskId === task.id && (
-                        <div className="mt-3 grid gap-2">
+                        <fieldset disabled={busyForms.has(`checkpoint:${task.id}`)} className="mt-3 grid min-w-0 gap-2">
                           <input value={checkpointForm.title} onChange={(e) => setCheckpointForm((prev) => ({ ...prev, title: e.target.value }))} placeholder="Новый этап / контрольная точка" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
                           <input value={checkpointForm.nextStep} onChange={(e) => setCheckpointForm((prev) => ({ ...prev, nextStep: e.target.value }))} placeholder="Что делаю на этом этапе" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
                           <div className="grid gap-2 sm:grid-cols-2">
                             <input value={checkpointForm.waitingFor} onChange={(e) => setCheckpointForm((prev) => ({ ...prev, waitingFor: e.target.value }))} placeholder="Что / кого жду" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
-                            <input type="datetime-local" value={checkpointForm.dueAt} onChange={(e) => setCheckpointForm((prev) => ({ ...prev, dueAt: e.target.value }))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                            <label className="grid min-w-0 gap-1 text-sm">Срок этапа<input aria-label="Срок этапа" type="datetime-local" value={checkpointForm.dueAt} onChange={(e) => setCheckpointForm((prev) => ({ ...prev, dueAt: e.target.value }))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" /></label>
                           </div>
                           {isAfterTaskDeadline(toPayloadDate(checkpointForm.dueAt), task) && (
                             <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 dark:border-rose-700 dark:bg-rose-950/30 dark:text-rose-200">
@@ -1332,7 +1394,7 @@ export function PersonalTasksPage() {
                             <Plus className="h-4 w-4" />
                             Добавить этап
                           </button>
-                        </div>
+                        </fieldset>
                         )}
                       </section>
 
@@ -1373,23 +1435,23 @@ export function PersonalTasksPage() {
                             </div>
                             )
                           })}
-                          {(events[task.id] || []).length === 0 && (
+                          {!detailsErrors[task.id] && events[task.id]?.length === 0 && (
                             <p className="rounded-lg border border-dashed border-slate-200 p-3 text-xs text-slate-400">Журнал пока пуст.</p>
                           )}
                         </div>
                         {eventFormTaskId === task.id && (
-                        <div className="mt-3 grid gap-2">
-                          <select value={eventForm.eventType} onChange={(e) => setEventForm((prev) => ({ ...prev, eventType: e.target.value as PersonalTaskEventType }))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400">
+                        <fieldset disabled={busyForms.has(`event:${task.id}`)} className="mt-3 grid min-w-0 gap-2">
+                          <label className="grid min-w-0 gap-1 text-sm">Тип записи<select aria-label="Тип записи" value={eventForm.eventType} onChange={(e) => setEventForm((prev) => ({ ...prev, eventType: e.target.value as PersonalTaskEventType }))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400">
                             <option value="meeting">Встреча</option>
                             <option value="follow_up">Follow-up</option>
                             <option value="note">Заметка</option>
-                          </select>
+                          </select></label>
                           <input value={eventForm.title} onChange={(e) => setEventForm((prev) => ({ ...prev, title: e.target.value }))} placeholder="Заголовок записи" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
                           <textarea value={eventForm.body} onChange={(e) => setEventForm((prev) => ({ ...prev, body: e.target.value }))} placeholder="Итоги встречи, follow-up, договоренности" rows={3} className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
                           <input value={eventForm.nextStep} onChange={(e) => setEventForm((prev) => ({ ...prev, nextStep: e.target.value }))} placeholder="Новый следующий шаг" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
                           <div className="grid gap-2 sm:grid-cols-2">
                             <input value={eventForm.waitingFor} onChange={(e) => setEventForm((prev) => ({ ...prev, waitingFor: e.target.value }))} placeholder="Что / кого жду" className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
-                            <input type="datetime-local" value={eventForm.dueAt} onChange={(e) => setEventForm((prev) => ({ ...prev, dueAt: e.target.value }))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" />
+                            <label className="grid min-w-0 gap-1 text-sm">Дата следующего действия<input aria-label="Дата следующего действия" type="datetime-local" value={eventForm.dueAt} onChange={(e) => setEventForm((prev) => ({ ...prev, dueAt: e.target.value }))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-400" /></label>
                           </div>
                           {isAfterTaskDeadline(toPayloadDate(eventForm.dueAt), task) && (
                             <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700 dark:border-rose-700 dark:bg-rose-950/30 dark:text-rose-200">
@@ -1400,11 +1462,12 @@ export function PersonalTasksPage() {
                             <MessageSquare className="h-4 w-4" />
                             Добавить запись в журнал
                           </button>
-                        </div>
+                        </fieldset>
                         )}
                       </section>
                     </div>
 
+                    {detailsErrors[task.id] && <div role="alert">{detailsErrors[task.id]}<button type="button" onClick={() => void loadTaskDetails(task.id)}>Повторить загрузку истории</button></div>}
                     <PersonalTaskArtifactsPanel task={task} onChanged={() => void loadTaskDetails(task.id)} />
 
                     {task.tags.length > 0 && (
@@ -1897,7 +1960,7 @@ function ProtectedModal({ children }: { children: ReactNode }) {
       className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/50 p-3 backdrop-blur-sm sm:items-center"
       onPointerDown={preventBackdropDismiss}
     >
-      <div ref={panelRef} tabIndex={-1} className="contents">
+      <div ref={panelRef} tabIndex={-1} className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-2xl justify-center overflow-y-auto pb-[env(safe-area-inset-bottom)] [&>*]:shrink-0">
         {children}
       </div>
     </div>

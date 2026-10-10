@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
   CircleDot,
@@ -9,7 +9,6 @@ import {
   Milestone,
   RefreshCw,
 } from 'lucide-react'
-import toast from 'react-hot-toast'
 import { api } from '@/api/client'
 import type { WorkEntity, WorkEntityMap, WorkEntityMapNode } from '@/api/types'
 import { cn } from '@/lib/utils'
@@ -100,21 +99,29 @@ function milestoneTitle(node: WorkEntityMapNode): string {
 export function WorkEntityProjectMap({ entity }: { entity: WorkEntity }) {
   const [map, setMap] = useState<WorkEntityMap | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const loadRevision = useRef(0)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (propagate = false) => {
+    const revision = ++loadRevision.current
     setLoading(true)
+    setLoadError(null)
     try {
-      setMap(await api.get<WorkEntityMap>(`/api/work-entities/${entity.id}/map`))
+      const data = await api.get<WorkEntityMap>(`/api/work-entities/${entity.id}/map`)
+      if (revision === loadRevision.current) setMap(data)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось построить график проекта')
+      if (revision !== loadRevision.current) return
+      setLoadError(error instanceof Error ? error.message : 'Не удалось построить график проекта')
+      if (propagate) throw error
     } finally {
-      setLoading(false)
+      if (revision === loadRevision.current) setLoading(false)
     }
   }, [entity.id])
 
   useEffect(() => {
     setMap(null)
     void load()
+    return () => { loadRevision.current += 1 }
   }, [load])
 
   const layout = useMemo(() => {
@@ -221,10 +228,11 @@ export function WorkEntityProjectMap({ entity }: { entity: WorkEntity }) {
     )
   }
 
-  if (!map || !layout) return null
+  if (!map || !layout) return <div role="alert" className="p-4 text-red-700">{loadError || 'График недоступен'} <button type="button" onClick={() => void load()}>Повторить загрузку графика</button></div>
 
   return (
     <div className="space-y-4">
+      {loadError && <div role="alert" className="text-red-700">{loadError}. Показаны последние загруженные данные.</div>}
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">График проекта</h3>
