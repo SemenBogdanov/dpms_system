@@ -91,6 +91,9 @@ async function installKnowledgeFixture(page: Page) {
   await page.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname
     const method = route.request().method()
+    if (method === 'POST' && pathname === '/api/usage/section-views') {
+      return route.fulfill({ status: 200, json: {} })
+    }
     let body: unknown = []
     let status = 200
     if (method !== 'GET') {

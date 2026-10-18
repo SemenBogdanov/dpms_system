@@ -56,6 +56,8 @@ export function hookHarness() {
       return slots[i].value
     },
     useCallback(callback, deps) { return hooks.useMemo(() => callback, deps) },
+    // This DOM-free harness flushes both effect kinds explicitly after rendering.
+    useLayoutEffect(effect, deps) { hooks.useEffect(effect, deps) },
     useEffect(effect, deps) {
       const i = cursor++
       if (changed(slots[i]?.deps, deps)) {

@@ -100,6 +100,8 @@ async function installApiMock(page: Page): Promise<ApiMock> {
     const path = new URL(request.url()).pathname
     const method = request.method()
     const json = (body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
+    // Host telemetry is acknowledged locally, never forwarded to the real API.
+    if (method === 'POST' && path === '/api/usage/section-views') return json({})
     const expectedPath = api.expectedPublishId === null ? null : `/api/graphs/${encodeURIComponent(api.expectedPublishId)}`
     if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && !(method === 'PUT' && path === expectedPath)) {
       api.unexpectedWrites.push(`${method} ${path}`)

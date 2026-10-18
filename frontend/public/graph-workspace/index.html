@@ -256,6 +256,8 @@
       gap: 6px;
     }
 
+    .topbar .action-group, .topbar .icon-button { flex-shrink: 0; }
+
     .icon-button,
     .tool-button {
       display: inline-grid;
@@ -546,6 +548,9 @@
       border-radius: 8px;
       background: var(--panel);
       box-shadow: var(--shadow);
+      max-height: calc(100% - var(--status-h) - 28px);
+      overflow-y: auto;
+      scrollbar-width: thin;
     }
 
     .tool-separator {
@@ -553,6 +558,54 @@
       margin: 2px 4px;
       background: var(--border);
     }
+
+    .selection-toolbar {
+      position: absolute;
+      z-index: 16;
+      top: 14px;
+      left: 78px;
+      right: 14px;
+      width: max-content;
+      max-width: calc(100% - 92px);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 2px;
+      padding: 4px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .selection-toolbar[hidden], .layout-status[hidden] { display: none; }
+    .arrangement-buttons { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 3px; }
+    .arrangement-buttons .icon-button { width: 100%; min-width: 0; }
+    .arrangement-options { display: grid; grid-template-columns: minmax(0, 1fr) 76px; gap: 8px; margin-top: 10px; }
+    .arrangement-options input, .arrangement-options select { width: 100%; min-width: 0; height: 38px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-strong); color: var(--text); }
+    .arrangement-options label { display: block; font-size: 11px; margin-bottom: 5px; color: var(--muted); }
+    .layout-status { position: absolute; z-index: 17; right: 12px; bottom: calc(var(--status-h) + 12px); display: flex; align-items: center; gap: 8px; max-width: calc(100% - 90px); padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); font-size: 12px; }
+    .snap-guides { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 12; overflow: hidden; }
+    .snap-guide { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; }
+    .snap-guide-label { fill: var(--text); font-size: 11px; }
+    .snap-guide-background { fill: var(--panel); stroke: var(--border); }
+    .graph-node.arrangement-reference { outline: 3px double var(--accent); outline-offset: 6px; }
+    .graph-search-fields { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 8px; }
+    .graph-search-fields .field { margin: 0; }
+    .graph-search-results { list-style: none; margin: 12px 0 0; padding: 0; max-height: min(48dvh, 460px); overflow-y: auto; }
+    .graph-search-result { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; align-items: center; width: 100%; padding: 10px 4px; border: 0; border-bottom: 1px solid var(--border); text-align: left; background: transparent; }
+    .graph-search-result:hover, .graph-search-result:focus-visible { background: var(--accent-soft); }
+    .graph-search-result strong, .graph-search-result small { display: block; overflow-wrap: anywhere; }
+    .graph-search-result small { color: var(--muted); margin-top: 3px; }
+
+    @media (pointer: coarse) {
+      .topbar .icon-button { width: 44px; height: 44px; }
+      .topbar .graph-title { height: 44px; font-size: 16px; }
+      .selection-toolbar .icon-button, .arrangement-buttons .icon-button { min-width: 44px; width: 44px; min-height: 44px; }
+      .arrangement-buttons { grid-template-columns: repeat(4, minmax(44px, 1fr)); }
+      .arrangement-options { grid-template-columns: minmax(0, 1fr); }
+      .arrangement-options input, .arrangement-options select { height: 44px; font-size: 16px; }
+    }
+    @media (max-width: 620px) { .graph-search-fields { grid-template-columns: minmax(0, 1fr); } }
 
     .canvas {
       position: absolute;
@@ -1856,6 +1909,7 @@
 
       .floating-panel-button { display: inline-grid; }
       .hide-tablet { display: none; }
+      .topbar .storage-button { display: none; }
     }
 
     @media (max-width: 1023px) {
@@ -1864,15 +1918,20 @@
       }
     }
 
+    @media (max-width: 900px) {
+      .brand { min-width: auto; }
+      .brand span:last-child { display: none; }
+    }
+
     @media (max-width: 620px) {
       :root { --topbar-h: 56px; --status-h: 44px; }
       .topbar { gap: 7px; padding: 0 8px; }
-      .brand { min-width: auto; }
+      .brand { display: none; }
       .brand span:last-child { display: none; }
       .graph-title { width: 90px; min-width: 70px; height: 44px; padding: 0 7px; font-size: 16px; }
-      .topbar .action-group { gap: 3px; }
-      .topbar .icon-button { width: 44px; height: 44px; }
-      .storage-button { width: 44px; height: 44px; flex: 0 0 44px; justify-content: center; padding: 0; }
+      .topbar .action-group { gap: 3px; margin-left: auto; }
+      .topbar .icon-button { width: 44px; height: 44px; flex: 0 0 44px; }
+      .topbar-spacer, .topbar .storage-button { display: none; }
       .storage-button-label { display: none; }
       .hide-mobile { display: none; }
       .tool-rail { top: 10px; left: 10px; }
@@ -1978,14 +2037,14 @@
     </defs>
   </svg>
 
-  <div class="app">
+  <div class="app" inert aria-busy="true">
     <header class="topbar">
       <div class="brand" aria-label="Раздел Графы">
         <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-graph"></use></svg></span>
         <span>Графы</span>
       </div>
       <label class="sr-only" for="graphTitle">Название графа</label>
-      <input id="graphTitle" class="graph-title" maxlength="80" value="Карта работы" aria-label="Название графа">
+      <input id="graphTitle" class="graph-title" maxlength="80" value="Карта работы" aria-label="Название графа" disabled>
       <button id="graphManagerButton" class="icon-button" type="button" aria-label="Открыть список графов" title="Все графы">
         <svg class="icon" aria-hidden="true"><use href="#i-layers"></use></svg>
       </button>
@@ -2001,7 +2060,7 @@
         <button id="undoButton" class="icon-button" type="button" aria-label="Отменить" title="Отменить (Ctrl/⌘ Z)">
           <svg class="icon" aria-hidden="true"><use href="#i-undo"></use></svg>
         </button>
-        <button id="redoButton" class="icon-button hide-mobile" type="button" aria-label="Повторить" title="Повторить (Ctrl/⌘ Shift Z)">
+        <button id="redoButton" class="icon-button" type="button" aria-label="Повторить" title="Повторить (Ctrl/⌘ Shift Z)">
           <svg class="icon" aria-hidden="true"><use href="#i-redo"></use></svg>
         </button>
         <button id="fitButton" class="icon-button hide-tablet" type="button" aria-label="Показать весь граф" title="Показать весь граф (0)">
@@ -2066,6 +2125,7 @@
           <button class="tool-button active" type="button" data-mode="select" aria-label="Выбор и перемещение" title="Выбор и перемещение (V)">
             <svg class="icon" aria-hidden="true"><use href="#i-pointer"></use></svg>
           </button>
+          <button id="multiSelectButton" class="tool-button" type="button" aria-label="Добавлять к выделению" aria-pressed="false" title="Добавлять к выделению"><svg class="icon" aria-hidden="true"><use href="./arrangement-icons.svg#multi-select"></use></svg></button>
           <button class="tool-button" type="button" data-mode="hand" aria-label="Перемещение холста" title="Перемещение холста (H или пробел)">
             <svg class="icon" aria-hidden="true"><use href="#i-hand"></use></svg>
           </button>
@@ -2076,11 +2136,18 @@
             <svg class="icon" aria-hidden="true"><use href="#i-sticker"></use></svg>
           </button>
           <div class="tool-separator" aria-hidden="true"></div>
+          <button id="graphSearchButton" class="tool-button" type="button" aria-label="Поиск по графу" title="Поиск по графу (Ctrl/⌘ F)"><svg class="icon" aria-hidden="true"><use href="./arrangement-icons.svg#search"></use></svg></button>
           <button id="railAddButton" class="tool-button" type="button" aria-label="Добавить элемент в центр" title="Добавить элемент">
             <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
           </button>
           <button id="railArrangeButton" class="tool-button" type="button" aria-label="Упорядочить и показать весь граф" title="Упорядочить и показать весь граф (Shift + 0)">
             <svg class="icon" aria-hidden="true"><use href="#i-layout"></use></svg>
+          </button>
+          <button id="snapObjectsButton" class="tool-button active" type="button" aria-label="Привязка к элементам" aria-pressed="true" title="Привязка к элементам (Alt: временно отключить)">
+            <svg class="icon" aria-hidden="true"><use href="./arrangement-icons.svg#magnet"></use></svg>
+          </button>
+          <button id="snapGridButton" class="tool-button" type="button" aria-label="Привязка к сетке" aria-pressed="false" title="Привязка к сетке 24 px">
+            <svg class="icon" aria-hidden="true"><use href="./arrangement-icons.svg#grid"></use></svg>
           </button>
           <button id="hierarchyButton" class="tool-button" type="button" aria-label="Мастер иерархий" title="Мастер иерархий">
             <svg class="icon" aria-hidden="true"><use href="#i-tree"></use></svg>
@@ -2089,6 +2156,12 @@
             <svg class="icon" aria-hidden="true"><use href="#i-activity"></use></svg>
           </button>
         </nav>
+
+        <div id="selectionToolbar" class="selection-toolbar" role="toolbar" aria-label="Расположение выбранных элементов" hidden></div>
+        <div id="layoutStatus" class="layout-status" hidden>
+          <span id="layoutProgress" role="status">Расчёт расположения…</span>
+          <button id="layoutCancelButton" class="icon-button" type="button" aria-label="Отменить автоукладку" title="Отменить автоукладку (Esc)"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button>
+        </div>
 
         <div id="canvas" class="canvas" tabindex="0" aria-label="Бесконечный холст. Двойной клик создаёт элемент">
           <div id="world" class="world">
@@ -2117,6 +2190,7 @@
             <strong>Пустой граф</strong>
           </div>
           <div id="selectionMarquee" class="selection-marquee" hidden aria-hidden="true"></div>
+          <svg id="snapGuides" class="snap-guides" aria-hidden="true"></svg>
           <textarea id="inlineNodeEditor" class="inline-node-editor" maxlength="180" hidden aria-label="Название стикера"></textarea>
         </div>
 
@@ -2142,6 +2216,18 @@
       <aside id="inspector" class="side-panel inspector" aria-label="Свойства выбранного элемента"></aside>
     </main>
   </div>
+
+  <dialog id="graphSearchDialog" aria-labelledby="graphSearchTitle">
+    <div class="dialog-header"><h2 id="graphSearchTitle">Поиск по графу</h2><button class="icon-button" type="button" data-close-dialog="graphSearchDialog" aria-label="Закрыть поиск"><svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg></button></div>
+    <div class="dialog-body">
+      <div class="graph-search-fields">
+        <div class="field"><label for="graphSearchInput">Запрос</label><input id="graphSearchInput" type="search" maxlength="300" autocomplete="off" placeholder="Название, текст или ID"></div>
+        <div class="field"><label for="graphSearchType">Тип</label><select id="graphSearchType"><option value="">Все типы</option></select></div>
+      </div>
+      <p id="graphSearchCount" class="field-hint" role="status" style="margin-top:10px"></p>
+      <ul id="graphSearchResults" class="graph-search-results" aria-label="Результаты поиска"></ul>
+    </div>
+  </dialog>
 
   <dialog id="helpDialog" aria-labelledby="helpTitle">
     <div class="dialog-header">
@@ -2310,6 +2396,9 @@
     import { routeEdge } from './edge-routing.mjs';
     import { PORT_IDS, portPosition } from './connection-ports.mjs';
     import { detectJsonMode, convertStructuredJson } from './import-adapters.mjs';
+    import { rectangleBounds, alignRectangles, distributeRectangles, gridRectangles, snapTranslation } from './arrangement-geometry.mjs';
+    import { outlineLayout } from './outline-layout.mjs';
+    import { findVacantPosition } from './insertion-geometry.mjs';
     (() => {
       'use strict';
 
@@ -2351,6 +2440,7 @@
       };
       const COLORS = ['#2F6BFF', '#0F8B8D', '#16845B', '#C96812', '#7C55C7', '#D13F63', '#C2410C', '#667085'];
       const SHORTCUT_DEFAULTS = {
+        search: { label: 'Поиск по графу', value: 'mod+f' },
         hierarchy: { label: 'Мастер иерархий', value: 'mod+shift+h' },
         child: { label: 'Дочерний элемент', value: 'shift+tab' },
         sibling: { label: 'Соседний элемент', value: 'shift+s+tab' },
@@ -2402,6 +2492,7 @@
 
       const ui = {
         mode: 'select',
+        multiSelect: false,
         createType: 'note',
         createShape: 'rounded',
         selection: null,
@@ -2435,6 +2526,7 @@
       let wheelInverted = false;
       let canvasInputMode = /Mac|iPhone|iPad/i.test(navigator.platform) ? 'trackpad' : 'mouse';
       let inputPreferences = {};
+      let layoutJob = null;
       let pendingImport = null;
       let importReadSequence = 0;
       try {
@@ -2443,6 +2535,16 @@
         wheelInverted = inputPreferences.wheelInverted === true;
         if (['trackpad', 'mouse'].includes(inputPreferences.canvasInputMode)) canvasInputMode = inputPreferences.canvasInputMode;
       } catch {}
+      const arrangementPreferences = {
+        snapObjects: inputPreferences.snapObjects !== false,
+        snapGrid: inputPreferences.snapGrid === true,
+        gap: Number.isFinite(inputPreferences.arrangementGap) ? clamp(inputPreferences.arrangementGap, 0, 500) : 32,
+        reference: inputPreferences.alignmentReference === 'primary' ? 'primary' : 'bounds',
+        direction: ['LR', 'RL', 'TB', 'BT'].includes(inputPreferences.layoutDirection) ? inputPreferences.layoutDirection : 'LR',
+        scope: inputPreferences.layoutScope === 'selection' ? 'selection' : 'all',
+        selectionLayout: ['radial', 'hierarchy', 'compact'].includes(inputPreferences.selectionLayout) ? inputPreferences.selectionLayout : 'hierarchy',
+        layoutGap: Number.isFinite(inputPreferences.layoutGap) ? clamp(inputPreferences.layoutGap, 16, 300) : 48
+      };
       let viewportSaveTimer = 0;
       let edgeRenderFrame = 0;
       let pendingEdit = null;
@@ -3106,15 +3208,25 @@
         return oversized ? `Граф «${oversized.title}» превышает локальный лимит 5 МБ` : '';
       }
 
+      function committedGraphDocument(item) {
+        const preview = ui.pointerAction;
+        return preview?.before && preview.graphId === item?.id ? { ...item, ...preview.before } : item;
+      }
+
       function persistWorkspace() {
         if (storageWriteBlocked) return false;
-        const capacityError = localCapacityError();
+        // Remote completions and viewport timers must not persist a drag preview.
+        const preview = ui.pointerAction;
+        const candidate = preview?.before && preview.graphId === graph.id ? {
+          ...workspace, graphs: workspace.graphs.map(committedGraphDocument)
+        } : workspace;
+        const capacityError = localCapacityError(candidate);
         if (capacityError) {
           toast(`${capacityError}. Сократите данные или разделите граф.`, 'error');
           return false;
         }
         try {
-          localStorage.setItem(WORKSPACE_KEY, JSON.stringify(workspace));
+          localStorage.setItem(WORKSPACE_KEY, JSON.stringify(candidate));
           return true;
         } catch (error) {
           toast('Не удалось сохранить граф в браузере. Локальное хранилище заполнено.', 'error');
@@ -3203,6 +3315,7 @@
 
       function saveGraph({ markChanged = true } = {}) {
         if (storageWriteBlocked) return false;
+        if (ui.pointerAction?.before) return false;
         captureActiveViewState();
         const previousUpdatedAt = graph.updatedAt;
         if (markChanged) graph.updatedAt = new Date().toISOString();
@@ -3285,6 +3398,7 @@
       }
 
       function mutate(label, action) {
+        cancelAutoLayout();
         flushPendingEdit();
         const before = graphSnapshot();
         const auditEntries = deepClone(graph.audit);
@@ -3331,6 +3445,8 @@
       }
 
       function undo() {
+        cancelPointerAction();
+        cancelAutoLayout();
         flushPendingEdit();
         const undoStack = ui.undoStack.slice();
         const redoStack = ui.redoStack.slice();
@@ -3353,6 +3469,8 @@
       }
 
       function redo() {
+        cancelPointerAction();
+        cancelAutoLayout();
         flushPendingEdit();
         const undoStack = ui.undoStack.slice();
         const redoStack = ui.redoStack.slice();
@@ -3547,13 +3665,14 @@
       }
 
       function setZoom(nextScale, clientX, clientY) {
+        cancelPointerAction();
         const rect = refs.canvas.getBoundingClientRect();
         const anchorX = clientX ?? rect.left + rect.width / 2;
         const anchorY = clientY ?? rect.top + rect.height / 2;
         const before = screenToWorld(anchorX, anchorY);
         graph.viewport.scale = clamp(nextScale, MIN_SCALE, MAX_SCALE);
-        graph.viewport.x = anchorX - rect.left - before.x * graph.viewport.scale;
-        graph.viewport.y = anchorY - rect.top - before.y * graph.viewport.scale;
+        graph.viewport.x = clamp(anchorX - rect.left - before.x * graph.viewport.scale, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE);
+        graph.viewport.y = clamp(anchorY - rect.top - before.y * graph.viewport.scale, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE);
         const compactChanged = applyViewport();
         if (compactChanged) {
           renderGroups();
@@ -3563,7 +3682,8 @@
         scheduleViewportSave();
       }
 
-      function fitGraph() {
+      function fitGraph({ persist = true } = {}) {
+        cancelPointerAction();
         if (!graph.nodes.length) {
           graph.viewport = { x: refs.canvas.clientWidth / 2, y: refs.canvas.clientHeight / 2, scale: 1 };
           const compactChanged = applyViewport();
@@ -3571,7 +3691,7 @@
             renderNodes();
             renderEdges();
           }
-          saveGraph();
+          if (persist) saveGraph();
           return;
         }
         const metrics = degreeMetrics();
@@ -3597,43 +3717,19 @@
         const margin = 90;
         const scale = clamp(Math.min((refs.canvas.clientWidth - margin * 2) / width, (refs.canvas.clientHeight - margin * 2) / height), MIN_SCALE, 1.35);
         graph.viewport.scale = scale;
-        graph.viewport.x = (refs.canvas.clientWidth - width * scale) / 2 - bounds.minX * scale;
-        graph.viewport.y = (refs.canvas.clientHeight - height * scale) / 2 - bounds.minY * scale;
+        graph.viewport.x = clamp((refs.canvas.clientWidth - width * scale) / 2 - bounds.minX * scale, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE);
+        graph.viewport.y = clamp((refs.canvas.clientHeight - height * scale) / 2 - bounds.minY * scale, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE);
         const compactChanged = applyViewport();
         if (compactChanged) {
           renderGroups();
           renderNodes();
           renderEdges();
         }
-        saveGraph();
+        if (persist) saveGraph();
       }
 
-      function preserveLayoutBlocks(arranged) {
-        const result = new Map(arranged);
-        const grouped = new Set();
-        graph.groups.forEach((group) => {
-          const members = group.nodeIds.map(nodeById).filter(Boolean);
-          if (!members.length) return;
-          members.forEach((node) => grouped.add(node.id));
-          if (members.some((node) => node.pinned)) {
-            members.forEach((node) => result.set(node.id, { x: node.x, y: node.y }));
-            return;
-          }
-          const targetMembers = members.filter((node) => result.has(node.id));
-          if (!targetMembers.length) return;
-          const currentCenter = targetMembers.reduce((acc, node) => ({ x: acc.x + node.x / targetMembers.length, y: acc.y + node.y / targetMembers.length }), { x: 0, y: 0 });
-          const targetCenter = targetMembers.reduce((acc, node) => {
-            const position = result.get(node.id);
-            return { x: acc.x + position.x / targetMembers.length, y: acc.y + position.y / targetMembers.length };
-          }, { x: 0, y: 0 });
-          const dx = targetCenter.x - currentCenter.x;
-          const dy = targetCenter.y - currentCenter.y;
-          targetMembers.forEach((node) => result.set(node.id, { x: Math.round(node.x + dx), y: Math.round(node.y + dy) }));
-        });
-        graph.nodes.forEach((node) => {
-          if (node.pinned && !grouped.has(node.id)) result.set(node.id, { x: node.x, y: node.y });
-        });
-        return result;
+      function arrangementIcon(name) {
+        return `<svg class="icon" aria-hidden="true"><use href="./arrangement-icons.svg#${name}"></use></svg>`;
       }
 
       function fitLayoutCoordinates(arranged) {
@@ -3649,248 +3745,171 @@
           offset[axis] = min < -MAX_GRAPH_COORDINATE ? -MAX_GRAPH_COORDINATE - min
             : max > MAX_GRAPH_COORDINATE ? MAX_GRAPH_COORDINATE - max : 0;
         }
-        return new Map([...arranged].map(([id, point]) => [id, {
-          x: point.x + offset.x, y: point.y + offset.y
-        }]));
+        return new Map([...arranged].map(([id, point]) => [id, { x: point.x + offset.x, y: point.y + offset.y }]));
       }
 
-      function commitAutoLayout(arranged, layout) {
-        const bounded = fitLayoutCoordinates(arranged);
-        const protectedLayout = bounded && preserveLayoutBlocks(bounded);
-        if (!protectedLayout || [...protectedLayout.values()].some((point) =>
-          Math.abs(point.x) > MAX_GRAPH_COORDINATE || Math.abs(point.y) > MAX_GRAPH_COORDINATE)) {
-          renderViewControls();
-          toast('Укладка слишком велика. Уменьшите размеры элементов или выберите другую укладку.', 'error');
-          return;
-        }
-        const needsChange = activeView()?.layout !== layout || graph.nodes.some((node) => {
-          const position = protectedLayout.get(node.id);
-          return position && (position.x !== node.x || position.y !== node.y);
-        });
-        const changed = mutate('Граф автоматически упорядочен', () => {
-          if (activeView()) activeView().layout = layout;
-          graph.nodes.forEach((node) => {
-            const position = protectedLayout.get(node.id);
-            if (!position) return;
-            node.x = position.x;
-            node.y = position.y;
-          });
-        });
-        if (!changed && needsChange) return;
-        requestAnimationFrame(() => {
-          fitGraph();
-          if (changed) toast('Граф упорядочен и показан целиком', 'success');
-          else toast('Граф уже упорядочен');
-        });
+      function arrangementNodes({ reference = false } = {}) {
+        const hidden = hiddenNodeIds();
+        return selectedNodes().filter((node) => !hidden.has(node.id) && (!node.pinned
+          || (reference && arrangementPreferences.reference === 'primary' && ui.selection?.id === node.id)));
       }
 
-      function hierarchyLayout(nodes, edges, metrics) {
-        const arranged = new Map();
-        const nodesById = new Map(nodes.map((node) => [node.id, node]));
-        const parents = new Map();
-        const children = new Map(nodes.map((node) => [node.id, []]));
-        // Choose one layout parent without changing links; explicit child links take priority.
-        edges.forEach((edge) => {
-          if (edge.source === edge.target || !nodesById.has(edge.source) || !nodesById.has(edge.target)) return;
-          const current = parents.get(edge.target);
-          if (!current || (current.label !== 'дочерний' && edge.label === 'дочерний')) parents.set(edge.target, edge);
-        });
-        nodes.forEach((node) => {
-          const parent = parents.get(node.id);
-          if (parent) children.get(parent.source).push(node.id);
-        });
-        const roots = nodes.filter((node) => !parents.has(node.id));
-        const visited = new Set();
-        let cursorY = 0;
-        // The second pass covers cyclic components; preorder preserves the outline's sibling order.
-        [...roots, ...nodes].forEach((root) => {
-          if (visited.has(root.id)) return;
-          const rows = [];
-          const columnWidths = [];
-          const stack = [{ id: root.id, depth: 0 }];
-          while (stack.length) {
-            const { id, depth } = stack.pop();
-            if (visited.has(id)) continue;
-            visited.add(id);
-            const size = nodeSize(nodesById.get(id), false, metrics);
-            rows.push({ id, depth, size });
-            columnWidths[depth] = Math.max(columnWidths[depth] || 0, size.width);
-            const descendants = children.get(id);
-            for (let index = descendants.length - 1; index >= 0; index -= 1) {
-              stack.push({ id: descendants[index], depth: depth + 1 });
-            }
-          }
-          const columnX = [0];
-          columnWidths.forEach((width, depth) => {
-            columnX[depth + 1] = columnX[depth] + Math.max(280, Math.ceil(width) + 64);
-          });
-          rows.forEach(({ id, depth, size }) => {
-            arranged.set(id, { x: columnX[depth], y: cursorY });
-            cursorY += Math.max(128, Math.ceil(size.height) + 32);
-          });
-          cursorY += 64;
-        });
-        return arranged;
+      function arrangementButtons(compact = false) {
+        const count = arrangementNodes({ reference: true }).length;
+        const movableCount = arrangementNodes().length;
+        const commands = [
+          ['left', 'По левому краю'], ['center', 'По центру по горизонтали'], ['right', 'По правому краю'],
+          ['top', 'По верхнему краю'], ['middle', 'По центру по вертикали'], ['bottom', 'По нижнему краю'],
+          ['distribute-x', 'Равные промежутки по горизонтали'], ['distribute-y', 'Равные промежутки по вертикали'],
+          ['grid', 'Упорядочить сеткой'], ['row', 'В один ряд'], ['column', 'В один столбец']
+        ];
+        return commands.filter(([command]) => !compact || !['row', 'column'].includes(command)).map(([command, label]) => {
+          const minimum = command.startsWith('distribute') ? 3 : 2;
+          const available = ['left', 'center', 'right', 'top', 'middle', 'bottom'].includes(command) ? count : movableCount;
+          return `<button class="icon-button" type="button" data-arrange-command="${command}" title="${label}" aria-label="${label}" ${available < minimum ? 'disabled' : ''}>${arrangementIcon(command)}</button>`;
+        }).join('');
       }
 
-      function compactGridLayout(metrics, nodeOrder) {
-        const ordered = [...graph.nodes].sort((a, b) => (metrics.counts.get(b.id) || 0) - (metrics.counts.get(a.id) || 0) || nodeOrder.get(a.id) - nodeOrder.get(b.id));
-        const columns = Math.max(1, Math.ceil(Math.sqrt(ordered.length * 1.35)));
-        return new Map(ordered.map((node, index) => [node.id, { x: (index % columns) * 300, y: Math.floor(index / columns) * 170 }]));
+      function arrangementInspector() {
+        return `<section class="panel-section">
+          <h2 class="section-heading">Расположение</h2>
+          <div class="arrangement-buttons" role="group" aria-label="Расположение выбранных элементов">${arrangementButtons()}</div>
+          <div class="arrangement-options">
+            <div><label for="alignmentReferenceField">Относительно</label><select id="alignmentReferenceField"><option value="bounds" ${arrangementPreferences.reference === 'bounds' ? 'selected' : ''}>Выделения</option><option value="primary" ${arrangementPreferences.reference === 'primary' ? 'selected' : ''}>Опорного элемента</option></select></div>
+            <div><label for="arrangementGapField">Интервал, px</label><input id="arrangementGapField" type="number" min="0" max="500" step="1" value="${arrangementPreferences.gap}"></div>
+          </div>
+          <p class="field-hint arrangement-reference-label" style="margin-top:8px" ${arrangementPreferences.reference === 'primary' ? '' : 'hidden'}>Опора: ${escapeHtml(nodeById(ui.selection?.id)?.title || '')}</p>
+          ${selectedNodes().some((node) => node.pinned) ? `<p class="field-hint" style="margin-top:8px">Закреплено: ${selectedNodes().filter((node) => node.pinned).length}</p>` : ''}
+        </section>`;
       }
 
-      function autoArrangeGraph(layoutMode = activeView()?.layout || 'radial') {
-        if (!['radial', 'hierarchy', 'compact'].includes(layoutMode)) layoutMode = activeView()?.layout || 'radial';
-        if (!graph.nodes.length) {
-          if (activeView()?.layout !== layoutMode) {
-            const changed = mutate('Изменён способ автоукладки', () => { activeView().layout = layoutMode; });
-            if (!changed) return;
-          }
-          fitGraph();
-          toast('В графе пока нет элементов');
-          return;
-        }
+      function saveArrangementPreferences({ includeArrangement = true } = {}) {
+        const arrangement = {
+          snapObjects: arrangementPreferences.snapObjects, snapGrid: arrangementPreferences.snapGrid,
+          arrangementGap: arrangementPreferences.gap, alignmentReference: arrangementPreferences.reference,
+          layoutDirection: arrangementPreferences.direction, layoutScope: arrangementPreferences.scope, selectionLayout: arrangementPreferences.selectionLayout, layoutGap: arrangementPreferences.layoutGap };
+        const next = { ...inputPreferences, wheelInverted, canvasInputMode, ...(includeArrangement ? arrangement : {}) };
+        try {
+          localStorage.setItem(PREFERENCES_KEY, JSON.stringify(next));
+          inputPreferences = next;
+        } catch { toast('Настройки действуют до закрытия страницы: локальное хранилище недоступно', 'error'); }
+      }
 
+      function applyArrangement(command) {
+        cancelPointerAction();
+        cancelAutoLayout();
+        flushPendingEdit();
+        const alignment = ['left', 'center', 'right', 'top', 'middle', 'bottom'].includes(command);
+        const nodes = arrangementNodes({ reference: alignment });
+        if (nodes.length < (command.startsWith('distribute') ? 3 : 2)) return;
         const metrics = degreeMetrics();
-        const nodeOrder = new Map(graph.nodes.map((node, index) => [node.id, index]));
-        const adjacency = new Map(graph.nodes.map((node) => [node.id, new Set()]));
-        graph.edges.forEach((edge) => {
-          adjacency.get(edge.source)?.add(edge.target);
-          adjacency.get(edge.target)?.add(edge.source);
-        });
-
-        const components = [];
-        const visited = new Set();
-        graph.nodes.forEach((node) => {
-          if (visited.has(node.id)) return;
-          const ids = [];
-          const stack = [node.id];
-          visited.add(node.id);
-          while (stack.length) {
-            const id = stack.pop();
-            ids.push(id);
-            [...(adjacency.get(id) || [])]
-              .sort((a, b) => nodeOrder.get(b) - nodeOrder.get(a))
-              .forEach((neighborId) => {
-                if (visited.has(neighborId)) return;
-                visited.add(neighborId);
-                stack.push(neighborId);
-              });
-          }
-          components.push(ids);
-        });
-
-        if (layoutMode === 'hierarchy') {
-          commitAutoLayout(hierarchyLayout(graph.nodes, graph.edges, metrics), layoutMode);
+        const rectangles = nodes.map((node) => ({ id: node.id, x: node.x, y: node.y, ...nodeSize(node, false, metrics) }));
+        let positions;
+        if (alignment) {
+          const referenceId = arrangementPreferences.reference === 'primary' && rectangles.some((rect) => rect.id === ui.selection?.id) ? ui.selection.id : null;
+          positions = alignRectangles(rectangles, command, { referenceId });
+        } else if (command.startsWith('distribute')) {
+          positions = distributeRectangles(rectangles, command === 'distribute-x' ? 'x' : 'y');
+        } else if (['grid', 'row', 'column'].includes(command)) {
+          positions = gridRectangles(rectangles, { columns: command === 'row' ? rectangles.length : command === 'column' ? 1 : 0, gapX: arrangementPreferences.gap, gapY: arrangementPreferences.gap });
+        } else return;
+        if (!positions) {
+          toast('Недостаточно места для равных промежутков. Упорядочите элементы в ряд или столбец.', 'error');
           return;
         }
-        if (layoutMode === 'compact') {
-          commitAutoLayout(compactGridLayout(metrics, nodeOrder), layoutMode);
+        if ([...positions.values()].some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y) || Math.abs(point.x) > MAX_GRAPH_COORDINATE || Math.abs(point.y) > MAX_GRAPH_COORDINATE)) {
+          toast('Расположение выходит за границы графа', 'error');
           return;
         }
-
-        const layouts = components.map((ids) => {
-          const rootId = [...ids].sort((a, b) => {
-            const degreeDifference = (metrics.counts.get(b) || 0) - (metrics.counts.get(a) || 0);
-            return degreeDifference || nodeOrder.get(a) - nodeOrder.get(b);
-          })[0];
-          const levels = new Map([[rootId, 0]]);
-          const queue = [rootId];
-          let queueIndex = 0;
-          while (queueIndex < queue.length) {
-            const id = queue[queueIndex];
-            queueIndex += 1;
-            [...(adjacency.get(id) || [])]
-              .sort((a, b) => nodeOrder.get(a) - nodeOrder.get(b))
-              .forEach((neighborId) => {
-                if (levels.has(neighborId)) return;
-                levels.set(neighborId, levels.get(id) + 1);
-                queue.push(neighborId);
-              });
-          }
-
-          const rings = [];
-          ids.forEach((id) => {
-            const level = levels.get(id) || 0;
-            if (!rings[level]) rings[level] = [];
-            rings[level].push(id);
+        const label = alignment ? 'Выровнены выбранные элементы' : command.startsWith('distribute') ? 'Выровнены промежутки между элементами' : 'Упорядочены выбранные элементы';
+        mutate(label, () => {
+          nodes.forEach((node) => {
+            if (node.pinned) return;
+            const point = positions.get(node.id);
+            node.x = point.x;
+            node.y = point.y;
           });
-          rings.forEach((ring) => ring.sort((a, b) => {
-            const degreeDifference = (metrics.counts.get(b) || 0) - (metrics.counts.get(a) || 0);
-            return degreeDifference || nodeOrder.get(a) - nodeOrder.get(b);
-          }));
-
-          const positions = new Map();
-          let previousRadius = 0;
-          let previousHalfSpan = 0;
-          rings.forEach((ring, level) => {
-            const sizes = ring.map((id) => nodeSize(nodeById(id), false, metrics));
-            const maxSpan = Math.max(...sizes.map((size) => Math.max(size.width, size.height)));
-            if (level === 0) {
-              const size = sizes[0];
-              positions.set(ring[0], { x: -size.width / 2, y: -size.height / 2 });
-              previousHalfSpan = maxSpan / 2;
-              return;
-            }
-            const circumferenceRadius = ring.length * (maxSpan + 72) / (Math.PI * 2);
-            const radius = Math.max(previousRadius + previousHalfSpan + maxSpan / 2 + 84, circumferenceRadius);
-            const angleOffset = -Math.PI / 2 + (level % 2 === 0 ? Math.PI / Math.max(1, ring.length) : 0);
-            ring.forEach((id, index) => {
-              const angle = angleOffset + index * Math.PI * 2 / ring.length;
-              const size = sizes[index];
-              positions.set(id, {
-                x: Math.cos(angle) * radius - size.width / 2,
-                y: Math.sin(angle) * radius - size.height / 2
-              });
-            });
-            previousRadius = radius;
-            previousHalfSpan = maxSpan / 2;
-          });
-
-          const bounds = ids.reduce((acc, id) => {
-            const node = nodeById(id);
-            const position = positions.get(id);
-            const size = nodeSize(node, false, metrics);
-            acc.minX = Math.min(acc.minX, position.x);
-            acc.minY = Math.min(acc.minY, position.y);
-            acc.maxX = Math.max(acc.maxX, position.x + size.width);
-            acc.maxY = Math.max(acc.maxY, position.y + size.height);
-            return acc;
-          }, { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity });
-          return {
-            ids,
-            positions,
-            bounds,
-            width: bounds.maxX - bounds.minX,
-            height: bounds.maxY - bounds.minY
-          };
         });
+      }
 
-        const componentGap = 220;
-        const totalArea = layouts.reduce((sum, layout) => sum + (layout.width + componentGap) * (layout.height + componentGap), 0);
-        const rowTarget = Math.max(960, Math.sqrt(totalArea) * 1.45);
-        const arranged = new Map();
-        let cursorX = 0;
-        let cursorY = 0;
-        let rowHeight = 0;
-        layouts.forEach((layout) => {
-          if (cursorX > 0 && cursorX + layout.width > rowTarget) {
-            cursorX = 0;
-            cursorY += rowHeight + componentGap;
-            rowHeight = 0;
+      function cancelAutoLayout() {
+        if (!layoutJob) return false;
+        layoutJob.worker.terminate();
+        clearTimeout(layoutJob.timer);
+        layoutJob = null;
+        document.getElementById('layoutStatus').hidden = true;
+        refs.canvas.removeAttribute('aria-busy');
+        return true;
+      }
+
+      function currentLayoutMode() {
+        return arrangementPreferences.scope === 'selection' ? arrangementPreferences.selectionLayout : activeView()?.layout || 'radial';
+      }
+
+      function autoArrangeGraph(layoutMode = currentLayoutMode()) {
+        cancelPointerAction();
+        cancelAutoLayout();
+        flushPendingEdit();
+        if (!['radial', 'hierarchy', 'compact'].includes(layoutMode)) layoutMode = currentLayoutMode();
+        if (!graph.nodes.length) { toast('В графе пока нет элементов'); return; }
+        const selectedIds = ui.selection?.kind === 'group' ? groupById(ui.selection.id)?.nodeIds || [] : [...ui.selectedNodeIds].filter((id) => !hiddenNodeIds().has(id));
+        const scopeIds = arrangementPreferences.scope === 'selection' ? selectedIds : null;
+        if (scopeIds && scopeIds.length < 2) { toast('Выберите не менее двух элементов для автоукладки'); renderViewControls(); return; }
+        const metrics = degreeMetrics();
+        const input = {
+          nodes: graph.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y, pinned: node.pinned, ...nodeSize(node, false, metrics) })),
+          edges: graph.edges.map(({ source, target, label }) => ({ source, target, label })),
+          groups: deepClone(graph.groups), scopeIds, mode: layoutMode,
+          direction: arrangementPreferences.direction, gap: arrangementPreferences.layoutGap
+        };
+        const state = () => JSON.stringify({ id: graph.id, view: graph.activeViewId, nodes: graph.nodes, edges: graph.edges, groups: graph.groups });
+        const fingerprint = state();
+        const requestId = uid('layout');
+        let worker;
+        try { worker = new Worker(new URL('./layout-worker.mjs', import.meta.url), { type: 'module' }); }
+        catch { toast('Не удалось запустить автоукладку. Обновите страницу и повторите.', 'error'); renderViewControls(); return; }
+        layoutJob = { worker, requestId, timer: 0 };
+        document.getElementById('layoutStatus').hidden = false;
+        refs.canvas.setAttribute('aria-busy', 'true');
+        const fail = (message) => {
+          if (layoutJob?.requestId !== requestId) return;
+          cancelAutoLayout();
+          renderViewControls();
+          toast(message, 'error');
+        };
+        layoutJob.timer = setTimeout(() => fail('Расчёт занял слишком много времени. Выберите часть графа или компактную сетку.'), 30000);
+        worker.onerror = () => fail('Не удалось рассчитать расположение. Граф не изменён.');
+        worker.onmessage = ({ data }) => {
+          if (layoutJob?.requestId !== requestId || data.requestId !== requestId) return;
+          if (data.error) { fail('Не удалось разместить элементы в границах графа. Уменьшите интервал или выделение.'); return; }
+          if (state() !== fingerprint || ui.pointerAction) { fail('Граф изменился во время расчёта. Повторите автоукладку.'); return; }
+          cancelAutoLayout();
+          const positions = new Map(data.result.positions);
+          if ([...positions.values()].some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y) || Math.abs(point.x) > MAX_GRAPH_COORDINATE || Math.abs(point.y) > MAX_GRAPH_COORDINATE)) {
+            renderViewControls(); toast('Расположение выходит за границы графа', 'error'); return;
           }
-          layout.ids.forEach((id) => {
-            const position = layout.positions.get(id);
-            arranged.set(id, {
-              x: Math.round(cursorX + position.x - layout.bounds.minX),
-              y: Math.round(cursorY + position.y - layout.bounds.minY)
+          if (scopeIds) {
+            arrangementPreferences.selectionLayout = layoutMode;
+            saveArrangementPreferences();
+          }
+          const blocked = data.result.blockedCount;
+          if (!data.result.movedCount && (scopeIds || blocked)) {
+            renderViewControls();
+            toast(blocked ? `Без перемещения: ${blocked}. Закреплены или выбрана часть группы.` : 'Выделение уже упорядочено');
+            return;
+          }
+          const changed = mutate('Граф автоматически упорядочен', () => {
+            if (!scopeIds && activeView()) activeView().layout = layoutMode;
+            graph.nodes.forEach((node) => {
+              const point = positions.get(node.id);
+              if (point) { node.x = point.x; node.y = point.y; }
             });
+            if (!scopeIds) fitGraph({ persist: false });
           });
-          cursorX += layout.width + componentGap;
-          rowHeight = Math.max(rowHeight, layout.height);
-        });
-
-        commitAutoLayout(arranged, layoutMode);
+          if (changed) toast(`${scopeIds ? 'Выделение упорядочено' : 'Граф упорядочен'}${blocked ? `. Без перемещения: ${blocked} (закреплены или часть группы)` : ''}`, 'success');
+          renderViewControls();
+        };
+        worker.postMessage({ requestId, input });
       }
 
       function ensureGraphCapacity(nodesToAdd = 0, edgesToAdd = 0) {
@@ -3902,6 +3921,25 @@
           toast(`В одном графе может быть не более ${MAX_GRAPH_EDGES} связей.`, 'error');
           return false;
         }
+        return true;
+      }
+
+      function placeCreatedNodes(created, edges = [], direction = 'right') {
+        const metrics = degreeMetrics([...graph.nodes, ...created], [...graph.edges, ...edges]);
+        const rect = (node) => ({ id: node.id, x: node.x, y: node.y, ...nodeSize(node, false, metrics) });
+        const bounds = rectangleBounds(created.map(rect));
+        if (!bounds) return false;
+        const obstacles = graph.nodes.map(rect);
+        graph.groups.forEach((group) => {
+          const box = rectangleBounds(group.nodeIds.map(nodeById).filter(Boolean).map(rect));
+          if (box) obstacles.push({ id: `@group:${group.id}`, x: box.x - 26, y: box.y - 26, width: box.width + 52, height: box.height + 52 });
+        });
+        const position = findVacantPosition({ id: created[0].id, ...bounds }, obstacles, { gap: 24, direction, limit: MAX_GRAPH_COORDINATE });
+        if (!position || created.some((node) => Math.abs(node.x + position.x - bounds.x) > MAX_GRAPH_COORDINATE || Math.abs(node.y + position.y - bounds.y) > MAX_GRAPH_COORDINATE)) {
+          toast('Нет свободного места в границах графа. Измените положение или разделите граф.', 'error');
+          return false;
+        }
+        created.forEach((node) => { node.x += position.x - bounds.x; node.y += position.y - bounds.y; });
         return true;
       }
 
@@ -3937,10 +3975,12 @@
           x: Math.round(point.x - size.width / 2),
           y: Math.round(point.y - size.height / 2)
         };
-        mutate(`Создан элемент «${node.title}»`, () => {
+        if (!placeCreatedNodes([node])) return null;
+        const changed = mutate(`Создан элемент «${node.title}»`, () => {
           graph.nodes.push(node);
           setSingleNodeSelection(node.id);
         });
+        if (!changed) return null;
         requestAnimationFrame(() => {
           if (type === 'sticker') {
             openInlineNodeEditor(node.id, { selectAll: true });
@@ -3979,11 +4019,13 @@
           y: Math.round(kind === 'sibling' ? parent.y : parent.y + parentSize.height + 28)
         };
         const edge = { id: uid('edge'), source: parent.id, target: child.id, label: kind === 'sibling' ? 'следующий' : 'дочерний', routing: 'curve', points: [] };
-        mutate(kind === 'sibling' ? 'Создан соседний элемент' : 'Создан дочерний элемент', () => {
+        if (!placeCreatedNodes([child], [edge], kind === 'sibling' ? 'right' : 'down')) return;
+        const changed = mutate(kind === 'sibling' ? 'Создан соседний элемент' : 'Создан дочерний элемент', () => {
           graph.nodes.push(child);
           graph.edges.push(edge);
           setSingleNodeSelection(child.id);
         });
+        if (!changed) return;
         openInlineNodeEditor(child.id, { selectAll: true });
       }
 
@@ -4003,10 +4045,12 @@
           pinned: false, color: TYPE_CONFIG.sticker.color,
           x: Math.round(point.x), y: Math.round(point.y)
         };
-        mutate('Создан стикер', () => {
+        if (!placeCreatedNodes([node])) return null;
+        const changed = mutate('Создан стикер', () => {
           graph.nodes.push(node);
           setSingleNodeSelection(node.id);
         });
+        if (!changed) return null;
         requestAnimationFrame(() => openInlineNodeEditor(node.id, { selectAll: true }));
         return node;
       }
@@ -4137,7 +4181,8 @@
           created.push(node);
         });
         const metrics = degreeMetrics([...graph.nodes, ...created], [...graph.edges, ...edges]);
-        const proposed = hierarchyLayout(created, edges, metrics);
+        const proposed = outlineLayout(created.map((node) => ({ id: node.id, x: node.x, y: node.y, ...nodeSize(node, false, metrics) })), edges,
+          { gap: arrangementPreferences.layoutGap, direction: arrangementPreferences.direction });
         proposed.forEach((position) => {
           position.x += Math.round(origin.x);
           position.y += Math.round(origin.y);
@@ -4148,6 +4193,7 @@
           return;
         }
         created.forEach((node) => Object.assign(node, positions.get(node.id)));
+        if (!placeCreatedNodes(created, edges, 'down')) return;
         const changed = mutate(`Создана иерархия: ${created.length} элементов`, () => {
           graph.nodes.push(...created);
           graph.edges.push(...edges);
@@ -4223,9 +4269,14 @@
           scale: 1, autoSize: true, width: 190, height: 96, items: [], pinned: false, color: TYPE_CONFIG.atom.color,
           x: Math.round(list.x + list.width + 90), y: Math.round(list.y + index * 126)
         }));
+        const edges = atoms.map((atom) => ({ id: uid('edge'), source: list.id, target: atom.id, label: 'содержит', routing: 'orthogonal', points: [] }));
+        const metrics = degreeMetrics([...graph.nodes, ...atoms], [...graph.edges, ...edges]);
+        const positions = gridRectangles(atoms.map((node) => ({ id: node.id, x: node.x, y: node.y, ...nodeSize(node, false, metrics) })), { columns: 1, gapY: 32 });
+        atoms.forEach((node) => Object.assign(node, positions.get(node.id)));
+        if (!placeCreatedNodes(atoms, edges)) return;
         mutate(`Список разложен в атомы: ${atoms.length}`, () => {
           graph.nodes.push(...atoms);
-          graph.edges.push(...atoms.map((atom) => ({ id: uid('edge'), source: list.id, target: atom.id, label: 'содержит', routing: 'orthogonal', points: [] })));
+          graph.edges.push(...edges);
           ui.selectedNodeIds = new Set(atoms.map((atom) => atom.id));
           ui.selection = { kind: 'node', id: atoms.at(-1).id };
         });
@@ -4292,6 +4343,8 @@
       }
 
       function switchView(id) {
+        cancelPointerAction();
+        cancelAutoLayout();
         const next = graph.views.find((view) => view.id === id);
         if (!next || next.id === graph.activeViewId) return;
         flushPendingEdit();
@@ -4355,6 +4408,7 @@
 
       function renderViewControls() {
         const current = activeView();
+        const layoutMode = currentLayoutMode();
         refs.viewControls.innerHTML = `
           <input id="viewNameField" maxlength="60" value="${escapeHtml(current?.name || 'Основной вид')}" aria-label="Название представления">
           <div class="view-controls-row">
@@ -4364,12 +4418,17 @@
           </div>
           <div class="view-layout-row">
             <select id="viewLayoutField" aria-label="Способ автоукладки">
-              <option value="radial" ${current?.layout === 'radial' ? 'selected' : ''}>Радиальная укладка</option>
-              <option value="hierarchy" ${current?.layout === 'hierarchy' ? 'selected' : ''}>Иерархия</option>
-              <option value="compact" ${current?.layout === 'compact' ? 'selected' : ''}>Компактная сетка</option>
+              <option value="radial" ${layoutMode === 'radial' ? 'selected' : ''}>Радиально</option>
+              <option value="hierarchy" ${layoutMode === 'hierarchy' ? 'selected' : ''}>Иерархия</option>
+              <option value="compact" ${layoutMode === 'compact' ? 'selected' : ''}>Сетка</option>
             </select>
             <button class="icon-button danger" type="button" data-view-action="delete" aria-label="Удалить представление" title="Удалить представление" ${graph.views.length <= 1 ? 'disabled' : ''}>${icon('trash')}</button>
           </div>
+            <select id="layoutDirectionField" aria-label="Направление иерархии" title="Направление иерархии">
+              ${[['LR', 'Слева направо'], ['TB', 'Сверху вниз'], ['RL', 'Справа налево'], ['BT', 'Снизу вверх']].map(([value, label]) => `<option value="${value}" ${arrangementPreferences.direction === value ? 'selected' : ''}>${label}</option>`).join('')}
+            </select>
+          <select id="layoutScopeField" aria-label="Область автоукладки" title="Область автоукладки"><option value="all" ${arrangementPreferences.scope === 'all' ? 'selected' : ''}>Весь граф</option><option value="selection" ${arrangementPreferences.scope === 'selection' ? 'selected' : ''}>Только выделение</option></select>
+          <label class="view-toggle" for="layoutGapField"><span>Интервал, px</span><input id="layoutGapField" type="number" min="16" max="300" step="4" value="${arrangementPreferences.layoutGap}" style="width:72px;margin-left:auto"></label>
           <label class="view-toggle" title="Подсвечивать связанные элементы и приглушать остальные">
             <input id="connectionLensField" type="checkbox" ${current?.connectionLensEnabled ? 'checked' : ''}>
             <span>Линза связей</span>
@@ -4679,6 +4738,9 @@
           `;
         }).join('');
         refs.nodeLayer.querySelectorAll('[data-node-type="list"]').forEach(updateListPreview);
+        if (arrangementPreferences.reference === 'primary' && ui.selectedNodeIds.size > 1 && ui.selection?.kind === 'node') {
+          refs.nodeLayer.querySelector(`[data-node-id="${CSS.escape(ui.selection.id)}"]`)?.classList.add('arrangement-reference');
+        }
         refs.emptyState.hidden = graph.nodes.length > 0;
       }
 
@@ -4807,6 +4869,7 @@
         if (ui.selection.kind === 'node' && selectedNodes().length > 1) {
           const nodes = selectedNodes();
           refs.inspector.innerHTML = `
+            ${arrangementInspector()}
             <section class="panel-section">
               <h2 class="section-heading"><span>Выделение</span><span>${nodes.length}</span></h2>
               <p class="multi-selection-note">Изменения размера и цвета применяются ко всем выбранным элементам.</p>
@@ -4911,6 +4974,23 @@
       }
 
       function renderControls() {
+        for (const id of ['arrangeButton', 'railArrangeButton']) {
+          const button = document.getElementById(id);
+          const label = arrangementPreferences.scope === 'selection' ? 'Упорядочить выделение' : 'Упорядочить и показать весь граф';
+          button.setAttribute('aria-label', label);
+          button.title = `${label} (Shift + 0)`;
+        }
+        const multiSelectButton = document.getElementById('multiSelectButton');
+        multiSelectButton.classList.toggle('active', ui.multiSelect);
+        multiSelectButton.setAttribute('aria-pressed', String(ui.multiSelect));
+        const toolbar = document.getElementById('selectionToolbar');
+        toolbar.hidden = ui.selection?.kind !== 'node' || selectedNodes().length < 2;
+        toolbar.innerHTML = toolbar.hidden ? '' : arrangementButtons(true);
+        for (const [id, enabled] of [['snapObjectsButton', arrangementPreferences.snapObjects], ['snapGridButton', arrangementPreferences.snapGrid]]) {
+          const button = document.getElementById(id);
+          button.classList.toggle('active', enabled);
+          button.setAttribute('aria-pressed', String(enabled));
+        }
         refs.undoButton.disabled = ui.undoStack.length === 0;
         refs.redoButton.disabled = ui.redoStack.length === 0;
         refs.graphTitle.value = graph.title;
@@ -4964,8 +5044,10 @@
       }
 
       function setMode(mode) {
+        cancelPointerAction();
         if (!['select', 'hand', 'connect', 'sticker'].includes(mode)) return;
         ui.mode = mode;
+        if (mode !== 'select') ui.multiSelect = false;
         if (mode !== 'connect') ui.connectSourceId = null;
         render();
         refs.canvas.focus({ preventScroll: true });
@@ -5032,10 +5114,61 @@
         });
       }
 
+      function clearSnapGuides() {
+        document.getElementById('snapGuides').replaceChildren();
+      }
+
+      function renderSnapGuides(guides) {
+        const { x, y, scale } = graph.viewport;
+        document.getElementById('snapGuides').innerHTML = guides.map((guide) => {
+          const vertical = guide.axis === 'x';
+          const position = (vertical ? x : y) + guide.position * scale;
+          const start = (vertical ? y : x) + guide.from * scale;
+          const end = (vertical ? y : x) + guide.to * scale;
+          const line = vertical ? `x1="${position}" x2="${position}" y1="${start - 5}" y2="${end + 5}"` : `y1="${position}" y2="${position}" x1="${start - 5}" x2="${end + 5}"`;
+          let label = '';
+          if (Number.isFinite(guide.label)) {
+            const value = String(Math.round(guide.label));
+            const width = value.length * 7 + 10;
+            const labelX = clamp(vertical ? position : (start + end) / 2, width / 2 + 2, refs.canvas.clientWidth - width / 2 - 2);
+            const labelY = clamp(vertical ? (start + end) / 2 : position, 12, refs.canvas.clientHeight - 12);
+            label = `<rect class="snap-guide-background" x="${labelX - width / 2}" y="${labelY - 10}" width="${width}" height="20" rx="3"/><text class="snap-guide-label" x="${labelX}" y="${labelY + 4}" text-anchor="middle">${value}</text>`;
+          }
+          return `<line class="snap-guide" ${line}/>${label}`;
+        }).join('');
+      }
+
+      function prepareDragSnapping(action) {
+        cancelAutoLayout();
+        clearTimeout(viewportSaveTimer);
+        action.graphId = graph.id;
+        action.viewId = graph.activeViewId;
+        const movingIds = new Set(action.startNodes.map((node) => node.id));
+        const hidden = hiddenNodeIds();
+        const rect = (node) => ({ id: node.id, ...nodeDisplayPosition(node, action.compact, action.displayMetrics), ...nodeSize(node, action.compact, action.displayMetrics) });
+        let bounds = rectangleBounds(action.startNodes.map((node) => rect(nodeById(node.id))));
+        if (action.kind === 'group-drag') {
+          const group = groupById(action.groupId);
+          const raw = groupBounds(group, action.compact, action.displayMetrics);
+          bounds = group.collapsed ? raw : { x: raw.minX - 26, y: raw.minY - 26, width: raw.maxX - raw.minX + 52, height: raw.maxY - raw.minY + 52 };
+        }
+        action.movingRects = bounds ? [{ id: uid('moving-bounds'), ...bounds }] : [];
+        const references = graph.nodes.filter((node) => !movingIds.has(node.id) && !hidden.has(node.id)).map(rect);
+        graph.groups.filter((group) => group.collapsed && !group.nodeIds.some((id) => movingIds.has(id))).forEach((group) => {
+          const bounds = groupBounds(group, action.compact, action.displayMetrics);
+          if (bounds) references.push({ id: `@collapsed:${group.id}`, ...bounds });
+        });
+        const { x, y, scale } = graph.viewport;
+        action.stationaryRects = references.filter((item) => x + (item.x + item.width) * scale >= 0 && y + (item.y + item.height) * scale >= 0
+          && x + item.x * scale <= refs.canvas.clientWidth && y + item.y * scale <= refs.canvas.clientHeight);
+      }
+
       function cancelPointerAction() {
         const action = ui.pointerAction;
         if (!action) return false;
         ui.pointerAction = null;
+        clearSnapGuides();
+        try { refs.canvas.releasePointerCapture?.(action.pointerId); } catch {}
         refs.canvas.classList.remove('panning');
         refs.edgePreview.setAttribute('hidden', '');
         refs.edgePreview.setAttribute('d', '');
@@ -5043,7 +5176,7 @@
         refs.nodeLayer.querySelectorAll('.magnet-target').forEach((element) => element.classList.remove('magnet-target'));
         if (edgeRenderFrame) cancelAnimationFrame(edgeRenderFrame);
         edgeRenderFrame = 0;
-        if (['node-drag', 'group-drag', 'node-resize', 'edge-point'].includes(action.kind)) restoreSnapshot(action.before);
+        if (['node-drag', 'group-drag', 'node-resize', 'edge-point'].includes(action.kind) && (!action.graphId || action.graphId === graph.id && action.viewId === graph.activeViewId)) restoreSnapshot(action.before);
         if (action.kind === 'marquee') {
           ui.selectedNodeIds = new Set(action.previousIds);
           const primaryId = [...ui.selectedNodeIds].at(-1);
@@ -5058,9 +5191,11 @@
       }
 
       function handleNodePointerDown(event) {
+        if (ui.pointerAction) return;
         const element = event.target.closest('[data-node-id]');
         if (!element || event.button !== 0) return;
         flushPendingEdit();
+        cancelAutoLayout();
         const id = element.dataset.nodeId;
         if (ui.mode === 'hand' || ui.spacePressed) {
           event.preventDefault();
@@ -5076,7 +5211,7 @@
           event.stopPropagation();
           setSingleNodeSelection(id);
           ui.pointerAction = {
-            kind: 'node-resize', pointerId: event.pointerId, nodeId: id,
+            kind: 'node-resize', pointerId: event.pointerId, nodeId: id, graphId: graph.id, viewId: graph.activeViewId,
             direction: resizeHandle.dataset.resizeHandle.split(':')[0],
             startClient: { x: event.clientX, y: event.clientY },
             startWidth: node.width, startHeight: node.height, startX: node.x, startY: node.y, before: graphSnapshot()
@@ -5084,7 +5219,7 @@
           try { refs.canvas.setPointerCapture?.(event.pointerId); } catch {}
           return;
         }
-        if (event.metaKey || event.ctrlKey) return;
+        if (event.metaKey || event.ctrlKey || ui.multiSelect && ui.mode === 'select' && !event.shiftKey) return;
         if (ui.mode === 'connect') {
           event.preventDefault();
           event.stopPropagation();
@@ -5125,6 +5260,7 @@
           before: graphSnapshot(),
           activated: false
         };
+        prepareDragSnapping(ui.pointerAction);
         try { refs.canvas.setPointerCapture?.(event.pointerId); } catch {}
         renderNodes();
         ui.selectedNodeIds.forEach((nodeId) => refs.nodeLayer.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`)?.classList.add('dragging'));
@@ -5133,6 +5269,7 @@
       }
 
       function handleGroupPointerDown(event) {
+        if (ui.pointerAction) return;
         const header = event.target.closest('[data-group-drag]');
         if (!header || event.button !== 0) return;
         flushPendingEdit();
@@ -5160,6 +5297,7 @@
           before: graphSnapshot(),
           activated: false
         };
+        prepareDragSnapping(ui.pointerAction);
         try { refs.canvas.setPointerCapture?.(event.pointerId); } catch {}
         renderGroups();
         renderInspector();
@@ -5167,6 +5305,7 @@
       }
 
       function handleCanvasPointerDown(event) {
+        if (ui.pointerAction) return;
         if (event.button !== 0 && event.button !== 1) return;
         flushPendingEdit();
         if (ui.mode === 'hand' || ui.spacePressed || event.button === 1) {
@@ -5189,7 +5328,7 @@
         }
         if (ui.mode === 'select' && event.button === 0) {
           const rect = refs.canvas.getBoundingClientRect();
-          const additive = event.metaKey || event.ctrlKey;
+          const additive = event.metaKey || event.ctrlKey || ui.multiSelect;
           ui.pointerAction = {
             kind: 'marquee', pointerId: event.pointerId,
             startClient: { x: event.clientX, y: event.clientY },
@@ -5220,8 +5359,8 @@
         const action = ui.pointerAction;
         if (!action || action.pointerId !== event.pointerId) return;
         if (action.kind === 'pan') {
-          graph.viewport.x = action.startViewport.x + event.clientX - action.startClient.x;
-          graph.viewport.y = action.startViewport.y + event.clientY - action.startClient.y;
+          graph.viewport.x = clamp(action.startViewport.x + event.clientX - action.startClient.x, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE);
+          graph.viewport.y = clamp(action.startViewport.y + event.clientY - action.startClient.y, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE);
           applyViewport();
           return;
         }
@@ -5299,7 +5438,7 @@
         if (action.kind === 'edge-point') {
           const edge = edgeById(action.edgeId);
           if (!edge?.points[action.pointIndex]) return;
-          edge.points[action.pointIndex] = worldPoint;
+          edge.points[action.pointIndex] = { x: clamp(worldPoint.x, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE), y: clamp(worldPoint.y, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE) };
           renderEdges();
           return;
         }
@@ -5307,13 +5446,20 @@
           const screenDistance = Math.hypot(event.clientX - action.startClient.x, event.clientY - action.startClient.y);
           if (!action.activated && screenDistance < 3) return;
           action.activated = true;
-          const dx = (event.clientX - action.startClient.x) / graph.viewport.scale;
-          const dy = (event.clientY - action.startClient.y) / graph.viewport.scale;
+          const delta = { x: (event.clientX - action.startClient.x) / graph.viewport.scale, y: (event.clientY - action.startClient.y) / graph.viewport.scale };
+          const axis = event.shiftKey ? (Math.abs(delta.x) >= Math.abs(delta.y) ? 'x' : 'y') : null;
+          const snapped = snapTranslation(action.movingRects, action.stationaryRects, delta, {
+            scale: graph.viewport.scale, tolerance: 6, snapToObjects: arrangementPreferences.snapObjects && !event.altKey,
+            snapToGrid: arrangementPreferences.snapGrid && !event.altKey, gridSize: 24, axis
+          });
+          const dx = clamp(snapped.dx, -MAX_GRAPH_COORDINATE - Math.min(...action.startNodes.map((node) => node.x)), MAX_GRAPH_COORDINATE - Math.max(...action.startNodes.map((node) => node.x)));
+          const dy = clamp(snapped.dy, -MAX_GRAPH_COORDINATE - Math.min(...action.startNodes.map((node) => node.y)), MAX_GRAPH_COORDINATE - Math.max(...action.startNodes.map((node) => node.y)));
+          renderSnapGuides(dx === snapped.dx && dy === snapped.dy ? snapped.guides : []);
           action.startNodes.forEach((startNode) => {
             const node = nodeById(startNode.id);
             if (!node) return;
-            node.x = Math.round(startNode.x + dx);
-            node.y = Math.round(startNode.y + dy);
+            node.x = startNode.x + dx;
+            node.y = startNode.y + dy;
             const nodeElement = refs.nodeLayer.querySelector(`[data-node-id="${CSS.escape(node.id)}"]`);
             if (nodeElement) {
               const position = nodeDisplayPosition(node, action.compact, action.displayMetrics);
@@ -5376,7 +5522,9 @@
         const action = ui.pointerAction;
         if (!action || action.pointerId !== event.pointerId) return;
         ui.pointerAction = null;
+        clearSnapGuides();
         refs.canvas.classList.remove('panning');
+        refs.nodeLayer.querySelectorAll('.dragging').forEach((element) => element.classList.remove('dragging'));
         refs.selectionMarquee.hidden = true;
         if (edgeRenderFrame) cancelAnimationFrame(edgeRenderFrame);
         edgeRenderFrame = 0;
@@ -5424,6 +5572,7 @@
       }
 
       function handleEdgePointerDown(event) {
+        if (ui.pointerAction) return;
         const point = event.target.closest('[data-edge-point]');
         if (!point || event.button !== 0) return;
         if (ui.mode === 'hand' || ui.spacePressed) return;
@@ -5432,13 +5581,15 @@
         if (!edge) return;
         event.preventDefault();
         event.stopPropagation();
+        cancelAutoLayout();
+        flushPendingEdit();
         const before = graphSnapshot();
         if (!edge.points.length) {
           const source = nodeById(edge.source);
           const target = nodeById(edge.target);
-          if (source && target) edge.points = edgeGeometry(source, target, edge).points.map((item) => ({ ...item }));
+          if (source && target) edge.points = edgeGeometry(source, target, edge).points.map((item) => ({ x: clamp(item.x, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE), y: clamp(item.y, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE) }));
         }
-        ui.pointerAction = { kind: 'edge-point', pointerId: event.pointerId, edgeId: edge.id, pointIndex: Number(point.dataset.edgePoint), before };
+        ui.pointerAction = { kind: 'edge-point', pointerId: event.pointerId, edgeId: edge.id, pointIndex: Number(point.dataset.edgePoint), before, graphId: graph.id, viewId: graph.activeViewId };
         try { refs.canvas.setPointerCapture?.(event.pointerId); } catch {}
       }
 
@@ -5447,7 +5598,10 @@
         const source = edge ? nodeById(edge.source) : null;
         const target = edge ? nodeById(edge.target) : null;
         if (!edge || !source || !target) return;
+        if (edge.points.length >= 20) { toast('У связи уже 20 точек маршрута', 'error'); return; }
         const point = screenToWorld(clientX, clientY);
+        point.x = clamp(point.x, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE);
+        point.y = clamp(point.y, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE);
         mutate('Добавлена точка маршрута связи', () => {
           edge.points.push(point);
           const start = nodeCenter(source);
@@ -5531,6 +5685,12 @@
       }
 
       function resetGraphSession() {
+        cancelAutoLayout();
+        clearSnapGuides();
+        ui.pointerAction = null;
+        refs.canvas.classList.remove('panning');
+        refs.edgePreview.setAttribute('hidden', '');
+        ui.multiSelect = false;
         clearSelection();
         ui.hoverNodeId = null;
         ui.connectSourceId = null;
@@ -5593,6 +5753,8 @@
       }
 
       function openGraphManager(event) {
+        cancelPointerAction();
+        cancelAutoLayout();
         flushPendingEdit();
         saveGraph({ markChanged: false });
         renderGraphManager();
@@ -5609,7 +5771,7 @@
           flushPendingEdit();
           if (!saveGraph()) return;
         }
-        const metadata = graphStorage(id);
+        let metadata = graphStorage(id);
         const remote = serverGraphSummaries.get(id);
         if (remote && !metadata.revision) {
           metadata.publishState = 'conflict';
@@ -5628,12 +5790,18 @@
         try {
           const document = await requestHost('put', { clientId: id, baseRevision: metadata.revision, payload: publishedPayload });
           const currentSource = workspace.graphs.find((item) => item.id === id);
-          const changedDuringPublish = !currentSource || JSON.stringify(currentSource) !== publishedFingerprint;
+          rememberServerDocument(document);
+          if (!currentSource) {
+            toast('Снимок опубликован в DPMS; локальная копия была удалена', 'success');
+            return;
+          }
+          // Local rollback can replace the metadata object while the request is pending.
+          metadata = graphStorage(id);
+          const changedDuringPublish = JSON.stringify(committedGraphDocument(currentSource)) !== publishedFingerprint;
           metadata.revision = document.revision;
           metadata.serverUpdatedAt = document.updated_at;
           metadata.publishState = changedDuringPublish ? 'changed' : 'published';
           metadata.error = changedDuringPublish ? 'Снимок опубликован, но на устройстве уже есть более новые изменения.' : '';
-          rememberServerDocument(document);
           if (!persistWorkspace()) {
             metadata.publishState = 'error';
             metadata.error = 'Снимок опубликован, но браузер не сохранил его ревизию. Обновите список перед повторной отправкой.';
@@ -5646,6 +5814,11 @@
           renderStorageControl();
           toast(changedDuringPublish ? metadata.error : 'Снимок графа опубликован в DPMS', changedDuringPublish ? '' : 'success');
         } catch (error) {
+          if (!workspace.graphs.some((item) => item.id === id)) {
+            toast(String(error?.message || 'Не удалось опубликовать снимок').slice(0, 300), 'error');
+            return;
+          }
+          metadata = graphStorage(id);
           metadata.publishState = error?.status === 409 ? 'conflict' : 'error';
           metadata.error = String(error?.message || 'Не удалось опубликовать снимок').slice(0, 300);
           persistWorkspace();
@@ -5680,6 +5853,9 @@
             serverGraph.id = uid('graph');
             serverGraph.title = `${serverGraph.title} — облачная копия`.slice(0, 80);
           }
+          cancelPointerAction();
+          cancelAutoLayout();
+          flushPendingEdit();
           const previousWorkspace = deepClone(workspace);
           workspace.graphs = [...workspace.graphs, serverGraph];
           workspace.storage = {
@@ -5742,7 +5918,7 @@
         } catch (error) {
           const currentSource = workspace.graphs.find((item) => item.id === id);
           if (previousMetadata && currentSource && source && workspace.storage?.[id] === pendingMetadata) {
-            if (previousMetadata.publishState === 'published' && JSON.stringify(currentSource) !== sourceFingerprint) {
+            if (previousMetadata.publishState === 'published' && JSON.stringify(committedGraphDocument(currentSource)) !== sourceFingerprint) {
               previousMetadata.publishState = 'changed';
             }
             workspace.storage[id] = previousMetadata;
@@ -5758,6 +5934,8 @@
       }
 
       function switchGraph(id) {
+        cancelPointerAction();
+        cancelAutoLayout();
         const next = workspace.graphs.find((item) => item.id === id);
         if (!next || next.id === graph.id) return;
         flushPendingEdit();
@@ -5772,6 +5950,8 @@
       }
 
       function createNewGraph() {
+        cancelPointerAction();
+        cancelAutoLayout();
         if (workspace.graphs.length >= MAX_CACHED_GRAPHS) {
           toast('Достигнут лимит прототипа: 100 графов', 'error');
           return;
@@ -6192,6 +6372,58 @@
         document.getElementById('fileDialog').close();
       }
 
+      function renderGraphSearch() {
+        const query = document.getElementById('graphSearchInput').value.normalize('NFKC').toLocaleLowerCase('ru-RU').trim();
+        const type = document.getElementById('graphSearchType').value;
+        const terms = query.split(/\s+/).filter(Boolean);
+        const matches = graph.nodes.filter((node) => {
+          if (type && node.type !== type) return false;
+          const text = [node.title, node.id, node.sourceRef, node.description, node.customTypeLabel, ...node.items].join(' ').normalize('NFKC').toLocaleLowerCase('ru-RU');
+          return terms.every((term) => text.includes(term));
+        });
+        document.getElementById('graphSearchCount').textContent = matches.length ? `Найдено: ${matches.length}${matches.length > 100 ? ' · показаны первые 100' : ''}` : 'Нет совпадений';
+        document.getElementById('graphSearchResults').innerHTML = matches.slice(0, 100).map((node) => {
+          const config = TYPE_CONFIG[node.type] || TYPE_CONFIG.custom;
+          const group = nodeGroup(node.id);
+          return `<li><button class="graph-search-result" type="button" data-search-node="${escapeHtml(node.id)}">${icon(config.icon)}<span><strong>${escapeHtml(node.title)}</strong><small>${escapeHtml(config.label)}${node.sourceRef ? ` · ${escapeHtml(node.sourceRef)}` : ''}${group ? ` · ${escapeHtml(group.title)}` : ''}</small></span></button></li>`;
+        }).join('');
+      }
+
+      function openGraphSearch() {
+        cancelPointerAction();
+        cancelAutoLayout();
+        flushPendingEdit();
+        document.getElementById('graphSearchType').innerHTML = '<option value="">Все типы</option>' + Object.entries(TYPE_CONFIG).map(([value, config]) => `<option value="${value}">${config.label}</option>`).join('');
+        renderGraphSearch();
+        document.getElementById('graphSearchDialog').showModal();
+        document.getElementById('graphSearchInput').focus();
+        document.getElementById('graphSearchInput').select();
+      }
+
+      function revealSearchNode(id) {
+        const node = nodeById(id);
+        if (!node) return;
+        const group = nodeGroup(id);
+        if (group?.collapsed && !mutate('Раскрыта группа из результатов поиска', () => { group.collapsed = false; })) return;
+        const before = graphSnapshot();
+        setSingleNodeSelection(id);
+        const size = nodeSize(node, false, degreeMetrics());
+        const leftInset = 78;
+        const usableWidth = refs.canvas.clientWidth - leftInset - 24;
+        const scale = clamp(Math.min(1, (usableWidth - 24) / size.width, (refs.canvas.clientHeight - 120) / size.height), MIN_SCALE, MAX_SCALE);
+        graph.viewport = {
+          scale,
+          x: clamp(leftInset + usableWidth / 2 - (node.x + size.width / 2) * scale, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE),
+          y: clamp(refs.canvas.clientHeight / 2 - (node.y + size.height / 2) * scale, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE)
+        };
+        if (!saveGraph({ markChanged: false })) restoreSnapshot(before);
+        document.getElementById('graphSearchDialog').close();
+        document.body.classList.remove('show-library', 'show-inspector');
+        syncResponsivePanels();
+        render();
+        refs.nodeLayer.querySelector(`[data-node-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+      }
+
       function isTextEditing(target) {
         return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || target?.isContentEditable;
       }
@@ -6202,6 +6434,13 @@
 
       function handleKeyDown(event) {
         ui.pressedCodes.add(event.code);
+        if (event.key === 'Escape' && layoutJob) {
+          event.preventDefault(); cancelAutoLayout(); renderViewControls(); return;
+        }
+        if (ui.pointerAction && !['Shift', 'Alt', 'Control', 'Meta'].includes(event.key)) {
+          const canceled = cancelPointerAction();
+          if (canceled && event.key === 'Escape') { event.preventDefault(); return; }
+        }
         if (document.getElementById('shortcutDialog').open && ui.shortcutCapture) {
           event.preventDefault();
           event.stopPropagation();
@@ -6237,6 +6476,9 @@
         const editing = isTextEditing(event.target);
         const nativeControl = isNativeControl(event.target);
         const command = event.metaKey || event.ctrlKey;
+        if (matchesShortcut('search', event) && !editing) {
+          event.preventDefault(); openGraphSearch(); return;
+        }
         if (command && event.key.toLowerCase() === 'z' && !editing) {
           event.preventDefault();
           event.shiftKey ? redo() : undo();
@@ -6249,8 +6491,9 @@
         }
         if (command && event.key.toLowerCase() === 'a' && !editing) {
           event.preventDefault();
-          ui.selectedNodeIds = new Set(graph.nodes.map((node) => node.id));
-          const primaryId = graph.nodes.at(-1)?.id;
+          const visible = graph.nodes.filter((node) => !hiddenNodeIds().has(node.id));
+          ui.selectedNodeIds = new Set(visible.map((node) => node.id));
+          const primaryId = visible.at(-1)?.id;
           ui.selection = primaryId ? { kind: 'node', id: primaryId } : null;
           render();
           return;
@@ -6286,6 +6529,7 @@
         if (event.key === 'Escape') {
           if (cancelPointerAction()) return;
           ui.hoverNodeId = null;
+          ui.multiSelect = false;
           ui.connectSourceId = null;
           refs.edgePreview.setAttribute('hidden', '');
           if (ui.mode !== 'select') setMode('select');
@@ -6325,12 +6569,14 @@
           const nodes = selectedNodes();
           if (!nodes.length) return;
           const step = event.shiftKey ? 10 : 2;
+          const dx = clamp(event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0,
+            -MAX_GRAPH_COORDINATE - Math.min(...nodes.map((node) => node.x)), MAX_GRAPH_COORDINATE - Math.max(...nodes.map((node) => node.x)));
+          const dy = clamp(event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0,
+            -MAX_GRAPH_COORDINATE - Math.min(...nodes.map((node) => node.y)), MAX_GRAPH_COORDINATE - Math.max(...nodes.map((node) => node.y)));
           mutate(nodes.length > 1 ? `Смещено элементов с клавиатуры: ${nodes.length}` : 'Смещён элемент с клавиатуры', () => {
             nodes.forEach((node) => {
-              if (event.key === 'ArrowUp') node.y -= step;
-              if (event.key === 'ArrowDown') node.y += step;
-              if (event.key === 'ArrowLeft') node.x -= step;
-              if (event.key === 'ArrowRight') node.x += step;
+              node.x += dx;
+              node.y += dy;
             });
           });
         }
@@ -6339,6 +6585,136 @@
       function bindEvents() {
         let gestureStartScale = null;
         let gestureAnchor = null;
+        const touchContacts = new Map();
+        let touchCamera = null;
+        let multiTouchActive = false;
+        const touchPair = () => {
+          const [a, b] = [...touchContacts.values()];
+          return a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)) } : null;
+        };
+        const startTouchCamera = () => {
+          const pair = touchPair();
+          touchCamera = pair ? { ...pair, world: screenToWorld(pair.x, pair.y), scale: graph.viewport.scale, graphId: graph.id, viewId: graph.activeViewId } : null;
+        };
+        const resetTouches = () => {
+          touchContacts.clear();
+          touchCamera = null;
+          multiTouchActive = false;
+        };
+        // Capture the second contact before any node handler can commit a one-finger drag.
+        window.addEventListener('pointerdown', (event) => {
+          if (event.pointerType !== 'touch' || !refs.canvas.contains(event.target)) return;
+          if (!multiTouchActive && event.target.closest('button, input, select, textarea, .tool-rail')) return;
+          touchContacts.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          if (touchContacts.size < 2 && !multiTouchActive) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          // Node rendering replaces touch targets; the canvas must own both contacts.
+          for (const id of touchContacts.keys()) {
+            try { refs.canvas.setPointerCapture?.(id); } catch {}
+          }
+          cancelPointerAction();
+          for (const id of touchContacts.keys()) {
+            try { refs.canvas.setPointerCapture?.(id); } catch {}
+          }
+          cancelAutoLayout();
+          multiTouchActive = true;
+          gestureStartScale = null;
+          gestureAnchor = null;
+          startTouchCamera();
+        }, { capture: true, passive: false });
+        window.addEventListener('pointermove', (event) => {
+          if (!touchContacts.has(event.pointerId)) return;
+          touchContacts.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          if (!multiTouchActive) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          const pair = touchPair();
+          if (!pair || !touchCamera || touchCamera.graphId !== graph.id || touchCamera.viewId !== graph.activeViewId) return;
+          const rect = refs.canvas.getBoundingClientRect();
+          graph.viewport.scale = clamp(touchCamera.scale * pair.distance / touchCamera.distance, MIN_SCALE, MAX_SCALE);
+          graph.viewport.x = clamp(pair.x - rect.left - touchCamera.world.x * graph.viewport.scale, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE);
+          graph.viewport.y = clamp(pair.y - rect.top - touchCamera.world.y * graph.viewport.scale, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE);
+          if (applyViewport()) { renderGroups(); renderNodes(); renderEdges(); }
+          scheduleViewportSave();
+        }, { capture: true, passive: false });
+        const finishTouch = (event) => {
+          if (!touchContacts.delete(event.pointerId) || !multiTouchActive) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          ui.suppressNodeClick = true;
+          ui.suppressGroupClick = true;
+          setTimeout(() => { ui.suppressNodeClick = false; ui.suppressGroupClick = false; }, 100);
+          startTouchCamera();
+          if (!touchContacts.size) resetTouches();
+        };
+        window.addEventListener('pointerup', finishTouch, { capture: true, passive: false });
+        window.addEventListener('pointercancel', finishTouch, { capture: true, passive: false });
+
+        document.getElementById('graphSearchButton').addEventListener('click', openGraphSearch);
+        document.getElementById('graphSearchInput').addEventListener('input', renderGraphSearch);
+        document.getElementById('graphSearchType').addEventListener('change', renderGraphSearch);
+        document.getElementById('graphSearchInput').addEventListener('keydown', (event) => {
+          const first = document.querySelector('[data-search-node]');
+          if (event.key === 'ArrowDown') { event.preventDefault(); first?.focus(); }
+          if (event.key === 'Enter' && first) { event.preventDefault(); revealSearchNode(first.dataset.searchNode); }
+        });
+        document.getElementById('graphSearchResults').addEventListener('click', (event) => {
+          const button = event.target.closest('[data-search-node]');
+          if (button) revealSearchNode(button.dataset.searchNode);
+        });
+        document.getElementById('graphSearchResults').addEventListener('keydown', (event) => {
+          if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+          event.preventDefault();
+          const results = [...document.querySelectorAll('[data-search-node]')];
+          const current = results.indexOf(event.target.closest('[data-search-node]'));
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? results.length - 1 : clamp(current + (event.key === 'ArrowDown' ? 1 : -1), 0, results.length - 1);
+          results[next]?.focus();
+        });
+        document.getElementById('multiSelectButton').addEventListener('click', () => {
+          setMode('select');
+          ui.multiSelect = !ui.multiSelect;
+          renderControls();
+        });
+
+        document.addEventListener('click', (event) => {
+          const button = event.target.closest('[data-arrange-command]');
+          if (button && !button.disabled) {
+            const container = button.closest('#selectionToolbar') ? 'selectionToolbar' : 'inspector';
+            applyArrangement(button.dataset.arrangeCommand);
+            document.getElementById(container).querySelector(`[data-arrange-command="${button.dataset.arrangeCommand}"]`)?.focus({ preventScroll: true });
+          }
+        });
+        document.addEventListener('change', (event) => {
+          const field = event.target;
+          if (field.id === 'alignmentReferenceField') arrangementPreferences.reference = field.value === 'primary' ? 'primary' : 'bounds';
+          else if (field.id === 'arrangementGapField') arrangementPreferences.gap = Number.isFinite(field.valueAsNumber) ? clamp(field.valueAsNumber, 0, 500) : 32;
+          else return;
+          saveArrangementPreferences();
+          if (field.id === 'arrangementGapField') field.value = arrangementPreferences.gap;
+          const count = arrangementNodes({ reference: true }).length;
+          const movableCount = arrangementNodes().length;
+          document.querySelectorAll('[data-arrange-command]').forEach((button) => {
+            const command = button.dataset.arrangeCommand;
+            const alignment = ['left', 'center', 'right', 'top', 'middle', 'bottom'].includes(command);
+            button.disabled = (alignment ? count : movableCount) < (command.startsWith('distribute') ? 3 : 2);
+          });
+          const referenceLabel = document.querySelector('.arrangement-reference-label');
+          if (referenceLabel) referenceLabel.hidden = arrangementPreferences.reference !== 'primary';
+          refs.nodeLayer.querySelectorAll('[data-node-id]').forEach((element) => {
+            element.classList.toggle('arrangement-reference', arrangementPreferences.reference === 'primary' && ui.selectedNodeIds.size > 1 && element.dataset.nodeId === ui.selection?.id);
+          });
+        });
+        for (const [id, preference] of [['snapObjectsButton', 'snapObjects'], ['snapGridButton', 'snapGrid']]) {
+          document.getElementById(id).addEventListener('click', () => {
+            arrangementPreferences[preference] = !arrangementPreferences[preference];
+            saveArrangementPreferences();
+            renderControls();
+          });
+        }
+        document.getElementById('layoutCancelButton').addEventListener('click', () => {
+          cancelAutoLayout(); renderViewControls(); refs.canvas.focus({ preventScroll: true });
+        });
 
         refs.entityList.addEventListener('click', (event) => {
           const button = event.target.closest('[data-entity-type]');
@@ -6353,11 +6729,23 @@
           renderPalette();
         });
         refs.viewControls.addEventListener('change', (event) => {
+          if (['layoutDirectionField', 'layoutScopeField', 'layoutGapField'].includes(event.target.id)) {
+            const field = event.target;
+            if (field.id === 'layoutDirectionField' && ['LR', 'RL', 'TB', 'BT'].includes(field.value)) arrangementPreferences.direction = field.value;
+            if (field.id === 'layoutScopeField') arrangementPreferences.scope = field.value === 'selection' ? 'selection' : 'all';
+            if (field.id === 'layoutGapField') arrangementPreferences.layoutGap = Number.isFinite(field.valueAsNumber) ? clamp(field.valueAsNumber, 16, 300) : 48;
+            saveArrangementPreferences();
+            field.value = field.id === 'layoutGapField' ? arrangementPreferences.layoutGap : field.value;
+            if (field.id === 'layoutScopeField') {
+              document.getElementById('viewLayoutField').value = currentLayoutMode();
+              renderControls();
+            }
+            return;
+          }
           if (event.target.id === 'wheelInvertField' || event.target.id === 'canvasInputModeField') {
             if (event.target.id === 'wheelInvertField') wheelInverted = event.target.checked;
             else if (['trackpad', 'mouse'].includes(event.target.value)) canvasInputMode = event.target.value;
-            try { localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ ...inputPreferences, wheelInverted, canvasInputMode })); }
-            catch { toast('Не удалось сохранить настройки управления', 'error'); }
+            saveArrangementPreferences({ includeArrangement: false });
             return;
           }
           if (event.target.id === 'activeViewField') switchView(event.target.value);
@@ -6444,7 +6832,7 @@
           }
           if (ui.mode === 'hand' || ui.spacePressed) return;
           if (ui.mode === 'connect') handleConnectSelection(node.dataset.nodeId);
-          else selectNode(node.dataset.nodeId, false, event.metaKey || event.ctrlKey);
+          else selectNode(node.dataset.nodeId, false, event.metaKey || event.ctrlKey || ui.multiSelect);
         });
         refs.nodeLayer.addEventListener('keydown', (event) => {
           const node = event.target.closest('[data-node-id]');
@@ -6494,7 +6882,7 @@
             const source = nodeById(targetEdge.source);
             const target = nodeById(targetEdge.target);
             const seededPoints = !targetEdge.points.length && source && target
-              ? edgeGeometry(source, target, targetEdge).points.map((item) => ({ ...item }))
+              ? edgeGeometry(source, target, targetEdge).points.map((item) => ({ x: clamp(item.x, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE), y: clamp(item.y, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE) }))
               : null;
             if (event.key === 'Delete' || event.key === 'Backspace') {
               mutate('Удалена точка маршрута связи', () => {
@@ -6511,6 +6899,8 @@
               if (event.key === 'ArrowDown') targetEdge.points[pointIndex].y += step;
               if (event.key === 'ArrowLeft') targetEdge.points[pointIndex].x -= step;
               if (event.key === 'ArrowRight') targetEdge.points[pointIndex].x += step;
+              targetEdge.points[pointIndex].x = clamp(targetEdge.points[pointIndex].x, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE);
+              targetEdge.points[pointIndex].y = clamp(targetEdge.points[pointIndex].y, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE);
             });
             return;
           }
@@ -6555,16 +6945,23 @@
         });
         window.addEventListener('pointermove', handlePointerMove);
         window.addEventListener('pointerup', handlePointerUp);
-        window.addEventListener('pointercancel', cancelPointerAction);
+        window.addEventListener('pointercancel', (event) => {
+          if (ui.pointerAction?.pointerId === event.pointerId) cancelPointerAction();
+        });
+        refs.canvas.addEventListener('lostpointercapture', (event) => {
+          if (ui.pointerAction?.pointerId === event.pointerId) cancelPointerAction();
+        });
+        document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelPointerAction(); resetTouches(); } });
         refs.canvas.addEventListener('wheel', (event) => {
           event.preventDefault();
+          cancelPointerAction();
           // Safari gestures own pinch zoom; concurrent wheel events must not apply it twice.
           if (gestureStartScale !== null) return;
           const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? refs.canvas.clientHeight : 1;
           if (canvasInputMode === 'trackpad' && !event.ctrlKey && !event.shiftKey) {
             const horizontalUnit = event.deltaMode === 2 ? refs.canvas.clientWidth : unit;
-            graph.viewport.x -= event.deltaX * horizontalUnit;
-            graph.viewport.y -= event.deltaY * unit;
+            graph.viewport.x = clamp(graph.viewport.x - event.deltaX * horizontalUnit, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE);
+            graph.viewport.y = clamp(graph.viewport.y - event.deltaY * unit, -MAX_GRAPH_COORDINATE, MAX_GRAPH_COORDINATE);
             applyViewport();
             scheduleViewportSave();
             return;
@@ -6576,6 +6973,8 @@
         }, { passive: false });
         refs.canvas.addEventListener('gesturestart', (event) => {
           event.preventDefault();
+          if (multiTouchActive) return;
+          cancelPointerAction();
           const rect = refs.canvas.getBoundingClientRect();
           gestureStartScale = graph.viewport.scale;
           gestureAnchor = {
@@ -6595,6 +6994,8 @@
           gestureAnchor = null;
         }, { passive: false });
         window.addEventListener('blur', () => {
+          cancelPointerAction();
+          resetTouches();
           gestureStartScale = null;
           gestureAnchor = null;
         });
@@ -7039,6 +7440,9 @@
           if (innerWidth <= 620 && graph.viewport.scale < 0.78) setZoom(0.78);
         }
         if (storedWorkspaceResult.migrated) saveGraph();
+        document.querySelector('.app').removeAttribute('inert');
+        document.querySelector('.app').setAttribute('aria-busy', 'false');
+        refs.graphTitle.disabled = false;
         if (storedWorkspaceResult.status === 'invalid') document.getElementById('storageRecoveryDialog').showModal();
         refs.canvas.focus({ preventScroll: true });
         notifyHostReady();
