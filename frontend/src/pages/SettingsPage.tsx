@@ -7,6 +7,7 @@ import {
   Gauge,
   GripVertical,
   KeyRound,
+  Mail,
   PanelLeft,
   Plus,
   RotateCcw,
@@ -19,9 +20,10 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '@/api/client'
-import type { AuthenticatedUser } from '@/api/types'
+import type { AuthenticatedUser, EmailChangePending, EmailChangeRequest } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
+import { EmailChangeModal } from '@/components/EmailChangeModal'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { hasTaskWorkspaceAccess } from '@/lib/access'
 import {
@@ -50,11 +52,15 @@ function moveItem<T>(items: T[], from: number, to: number) {
 export function SettingsPage() {
   const { user, updateUser } = useAuth()
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
+  const [emailChangeOpen, setEmailChangeOpen] = useState(false)
+  const [pendingEmailChange, setPendingEmailChange] = useState<EmailChangeRequest | null>(null)
+  const [emailChangeBusy, setEmailChangeBusy] = useState(false)
   const [sidebarOrder, setSidebarOrder] = useState(() => normalizeSidebarOrder(user?.sidebar_menu_order))
   const [selectedButtonId, setSelectedButtonId] = useState(() => sidebarOrder.groups[0]?.id || '')
   const [savingMenu, setSavingMenu] = useState(false)
   const [dragPayload, setDragPayload] = useState<MenuDragPayload | null>(null)
   const canOpenDetailedProfile = hasTaskWorkspaceAccess(user)
+  const currentUserId = user?.id
 
   useEffect(() => {
     const nextOrder = normalizeSidebarOrder(user?.sidebar_menu_order)
@@ -63,6 +69,36 @@ export function SettingsPage() {
       nextOrder.groups.some((button) => button.id === current) ? current : nextOrder.groups[0]?.id || ''
     )
   }, [user?.sidebar_menu_order])
+
+  useEffect(() => {
+    if (!currentUserId) return
+    let active = true
+    api.get<EmailChangePending>('/api/auth/email-change')
+      .then((response) => {
+        if (active) setPendingEmailChange(response.request)
+      })
+      .catch(() => {
+        if (active) setPendingEmailChange(null)
+      })
+    return () => {
+      active = false
+    }
+  }, [currentUserId])
+
+  const cancelEmailChange = async () => {
+    if (!pendingEmailChange || emailChangeBusy) return
+    if (!window.confirm(`Отменить смену email на ${pendingEmailChange.new_email}?`)) return
+    setEmailChangeBusy(true)
+    try {
+      await api.post('/api/auth/email-change/cancel', {})
+      setPendingEmailChange(null)
+      toast.success('Запрос на смену email отменён')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось отменить запрос')
+    } finally {
+      setEmailChangeBusy(false)
+    }
+  }
 
   const baseAvailableNav = useMemo(() => {
     return visibleSidebarNav(user).filter((item) => item.section !== 'settings' && item.section !== 'admin')
@@ -304,18 +340,53 @@ export function SettingsPage() {
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Безопасность</p>
-              <h2 className="mt-1 font-semibold text-slate-900 dark:text-slate-100">Пароль</h2>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Обновление пароля учетной записи.</p>
+              <h2 className="mt-1 font-semibold text-slate-900 dark:text-slate-100">Доступ к аккаунту</h2>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Email-логин и пароль учетной записи.</p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setChangePasswordOpen(true)}
-            className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            <KeyRound className="h-4 w-4" />
-            Сменить пароль
-          </button>
+          <div className="mt-4 rounded-md border border-slate-200 px-3 py-2.5 dark:border-slate-700">
+            <div className="flex min-w-0 items-center gap-2">
+              <Mail className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+              <span className="truncate text-sm text-slate-700 dark:text-slate-200">{user?.email}</span>
+            </div>
+          </div>
+          {pendingEmailChange && (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 dark:border-amber-900/60 dark:bg-amber-950/30">
+              <p className="text-xs font-semibold uppercase text-amber-700 dark:text-amber-200">Ожидает подтверждения</p>
+              <p className="mt-1 truncate text-sm font-medium text-amber-950 dark:text-amber-100">
+                {pendingEmailChange.new_email}
+              </p>
+              <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">
+                До {new Date(pendingEmailChange.expires_at).toLocaleString('ru')}
+              </p>
+              <button
+                type="button"
+                onClick={cancelEmailChange}
+                disabled={emailChangeBusy}
+                className="mt-2 text-xs font-medium text-amber-800 underline underline-offset-2 disabled:opacity-50 dark:text-amber-100"
+              >
+                Отменить запрос
+              </button>
+            </div>
+          )}
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
+            <button
+              type="button"
+              onClick={() => setEmailChangeOpen(true)}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 py-2.5 text-sm font-medium text-primary hover:bg-primary/15"
+            >
+              <Mail className="h-4 w-4" />
+              Изменить email
+            </button>
+            <button
+              type="button"
+              onClick={() => setChangePasswordOpen(true)}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              <KeyRound className="h-4 w-4" />
+              Сменить пароль
+            </button>
+          </div>
         </section>
       </div>
 
@@ -664,6 +735,15 @@ export function SettingsPage() {
       <ChangePasswordModal
         open={changePasswordOpen}
         onClose={() => setChangePasswordOpen(false)}
+      />
+      <EmailChangeModal
+        currentEmail={user?.email || ''}
+        open={emailChangeOpen}
+        onClose={() => setEmailChangeOpen(false)}
+        onRequested={(request) => {
+          setPendingEmailChange(request)
+          toast.success('Запрос создан. Проверьте новый и текущий почтовые ящики')
+        }}
       />
     </div>
   )

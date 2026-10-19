@@ -65,6 +65,7 @@ step "Python syntax"
 run_backend_smoke smoke_messages.py --allow-compose-db
 run_backend_smoke smoke_email_outbox.py
 run_backend_smoke smoke_auth_session.py
+run_backend_smoke smoke_email_change.py
 run_backend_smoke smoke_admin_user_audit.py
 run_backend_smoke smoke_personal_task_execution_guard.py
 run_backend_smoke smoke_personal_task_artifacts.py
@@ -94,6 +95,9 @@ npm --prefix frontend run build
 if [[ "$PROFILE" == "full" ]]; then
   step "Messages browser matrix"
   npm --prefix frontend run test:messages
+
+  step "Account continuity browser matrix"
+  npm --prefix frontend run test:account-continuity
 
   step "Realtime notes browser matrix"
   npm --prefix frontend run test:realtime-notes

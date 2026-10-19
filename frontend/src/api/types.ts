@@ -127,7 +127,43 @@ export interface AdminUser extends AuthenticatedUser {
   temporary_password_expires_at: string | null
 }
 
-export type AdminUserAuditAction = 'created' | 'updated' | 'temporary_password_issued'
+export type EmailChangeKind = 'self' | 'admin_assisted'
+export type EmailChangeStatus = 'pending' | 'confirmed' | 'cancelled' | 'expired' | 'superseded'
+
+export interface EmailChangeRequest {
+  id: string
+  user_id: string
+  requested_by_id: string | null
+  request_kind: EmailChangeKind
+  old_email: string
+  new_email: string
+  status: EmailChangeStatus
+  reason: string | null
+  expires_at: string
+  confirmed_at: string | null
+  cancelled_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface EmailChangePending {
+  request: EmailChangeRequest | null
+}
+
+export interface EmailChangeActionResult {
+  message: string
+  reauth_required: boolean
+}
+
+export type AdminUserAuditAction =
+  | 'created'
+  | 'updated'
+  | 'temporary_password_issued'
+  | 'email_change_requested'
+  | 'email_change_confirmed'
+  | 'email_change_cancelled'
+  | 'email_change_expired'
+  | 'email_change_superseded'
 
 export interface AdminUserAuditChange {
   field: string
@@ -142,6 +178,7 @@ export interface AdminUserAuditEvent {
   target_user_id: string
   action: AdminUserAuditAction
   changes: AdminUserAuditChange[]
+  note: string | null
   sessions_revoked: boolean
   occurred_at: string
 }

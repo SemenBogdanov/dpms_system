@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.activity import ActivityEvent
+from app.models.email_change_request import EmailChangeRequest
 from app.models.user import User
 from app.schemas.user import (
     AdminUserAuditChangeRead,
@@ -22,10 +23,20 @@ from app.services.activity import record_activity_event
 USER_CREATED_EVENT = "authn_user_created"
 USER_UPDATED_EVENT = "admin_user_updated"
 TEMPORARY_PASSWORD_EVENT = "authn_temporary_password_issued"
+EMAIL_CHANGE_REQUESTED_EVENT = "authn_email_change_requested"
+EMAIL_CHANGE_CONFIRMED_EVENT = "authn_email_change_confirmed"
+EMAIL_CHANGE_CANCELLED_EVENT = "authn_email_change_cancelled"
+EMAIL_CHANGE_EXPIRED_EVENT = "authn_email_change_expired"
+EMAIL_CHANGE_SUPERSEDED_EVENT = "authn_email_change_superseded"
 ADMIN_USER_EVENT_TYPES = (
     USER_CREATED_EVENT,
     USER_UPDATED_EVENT,
     TEMPORARY_PASSWORD_EVENT,
+    EMAIL_CHANGE_REQUESTED_EVENT,
+    EMAIL_CHANGE_CONFIRMED_EVENT,
+    EMAIL_CHANGE_CANCELLED_EVENT,
+    EMAIL_CHANGE_EXPIRED_EVENT,
+    EMAIL_CHANGE_SUPERSEDED_EVENT,
 )
 
 AUDITED_USER_FIELDS = (
@@ -123,12 +134,81 @@ async def record_admin_user_audit_event(
     )
 
 
+async def record_email_change_audit_event(
+    db: AsyncSession,
+    *,
+    actor_id: UUID,
+    target: User,
+    request: EmailChangeRequest,
+    event_type: str,
+    sessions_revoked: bool = False,
+) -> ActivityEvent:
+    """Record email-change lifecycle metadata without action tokens or passwords."""
+    if event_type not in {
+        EMAIL_CHANGE_REQUESTED_EVENT,
+        EMAIL_CHANGE_CONFIRMED_EVENT,
+        EMAIL_CHANGE_CANCELLED_EVENT,
+        EMAIL_CHANGE_EXPIRED_EVENT,
+        EMAIL_CHANGE_SUPERSEDED_EVENT,
+    }:
+        raise ValueError("unsupported_email_change_audit_event")
+    changed_fields = ["email"] if event_type == EMAIL_CHANGE_CONFIRMED_EVENT else []
+    before = {"email": request.old_email} if changed_fields else {}
+    after = {"email": request.new_email} if changed_fields else {}
+    reason = (request.reason or "").strip()[:500] or None
+    return await record_activity_event(
+        db,
+        actor_id,
+        event_type,
+        metadata={
+            "schema_version": 1,
+            "target_user_id": target.id,
+            "target_user_name": target.full_name,
+            "changed_fields": changed_fields,
+            "before": before,
+            "after": after,
+            "sessions_revoked": sessions_revoked,
+            "email_change": {
+                "request_id": str(request.id),
+                "request_kind": request.request_kind,
+                "status": request.status,
+                "new_email": request.new_email,
+                "reason": reason,
+            },
+        },
+    )
+
+
 def _event_action(event_type: str) -> str:
     if event_type == USER_CREATED_EVENT:
         return "created"
     if event_type == TEMPORARY_PASSWORD_EVENT:
         return "temporary_password_issued"
+    if event_type == EMAIL_CHANGE_REQUESTED_EVENT:
+        return "email_change_requested"
+    if event_type == EMAIL_CHANGE_CONFIRMED_EVENT:
+        return "email_change_confirmed"
+    if event_type == EMAIL_CHANGE_CANCELLED_EVENT:
+        return "email_change_cancelled"
+    if event_type == EMAIL_CHANGE_EXPIRED_EVENT:
+        return "email_change_expired"
+    if event_type == EMAIL_CHANGE_SUPERSEDED_EVENT:
+        return "email_change_superseded"
     return "updated"
+
+
+def _event_note(event_type: str, metadata: dict[str, Any]) -> str | None:
+    if not event_type.startswith("authn_email_change_"):
+        return None
+    detail = metadata.get("email_change")
+    if not isinstance(detail, dict):
+        return None
+    new_email = str(detail.get("new_email") or "").strip()[:255]
+    reason = str(detail.get("reason") or "").strip()[:500]
+    parts = [f"Новый email: {new_email}" if new_email else ""]
+    if reason:
+        parts.append(f"Причина: {reason}")
+    return ". ".join(part for part in parts if part) or None
 
 
 async def list_admin_user_audit_history(
@@ -177,6 +257,7 @@ async def list_admin_user_audit_history(
                 target_user_id=target_user_id,
                 action=_event_action(event.event_type),
                 changes=changes,
+                note=_event_note(event.event_type, metadata),
                 sessions_revoked=metadata.get("sessions_revoked") is True,
                 occurred_at=event.occurred_at,
             )

@@ -13,6 +13,7 @@ import {
 import { reportClientEvent } from '@/lib/clientDiagnostics'
 import { LoginPage } from '@/pages/LoginPage'
 import { SetPasswordPage } from '@/pages/SetPasswordPage'
+import { EmailChangeActionPage } from '@/pages/EmailChangeActionPage'
 
 const CHUNK_RELOAD_WINDOW_MS = 45_000
 
@@ -157,6 +158,7 @@ function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/set-password" element={<SetPasswordPage />} />
+      <Route path="/email-change" element={<EmailChangeActionPage />} />
       <Route
         path="/"
         element={

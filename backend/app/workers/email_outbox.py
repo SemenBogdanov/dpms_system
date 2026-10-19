@@ -11,10 +11,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from email.message import EmailMessage
 from email.utils import formataddr
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from uuid import UUID
 
 from app.config import settings
+from app.core.security import create_email_change_token
 from app.database import AsyncSessionLocal
 from app.models.email_outbox import EmailOutbox
 from app.services.email_outbox import (
@@ -40,6 +41,7 @@ class EmailDelivery:
     event_count: int
     deep_link_url: str
     message_id: str
+    template_key: str = "message_received"
 
 
 class EmailProvider:
@@ -67,15 +69,37 @@ class SMTPEmailProvider(EmailProvider):
             raise EmailDeliveryError("smtp_tls_modes_conflict")
 
     def _message(self, delivery: EmailDelivery) -> EmailMessage:
-        sender = delivery.sender_name or "Сотрудник"
-        if delivery.event_count == 1:
-            subject = "Новое сообщение в Простосделал.рф"
-            lead = f"{sender} отправил(а) вам сообщение в системе Простосделал.рф."
+        if delivery.template_key == "email_change_verify":
+            subject = "Подтвердите новый email в Простосделал.рф"
+            body = (
+                "Для учетной записи Простосделал.рф запрошена смена email.\n\n"
+                f"Подтвердить новый адрес: {delivery.deep_link_url}\n\n"
+                "Если вы не запрашивали изменение, не подтверждайте его. "
+                "Дополнительно проверьте предупреждение на прежнем адресе."
+            )
+        elif delivery.template_key == "email_change_alert":
+            subject = "Запрошена смена email в Простосделал.рф"
+            body = (
+                "Для вашей учетной записи запрошена смена email.\n\n"
+                "Если это сделали не вы, отмените запрос по ссылке:\n"
+                f"{delivery.deep_link_url}\n\n"
+                "Если запрос ваш, дополнительных действий на прежнем адресе не требуется."
+            )
         else:
-            subject = "Новые сообщения в Простосделал.рф"
-            lead = (
-                f"{sender} отправил(а) вам новые сообщения "
-                f"({delivery.event_count}) в системе Простосделал.рф."
+            sender = delivery.sender_name or "Сотрудник"
+            if delivery.event_count == 1:
+                subject = "Новое сообщение в Простосделал.рф"
+                lead = f"{sender} отправил(а) вам сообщение в системе Простосделал.рф."
+            else:
+                subject = "Новые сообщения в Простосделал.рф"
+                lead = (
+                    f"{sender} отправил(а) вам новые сообщения "
+                    f"({delivery.event_count}) в системе Простосделал.рф."
+                )
+            body = (
+                f"{lead}\n\n"
+                f"Открыть переписку: {delivery.deep_link_url}\n\n"
+                "Текст сообщения не включен в email. Откройте систему, чтобы прочитать его."
             )
         message = EmailMessage()
         message["Subject"] = subject
@@ -84,11 +108,7 @@ class SMTPEmailProvider(EmailProvider):
         )
         message["To"] = delivery.recipient_email
         message["Message-ID"] = delivery.message_id
-        message.set_content(
-            f"{lead}\n\n"
-            f"Открыть переписку: {delivery.deep_link_url}\n\n"
-            "Текст сообщения не включен в email. Откройте систему, чтобы прочитать его."
-        )
+        message.set_content(body)
         return message
 
     def _send_sync(self, delivery: EmailDelivery) -> str:
@@ -156,12 +176,22 @@ def build_delivery(jobs: list[EmailOutbox]) -> EmailDelivery:
         raise EmailDeliveryError("public_app_url_invalid")
     if not first.deep_link_path.startswith("/") or first.deep_link_path.startswith("//"):
         raise EmailDeliveryError("deep_link_invalid")
+    deep_link_url = f"{base}{first.deep_link_path}"
+    if first.template_key in {"email_change_verify", "email_change_alert"}:
+        if len(jobs) != 1 or first.source_id is None:
+            raise EmailDeliveryError("email_change_source_invalid")
+        action = "confirm" if first.template_key == "email_change_verify" else "cancel"
+        token = create_email_change_token(first.source_id, action)
+        deep_link_url = f"{deep_link_url}#{urlencode({'action': action, 'token': token})}"
+    elif first.template_key != "message_received":
+        raise EmailDeliveryError("unsupported_email_template")
     return EmailDelivery(
         recipient_email=first.recipient_email,
         sender_name=jobs[-1].sender_name,
         event_count=len(jobs),
-        deep_link_url=f"{base}{first.deep_link_path}",
+        deep_link_url=deep_link_url,
         message_id=_message_id(first.id),
+        template_key=first.template_key,
     )
 
 

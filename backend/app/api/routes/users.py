@@ -18,6 +18,7 @@ from app.schemas.user import (
     UserRead,
     UserUpdate,
 )
+from app.schemas.email_change import EmailChangeAdminRequest, EmailChangeRequestRead
 from app.schemas.dashboard import UserProgress, RunRate
 from app.schemas.transaction import QTransactionRead
 from app.schemas.leagues import LeagueProgress
@@ -32,9 +33,20 @@ from app.services.user_admin_audit import (
     list_admin_user_audit_history,
     record_admin_user_audit_event,
 )
+from app.services.email_change import (
+    EmailChangeServiceError,
+    create_email_change_request,
+    ensure_email_change_delivery_available,
+    expire_stale_email_change_requests,
+    normalize_email,
+)
 
 router = APIRouter()
 TEMPORARY_PASSWORD_TTL = timedelta(days=7)
+
+
+def _raise_email_change_error(error: EmailChangeServiceError) -> None:
+    raise HTTPException(status_code=error.status_code, detail=error.detail) from error
 
 
 @router.get("", response_model=list[UserRead])
@@ -208,6 +220,46 @@ async def issue_temporary_password(
     return user
 
 
+@router.post("/{user_id}/email-change-request", response_model=EmailChangeRequestRead)
+async def request_user_email_change(
+    user_id: UUID,
+    body: EmailChangeAdminRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    """Initiate, but never confirm, an employee email-login change."""
+    if user_id == admin.id:
+        raise HTTPException(
+            status_code=400,
+            detail="Для собственной учетной записи используйте смену email в настройках",
+        )
+    try:
+        ensure_email_change_delivery_available()
+        normalized = normalize_email(str(body.new_email))
+        expired = await expire_stale_email_change_requests(
+            db,
+            user_id=user_id,
+            new_email=normalized,
+        )
+        if expired:
+            await db.commit()
+        target = (
+            await db.execute(select(User).where(User.id == user_id).with_for_update())
+        ).scalar_one_or_none()
+        if target is None:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+        return await create_email_change_request(
+            db,
+            target=target,
+            actor=admin,
+            new_email=normalized,
+            request_kind="admin_assisted",
+            reason=body.reason,
+        )
+    except EmailChangeServiceError as error:
+        _raise_email_change_error(error)
+
+
 @router.patch("/{user_id}", response_model=AdminUserRead)
 async def update_user(
     user_id: UUID,
@@ -224,13 +276,6 @@ async def update_user(
     revoke_sessions = False
     if body.full_name is not None:
         user.full_name = body.full_name
-    if body.email is not None:
-        email = str(body.email).strip().lower()
-        other = await db.execute(select(User).where(func.lower(User.email) == email, User.id != user_id))
-        if other.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="Пользователь с таким email уже существует")
-        revoke_sessions = revoke_sessions or email != user.email
-        user.email = email
     if body.role is not None:
         revoke_sessions = revoke_sessions or body.role != user.role
         user.role = body.role

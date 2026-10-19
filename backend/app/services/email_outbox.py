@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.email_outbox import EmailOutbox
+from app.models.email_change_request import EmailChangeRequest
 from app.models.user import User
 
 
@@ -115,6 +116,67 @@ async def enqueue_message_notification(
         available_at=current + timedelta(seconds=max(settings.EMAIL_MESSAGE_DELAY_SECONDS, 0)),
         coalesce_pending_group=True,
     )
+
+
+async def enqueue_email_change_notifications(
+    db: AsyncSession,
+    *,
+    request: EmailChangeRequest,
+    recipient: User,
+    now: datetime | None = None,
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """Queue verification to the new mailbox and a cancellation alert to the old one."""
+    current = now or utc_now()
+    verify_id = await enqueue_email_notification(
+        db,
+        idempotency_key=f"email-change:{request.id}:verify",
+        event_type="email.change.verify",
+        template_key="email_change_verify",
+        source_type="email_change_request",
+        source_id=request.id,
+        recipient_user_id=recipient.id,
+        recipient_email=request.new_email,
+        sender_name=None,
+        deep_link_path="/email-change",
+        available_at=current,
+    )
+    alert_id = await enqueue_email_notification(
+        db,
+        idempotency_key=f"email-change:{request.id}:alert",
+        event_type="email.change.alert",
+        template_key="email_change_alert",
+        source_type="email_change_request",
+        source_id=request.id,
+        recipient_user_id=recipient.id,
+        recipient_email=request.old_email,
+        sender_name=None,
+        deep_link_path="/email-change",
+        available_at=current,
+    )
+    return verify_id, alert_id
+
+
+async def suppress_email_change_notifications(
+    db: AsyncSession,
+    *,
+    request_id: uuid.UUID,
+    now: datetime | None = None,
+) -> int:
+    """Stop email-change jobs that have not yet been leased by a worker."""
+    result = await db.execute(
+        update(EmailOutbox)
+        .where(
+            EmailOutbox.source_type == "email_change_request",
+            EmailOutbox.source_id == request_id,
+            EmailOutbox.status == "pending",
+        )
+        .values(
+            status="failed",
+            last_error="source_inactive",
+            updated_at=now or utc_now(),
+        )
+    )
+    return int(result.rowcount or 0)
 
 
 async def claim_email_batch(
@@ -265,8 +327,9 @@ async def mark_email_group_failed(
 
 def group_claimed_emails(jobs: Iterable[EmailOutbox]) -> list[list[EmailOutbox]]:
     """Coalesce only jobs claimed together for one recipient and one destination."""
-    grouped: dict[tuple[str, str, str], list[EmailOutbox]] = {}
+    grouped: dict[tuple[str, str, str, str], list[EmailOutbox]] = {}
     for job in jobs:
-        key = (job.recipient_email, job.template_key, job.deep_link_path)
+        group_id = "messages" if job.template_key == "message_received" else str(job.id)
+        key = (job.recipient_email, job.template_key, job.deep_link_path, group_id)
         grouped.setdefault(key, []).append(job)
     return list(grouped.values())

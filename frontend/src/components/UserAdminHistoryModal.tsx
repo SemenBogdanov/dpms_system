@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { History, KeyRound, RefreshCw, UserPlus, X } from 'lucide-react'
+import { History, KeyRound, Mail, RefreshCw, UserPlus, X } from 'lucide-react'
 import { api } from '@/api/client'
 import type {
   AdminUser,
@@ -35,6 +35,11 @@ const ACTION_LABELS: Record<AdminUserAuditAction, string> = {
   created: 'Сотрудник создан',
   updated: 'Данные изменены',
   temporary_password_issued: 'Выдан временный пароль',
+  email_change_requested: 'Запрошена смена email',
+  email_change_confirmed: 'Новый email подтверждён',
+  email_change_cancelled: 'Смена email отменена',
+  email_change_expired: 'Срок смены email истёк',
+  email_change_superseded: 'Запрос смены email заменён',
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -75,6 +80,7 @@ function formatValue(field: string, value: unknown) {
 function actionIcon(action: AdminUserAuditAction) {
   if (action === 'created') return <UserPlus className="h-4 w-4" aria-hidden="true" />
   if (action === 'temporary_password_issued') return <KeyRound className="h-4 w-4" aria-hidden="true" />
+  if (action.startsWith('email_change_')) return <Mail className="h-4 w-4" aria-hidden="true" />
   return <History className="h-4 w-4" aria-hidden="true" />
 }
 
@@ -244,7 +250,7 @@ export function UserAdminHistoryModal({ user, open, onClose }: UserAdminHistoryM
                       </span>
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-slate-900">{ACTION_LABELS[event.action]}</p>
-                        <p className="truncate text-xs text-slate-500">Администратор: {event.actor_name}</p>
+                        <p className="truncate text-xs text-slate-500">Инициатор: {event.actor_name}</p>
                       </div>
                     </div>
                     <time className="text-xs text-slate-500" dateTime={event.occurred_at}>
@@ -257,6 +263,12 @@ export function UserAdminHistoryModal({ user, open, onClose }: UserAdminHistoryM
 
                   {event.sessions_revoked && (
                     <p className="mt-2 text-xs font-medium text-amber-700">Активные сессии сотрудника завершены</p>
+                  )}
+
+                  {event.note && (
+                    <p className="mt-2 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                      {event.note}
+                    </p>
                   )}
 
                   {event.changes.length > 0 && (

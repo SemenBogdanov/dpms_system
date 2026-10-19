@@ -180,14 +180,26 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
             maxLength={255}
           />
-          <label htmlFor="user-email" className="block text-sm font-medium text-slate-700">Email *</label>
+          <label htmlFor="user-email" className="block text-sm font-medium text-slate-700">Email-логин *</label>
           <input
             id="user-email"
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            onChange={(e) => {
+              if (mode === 'create') setEmail(e.target.value)
+            }}
+            readOnly={mode === 'edit'}
+            aria-readonly={mode === 'edit'}
+            className={cn(
+              'w-full rounded-md border border-slate-300 px-3 py-2 text-sm',
+              mode === 'edit' && 'cursor-not-allowed bg-slate-100 text-slate-500',
+            )}
           />
+          {mode === 'edit' && (
+            <p className="text-xs text-slate-500">
+              Логин изменяется отдельным подтверждаемым действием в списке сотрудников.
+            </p>
+          )}
           <label className="block text-sm font-medium text-slate-700">Роль</label>
           <select
             value={role}

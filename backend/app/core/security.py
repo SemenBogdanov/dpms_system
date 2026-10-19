@@ -5,6 +5,7 @@ SECRET_KEY из DPMS_SECRET_KEY, ALGORITHM HS256, ACCESS_TOKEN_EXPIRE_MINUTES 48
 """
 import re
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 from jose import jwt, JWTError
 from passlib.context import CryptContext
@@ -74,6 +75,7 @@ def validate_password_strength(password: str) -> list[str]:
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """Создать JWT. data должен содержать sub (user_id)."""
     to_encode = data.copy()
+    to_encode["typ"] = "access"
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
@@ -84,10 +86,51 @@ def create_access_token(data: dict, expires_delta: timedelta | None = None) -> s
 def decode_access_token(token: str) -> dict | None:
     """Декодировать JWT. Возвращает payload или None при ошибке."""
     try:
-        return jwt.decode(
+        payload = jwt.decode(
             token,
             settings.DPMS_SECRET_KEY,
             algorithms=[ALGORITHM],
         )
+        # Legacy access tokens have no typ claim. Purpose-bound action tokens do.
+        if payload.get("typ") not in {None, "access"}:
+            return None
+        return payload
     except JWTError:
+        return None
+
+
+def create_email_change_token(
+    request_id: UUID,
+    action: str,
+    *,
+    expires_delta: timedelta | None = None,
+) -> str:
+    """Create a purpose-bound token for one explicit email-change action."""
+    if action not in {"confirm", "cancel"}:
+        raise ValueError("unsupported_email_change_action")
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": str(request_id),
+        "typ": "email_change",
+        "act": action,
+        "iat": now,
+        "exp": now + (expires_delta or timedelta(hours=settings.EMAIL_CHANGE_TTL_HOURS)),
+    }
+    return jwt.encode(payload, settings.DPMS_SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_email_change_token(token: str, *, expected_action: str) -> UUID | None:
+    """Validate token purpose/action and return its request identifier."""
+    if expected_action not in {"confirm", "cancel"}:
+        return None
+    try:
+        payload = jwt.decode(
+            token,
+            settings.DPMS_SECRET_KEY,
+            algorithms=[ALGORITHM],
+        )
+        if payload.get("typ") != "email_change" or payload.get("act") != expected_action:
+            return None
+        return UUID(str(payload.get("sub")))
+    except (JWTError, TypeError, ValueError):
         return None

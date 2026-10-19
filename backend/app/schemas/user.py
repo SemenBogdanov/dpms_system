@@ -53,7 +53,6 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     """Обновление пользователя (частичное, admin)."""
     full_name: str | None = None
-    email: EmailStr | None = None
     role: UserRole | None = None
     league: League | None = None
     mpw: int | None = Field(None, ge=0)
@@ -64,6 +63,8 @@ class UserUpdate(BaseModel):
     feedback_enabled: bool | None = None
     competency_development_enabled: bool | None = None
     competency_constructor_enabled: bool | None = None
+
+    model_config = {"extra": "forbid"}
 
 
 class UserRead(UserBase):
@@ -106,7 +107,16 @@ class TemporaryPasswordRequest(BaseModel):
     temporary_password: str = Field(..., min_length=8, max_length=128)
 
 
-AdminUserAuditAction = Literal["created", "updated", "temporary_password_issued"]
+AdminUserAuditAction = Literal[
+    "created",
+    "updated",
+    "temporary_password_issued",
+    "email_change_requested",
+    "email_change_confirmed",
+    "email_change_cancelled",
+    "email_change_expired",
+    "email_change_superseded",
+]
 
 
 class AdminUserAuditChangeRead(BaseModel):
@@ -126,6 +136,7 @@ class AdminUserAuditEventRead(BaseModel):
     target_user_id: UUID
     action: AdminUserAuditAction
     changes: list[AdminUserAuditChangeRead]
+    note: str | None = None
     sessions_revoked: bool = False
     occurred_at: datetime
 

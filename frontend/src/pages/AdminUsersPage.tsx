@@ -5,9 +5,10 @@ import { useAuth } from '@/contexts/AuthContext'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { UserModal, type UserFormPayload } from '@/components/UserModal'
 import { UserAdminHistoryModal } from '@/components/UserAdminHistoryModal'
+import { AdminEmailChangeModal } from '@/components/AdminEmailChangeModal'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
-import { Copy, History, KeyRound, Pencil, Plus, RotateCcw, Trash2, UserPlus } from 'lucide-react'
+import { Copy, History, KeyRound, Mail, Pencil, Plus, RotateCcw, Trash2, UserPlus } from 'lucide-react'
 
 const MONTHS = [
   'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
@@ -118,6 +119,7 @@ export function AdminUsersPage() {
   const [temporaryPasswordUserId, setTemporaryPasswordUserId] = useState<string | null>(null)
   const [temporaryInviteText, setTemporaryInviteText] = useState('')
   const [historyUser, setHistoryUser] = useState<AdminUser | null>(null)
+  const [emailChangeUser, setEmailChangeUser] = useState<AdminUser | null>(null)
 
   const loadUsers = useCallback(() => {
     api.get<AdminUser[]>('/api/users/admin')
@@ -232,7 +234,6 @@ export function AdminUsersPage() {
     if (editingUser) {
       await api.patch(`/api/users/${editingUser.id}`, {
         full_name: payload.full_name,
-        email: payload.email,
         role: payload.role,
         league: payload.league,
         mpw: payload.mpw,
@@ -428,6 +429,17 @@ export function AdminUsersPage() {
       >
         <Pencil className="h-4 w-4" />
       </button>
+      {u.id !== currentUser?.id && (
+        <button
+          type="button"
+          onClick={() => setEmailChangeUser(u)}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700"
+          title="Изменить email с подтверждением"
+          aria-label={`Изменить email для ${u.full_name}`}
+        >
+          <Mail className="h-4 w-4" aria-hidden="true" />
+        </button>
+      )}
       {u.is_active && u.id !== currentUser?.id && (
         <button
           type="button"
@@ -827,6 +839,15 @@ export function AdminUsersPage() {
         open={userModalOpen}
         onClose={() => { setUserModalOpen(false); setEditingUser(null) }}
         onSubmit={handleUserSubmit}
+      />
+      <AdminEmailChangeModal
+        user={emailChangeUser}
+        open={emailChangeUser !== null}
+        onClose={() => setEmailChangeUser(null)}
+        onRequested={() => {
+          toast.success('Запрос создан: сотрудник должен подтвердить новый email')
+          loadUsers()
+        }}
       />
 
       <UserAdminHistoryModal

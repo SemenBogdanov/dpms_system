@@ -299,7 +299,7 @@ async def run() -> None:
             admin_token,
             {"email": observer_email},
         )
-        expect(status, 400, payload, "failed update is not audited")
+        expect(status, 422, payload, "direct email update is forbidden and not audited")
         status, failed_history = request(
             "GET",
             f"/api/users/{target_id}/admin-history",
