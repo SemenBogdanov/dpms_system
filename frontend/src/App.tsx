@@ -7,6 +7,7 @@ import { SkeletonCard } from '@/components/Skeleton'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   firstAvailablePath,
+  hasAuditAccess,
   hasDevelopmentAccess,
   hasFeedbackAccess,
   hasTaskWorkspaceAccess,
@@ -17,6 +18,7 @@ import { LoginPage } from '@/pages/LoginPage'
 import { PersonalTasksPage } from '@/pages/PersonalTasksPage'
 import { QuickNotesPage } from '@/pages/QuickNotesPage'
 import { SetPasswordPage } from '@/pages/SetPasswordPage'
+import { WorkTracksPage } from '@/pages/WorkTracksPage'
 
 function lazyPage<T extends ComponentType<object>>(loader: () => Promise<Record<string, T>>, exportName: string) {
   return lazy(async () => {
@@ -53,6 +55,7 @@ const CalculatorPage = lazyPage(() => import('@/pages/CalculatorPage'), 'Calcula
 const ProfilePage = lazyPage(() => import('@/pages/ProfilePage'), 'ProfilePage')
 const ShopPage = lazyPage(() => import('@/pages/ShopPage'), 'ShopPage')
 const AdminUsersPage = lazyPage(() => import('@/pages/AdminUsersPage'), 'AdminUsersPage')
+const AdminIntegrationsPage = lazyPage(() => import('@/pages/AdminIntegrationsPage'), 'AdminIntegrationsPage')
 const CatalogPage = lazyPage(() => import('@/pages/CatalogPage'), 'CatalogPage')
 const KnowledgePage = lazyPage(() => import('@/pages/KnowledgePage'), 'KnowledgePage')
 const AbsencesPage = lazyPage(() => import('@/pages/AbsencesPage'), 'AbsencesPage')
@@ -62,6 +65,7 @@ const ReportsPage = lazyPage(() => import('@/pages/ReportsPage'), 'ReportsPage')
 const FeedbackPage = lazyPage(() => import('@/pages/FeedbackPage'), 'FeedbackPage')
 const CompetenciesPage = lazyPage(() => import('@/pages/CompetenciesPage'), 'CompetenciesPage')
 const SettingsPage = lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage')
+const AuditPage = lazyPage(() => import('@/pages/AuditPage'), 'AuditPage')
 
 function DashboardRoute() {
   const { user } = useAuth()
@@ -112,6 +116,14 @@ function FeedbackAccessRoute({ children }: { children: ReactElement }) {
 function CompetenciesAccessRoute({ children }: { children: ReactElement }) {
   const { user } = useAuth()
   if (!hasDevelopmentAccess(user)) {
+    return <Navigate to={firstAvailablePath(user)} replace />
+  }
+  return children
+}
+
+function AuditAccessRoute({ children }: { children: ReactElement }) {
+  const { user } = useAuth()
+  if (!hasAuditAccess(user)) {
     return <Navigate to={firstAvailablePath(user)} replace />
   }
   return children
@@ -178,6 +190,8 @@ function App() {
         <Route path="quick-notes" element={<QuickNotesPage />} />
         <Route path="quick-notes/:noteId" element={<QuickNotesPage />} />
         <Route path="personal-tasks" element={<PersonalTasksPage />} />
+        <Route path="work-tracks" element={<TaskWorkspaceRoute><WorkTracksPage /></TaskWorkspaceRoute>} />
+        <Route path="audit" element={<AuditAccessRoute><AuditPage /></AuditAccessRoute>} />
         <Route path="deadline-trackers" element={<DeadlineTrackersPage />} />
         <Route path="shop" element={<TaskWorkspaceRoute><ShopPage /></TaskWorkspaceRoute>} />
         <Route
@@ -209,6 +223,14 @@ function App() {
           element={
             <AdminRoute>
               <AdminUsersPage />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path="admin/integrations"
+          element={
+            <AdminRoute>
+              <AdminIntegrationsPage />
             </AdminRoute>
           }
         />
