@@ -625,7 +625,7 @@ test('3.2 undo, redo, reload and switching views preserve exact arrangement and 
   expect(content(await active(page))).toEqual(content(after))
 })
 
-test('3.2 object snap uses six screen pixels at semantic/normal zoom; off and Alt bypass', async ({ page, openWorkspace }) => {
+test('3.2 object snap uses six screen pixels at semantic/normal zoom; off and Alt copy bypass', async ({ page, openWorkspace }) => {
   await openWorkspace([graph([node('a', 80, 80), node('b', 250, 120, { width: 180, height: 100, pinned: true })], { edges: [edge('a', 'b')] })])
   const frame = workspaceFrame(page)
   await expect(frame.locator('#snapObjectsButton')).toHaveAttribute('aria-pressed', 'true')
@@ -652,10 +652,16 @@ test('3.2 object snap uses six screen pixels at semantic/normal zoom; off and Al
         const to = await rect(target)
         await dragBy(page, source, to.x - from.x - distance, 0, alt)
         const shouldSnap = enabled && !alt && distance <= 6
-        await expect.poll(async () => Math.abs((await rect(source)).x - to.x)).toBeCloseTo(shouldSnap ? 0 : distance, 0)
+        const moved = alt ? frame.locator('#nodeLayer .graph-node.selected') : source
+        await expect.poll(async () => Math.abs((await rect(moved)).x - to.x)).toBeCloseTo(shouldSnap ? 0 : distance, 0)
         const after = await active(page)
         expect(after.nodes[1]).toEqual(before.nodes[1])
-        expectDataIntact(after, before)
+        if (alt) {
+          expect(after.nodes.slice(0, before.nodes.length)).toEqual(before.nodes)
+          expect(after.nodes).toHaveLength(before.nodes.length + 1)
+          expect(after.edges).toEqual(before.edges)
+          expect(after.groups).toEqual(before.groups)
+        } else expectDataIntact(after, before)
         await undoTo(page, before)
       })
     }

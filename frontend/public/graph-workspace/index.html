@@ -658,7 +658,8 @@
       pointer-events: none;
     }
 
-    .group-layer { z-index: 0; }
+    /* Headers and collapsed groups must remain above edge hit targets. */
+    .group-layer { z-index: auto; }
 
     .group-frame {
       position: absolute;
@@ -679,6 +680,7 @@
     .group-frame.collapsed {
       min-width: 0;
       min-height: 0;
+      z-index: 2;
     }
 
     .group-frame.context-muted,
@@ -689,6 +691,7 @@
 
     .group-header {
       position: absolute;
+      z-index: 2;
       top: -31px;
       left: -2px;
       display: inline-flex;
@@ -2143,7 +2146,7 @@
           <button id="railArrangeButton" class="tool-button" type="button" aria-label="Упорядочить и показать весь граф" title="Упорядочить и показать весь граф (Shift + 0)">
             <svg class="icon" aria-hidden="true"><use href="#i-layout"></use></svg>
           </button>
-          <button id="snapObjectsButton" class="tool-button active" type="button" aria-label="Привязка к элементам" aria-pressed="true" title="Привязка к элементам (Alt: временно отключить)">
+          <button id="snapObjectsButton" class="tool-button active" type="button" aria-label="Привязка к элементам" aria-pressed="true" title="Привязка к элементам">
             <svg class="icon" aria-hidden="true"><use href="./arrangement-icons.svg#magnet"></use></svg>
           </button>
           <button id="snapGridButton" class="tool-button" type="button" aria-label="Привязка к сетке" aria-pressed="false" title="Привязка к сетке 24 px">
@@ -2399,6 +2402,7 @@
     import { rectangleBounds, alignRectangles, distributeRectangles, gridRectangles, snapTranslation } from './arrangement-geometry.mjs';
     import { outlineLayout } from './outline-layout.mjs';
     import { findVacantPosition } from './insertion-geometry.mjs';
+    import { createDragCopies, translateDragCopies } from './drag-duplication.mjs';
     (() => {
       'use strict';
 
@@ -5141,6 +5145,13 @@
       function prepareDragSnapping(action) {
         cancelAutoLayout();
         clearTimeout(viewportSaveTimer);
+        if (!action.originalNodes) {
+          action.originalNodes = action.startNodes;
+          action.originalGroupId = action.groupId;
+          action.originalSelection = ui.selection && { ...ui.selection };
+          action.originalSelectedIds = [...ui.selectedNodeIds];
+          action.diagnostics = { ids: ui.diagnosticNodeIds && new Set(ui.diagnosticNodeIds), key: ui.diagnosticKey, label: ui.diagnosticLabel };
+        }
         action.graphId = graph.id;
         action.viewId = graph.activeViewId;
         const movingIds = new Set(action.startNodes.map((node) => node.id));
@@ -5163,6 +5174,68 @@
           && x + item.x * scale <= refs.canvas.clientWidth && y + item.y * scale <= refs.canvas.clientHeight);
       }
 
+      function restoreDragUi(action, beforeGesture = false) {
+        if (!action.originalNodes) return;
+        const selection = beforeGesture ? action.selectionBeforeDrag.selection : action.originalSelection;
+        ui.selectedNodeIds = new Set(beforeGesture ? action.selectionBeforeDrag.ids : action.originalSelectedIds);
+        ui.selection = selection && { ...selection };
+        ui.diagnosticNodeIds = action.diagnostics.ids && new Set(action.diagnostics.ids);
+        ui.diagnosticKey = action.diagnostics.key;
+        ui.diagnosticLabel = action.diagnostics.label;
+        pruneSelection();
+      }
+
+      function setDragCopyMode(action, copying) {
+        if (Boolean(action.copying) === copying) return true;
+        if (copying && !action.copies) {
+          const ids = new Set(action.originalNodes.map((node) => node.id));
+          const edges = action.before.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target));
+          if (!ensureGraphCapacity(ids.size, edges.length)) {
+            cancelPointerAction();
+            return false;
+          }
+          if (action.originalGroupId && graph.groups.length >= 300) {
+            toast('В одном графе может быть не более 300 групп.', 'error');
+            cancelPointerAction();
+            return false;
+          }
+          action.copies = createDragCopies(action.before, ids, action.originalGroupId, uid);
+        }
+        restoreSnapshot(action.before);
+        action.copying = copying;
+        action.startNodes = action.originalNodes;
+        action.groupId = action.originalGroupId;
+        restoreDragUi(action);
+        if (copying) {
+          const copies = action.copies;
+          translateDragCopies(copies, 0, 0, MAX_GRAPH_COORDINATE);
+          graph.nodes.push(...copies.nodes);
+          graph.edges.push(...copies.edges);
+          graph.groups.push(...copies.groups);
+          copies.views.forEach((view) => Object.assign(graph.views.find((item) => item.id === view.id).positions, view.positions));
+          action.startNodes = copies.nodes.map((node) => ({ id: node.id, x: node.x, y: node.y }));
+          action.groupId = copies.groups[0]?.id;
+          ui.selectedNodeIds = new Set(action.kind === 'node-drag' ? copies.nodes.map((node) => node.id) : []);
+          ui.selection = action.kind === 'group-drag' ? { kind: 'group', id: action.groupId }
+            : { kind: 'node', id: copies.nodeMap.get(action.nodeId) };
+        }
+        action.displayMetrics = degreeMetrics();
+        prepareDragSnapping(action);
+        renderNodes();
+        renderGroups();
+        renderInspector();
+        renderControls();
+        action.startNodes.forEach(({ id }) => refs.nodeLayer.querySelector(`[data-node-id="${CSS.escape(id)}"]`)?.classList.add('dragging'));
+        return true;
+      }
+
+      function updateDragModifier(event, altKey = event.altKey) {
+        const action = ui.pointerAction;
+        if (!action?.activated || !action.lastDragEvent) return false;
+        handlePointerMove({ ...action.lastDragEvent, altKey, shiftKey: event.shiftKey });
+        return true;
+      }
+
       function cancelPointerAction() {
         const action = ui.pointerAction;
         if (!action) return false;
@@ -5177,6 +5250,7 @@
         if (edgeRenderFrame) cancelAnimationFrame(edgeRenderFrame);
         edgeRenderFrame = 0;
         if (['node-drag', 'group-drag', 'node-resize', 'edge-point'].includes(action.kind) && (!action.graphId || action.graphId === graph.id && action.viewId === graph.activeViewId)) restoreSnapshot(action.before);
+        if (action.graphId === graph.id && action.viewId === graph.activeViewId) restoreDragUi(action, true);
         if (action.kind === 'marquee') {
           ui.selectedNodeIds = new Set(action.previousIds);
           const primaryId = [...ui.selectedNodeIds].at(-1);
@@ -5246,6 +5320,7 @@
           updateEdgePreview();
           return;
         }
+        const selectionBeforeDrag = { selection: ui.selection && { ...ui.selection }, ids: [...ui.selectedNodeIds] };
         if (!ui.selectedNodeIds.has(id)) setSingleNodeSelection(id);
         else ui.selection = { kind: 'node', id };
         const movingNodes = selectedNodes();
@@ -5253,6 +5328,7 @@
           kind: 'node-drag',
           pointerId: event.pointerId,
           nodeId: id,
+          selectionBeforeDrag,
           startClient: { x: event.clientX, y: event.clientY },
           startNodes: movingNodes.map((item) => ({ id: item.id, x: item.x, y: item.y })),
           displayMetrics: degreeMetrics(),
@@ -5283,6 +5359,7 @@
         if (!group) return;
         event.preventDefault();
         event.stopPropagation();
+        const selectionBeforeDrag = { selection: ui.selection && { ...ui.selection }, ids: [...ui.selectedNodeIds] };
         ui.selectedNodeIds.clear();
         ui.selection = { kind: 'group', id: group.id };
         const members = group.nodeIds.map(nodeById).filter(Boolean);
@@ -5290,6 +5367,7 @@
           kind: 'group-drag',
           pointerId: event.pointerId,
           groupId: group.id,
+          selectionBeforeDrag,
           startClient: { x: event.clientX, y: event.clientY },
           startNodes: members.map((node) => ({ id: node.id, x: node.x, y: node.y })),
           displayMetrics: degreeMetrics(),
@@ -5446,14 +5524,17 @@
           const screenDistance = Math.hypot(event.clientX - action.startClient.x, event.clientY - action.startClient.y);
           if (!action.activated && screenDistance < 3) return;
           action.activated = true;
+          action.lastDragEvent = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, altKey: event.altKey, shiftKey: event.shiftKey };
+          if (!setDragCopyMode(action, Boolean(event.altKey))) return;
           const delta = { x: (event.clientX - action.startClient.x) / graph.viewport.scale, y: (event.clientY - action.startClient.y) / graph.viewport.scale };
           const axis = event.shiftKey ? (Math.abs(delta.x) >= Math.abs(delta.y) ? 'x' : 'y') : null;
           const snapped = snapTranslation(action.movingRects, action.stationaryRects, delta, {
             scale: graph.viewport.scale, tolerance: 6, snapToObjects: arrangementPreferences.snapObjects && !event.altKey,
             snapToGrid: arrangementPreferences.snapGrid && !event.altKey, gridSize: 24, axis
           });
-          const dx = clamp(snapped.dx, -MAX_GRAPH_COORDINATE - Math.min(...action.startNodes.map((node) => node.x)), MAX_GRAPH_COORDINATE - Math.max(...action.startNodes.map((node) => node.x)));
-          const dy = clamp(snapped.dy, -MAX_GRAPH_COORDINATE - Math.min(...action.startNodes.map((node) => node.y)), MAX_GRAPH_COORDINATE - Math.max(...action.startNodes.map((node) => node.y)));
+          let dx = clamp(snapped.dx, -MAX_GRAPH_COORDINATE - Math.min(...action.startNodes.map((node) => node.x)), MAX_GRAPH_COORDINATE - Math.max(...action.startNodes.map((node) => node.x)));
+          let dy = clamp(snapped.dy, -MAX_GRAPH_COORDINATE - Math.min(...action.startNodes.map((node) => node.y)), MAX_GRAPH_COORDINATE - Math.max(...action.startNodes.map((node) => node.y)));
+          if (action.copying) ({ dx, dy } = translateDragCopies(action.copies, dx, dy, MAX_GRAPH_COORDINATE));
           renderSnapGuides(dx === snapped.dx && dy === snapped.dy ? snapped.guides : []);
           action.startNodes.forEach((startNode) => {
             const node = nodeById(startNode.id);
@@ -5521,6 +5602,10 @@
       function handlePointerUp(event) {
         const action = ui.pointerAction;
         if (!action || action.pointerId !== event.pointerId) return;
+        if (action.activated && action.lastDragEvent) {
+          handlePointerMove(event);
+          if (ui.pointerAction !== action) return;
+        }
         ui.pointerAction = null;
         clearSnapGuides();
         refs.canvas.classList.remove('panning');
@@ -5554,7 +5639,13 @@
               setTimeout(() => { ui.suppressGroupClick = false; }, 80);
             }
             const count = action.startNodes.length;
-            commitInteractiveMutation(action.kind === 'group-drag' ? `Перемещена группа: ${count} элементов` : count > 1 ? `Перемещено элементов: ${count}` : 'Перемещён элемент', action.before);
+            const label = action.copying
+              ? action.kind === 'group-drag' ? `Скопирована группа: ${count} элементов` : count > 1 ? `Скопировано элементов: ${count}` : 'Скопирован элемент'
+              : action.kind === 'group-drag' ? `Перемещена группа: ${count} элементов` : count > 1 ? `Перемещено элементов: ${count}` : 'Перемещён элемент';
+            if (!commitInteractiveMutation(label, action.before)) {
+              restoreDragUi(action, true);
+              render();
+            }
           }
           else render();
           return;
@@ -6434,6 +6525,10 @@
 
       function handleKeyDown(event) {
         ui.pressedCodes.add(event.code);
+        if (['Alt', 'Shift'].includes(event.key) && updateDragModifier(event, event.key === 'Alt' || event.altKey)) {
+          event.preventDefault();
+          return;
+        }
         if (event.key === 'Escape' && layoutJob) {
           event.preventDefault(); cancelAutoLayout(); renderViewControls(); return;
         }
@@ -7393,6 +7488,7 @@
         window.addEventListener('keydown', handleKeyDown);
         window.addEventListener('keyup', (event) => {
           ui.pressedCodes.delete(event.code);
+          if (['Alt', 'Shift'].includes(event.key)) updateDragModifier(event, event.key === 'Alt' ? false : event.altKey);
           if (event.code === 'Space') {
             ui.spacePressed = false;
             if (ui.mode !== 'hand') refs.canvas.classList.remove('mode-hand');
