@@ -14,6 +14,11 @@ export default {
         foreground: 'hsl(var(--foreground))',
         primary: { DEFAULT: 'hsl(var(--primary))', foreground: 'hsl(var(--primary-foreground))' },
         muted: { DEFAULT: 'hsl(var(--muted))', foreground: 'hsl(var(--muted-foreground))' },
+        surface: {
+          DEFAULT: 'hsl(var(--surface))',
+          soft: 'hsl(var(--surface-soft))',
+          muted: 'hsl(var(--surface-muted))',
+        },
         accent: {
           DEFAULT: '#93AFF8',
           light: '#B8CBF9',

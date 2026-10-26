@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "eslint .",
+    "lint": "eslint . && npm run smoke:navigation",
+    "smoke:navigation": "node scripts/check-navigation.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

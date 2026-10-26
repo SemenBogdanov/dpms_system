@@ -44,6 +44,7 @@ class User(Base):
     is_new_employee: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     task_workspace_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     feedback_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    audit_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     competency_development_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     competency_constructor_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     plan_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -12,9 +12,14 @@ export function hasFeedbackAccess(user: User | null | undefined) {
   return Boolean(user?.feedback_enabled)
 }
 
+export function hasAuditAccess(user: User | null | undefined) {
+  return user?.role === 'admin' || Boolean(user?.audit_enabled)
+}
+
 export function firstAvailablePath(user: User | null | undefined) {
   if (!user) return '/login'
   if (hasTaskWorkspaceAccess(user)) return user.role === 'executor' ? '/my-tasks' : '/'
+  if (hasAuditAccess(user)) return '/audit'
   if (hasDevelopmentAccess(user)) return '/competencies'
   if (hasFeedbackAccess(user)) return '/feedback'
   if (user.role === 'admin') return '/admin/users'

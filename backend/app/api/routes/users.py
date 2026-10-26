@@ -82,6 +82,7 @@ async def create_user(
         is_new_employee=body.is_new_employee,
         task_workspace_enabled=body.task_workspace_enabled,
         feedback_enabled=body.feedback_enabled,
+        audit_enabled=body.audit_enabled,
         competency_development_enabled=body.competency_development_enabled,
         competency_constructor_enabled=body.competency_constructor_enabled,
         plan_started_at=now,
@@ -125,6 +126,8 @@ async def update_user(
         user.is_active = body.is_active
     if body.feedback_enabled is not None:
         user.feedback_enabled = body.feedback_enabled
+    if body.audit_enabled is not None:
+        user.audit_enabled = body.audit_enabled
     if body.competency_development_enabled is not None:
         user.competency_development_enabled = body.competency_development_enabled
     if body.competency_constructor_enabled is not None:

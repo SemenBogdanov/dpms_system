@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '@/api/client'
-import type { User, PeriodHistoryItem, LeagueEvaluation, LeagueChange, RolloverResponse } from '@/api/types'
+import type { User, PeriodHistoryItem, LeagueEvaluation, LeagueChange, RolloverResponse, WorkMethodology } from '@/api/types'
 import { useAuth } from '@/contexts/AuthContext'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { UserModal, type UserFormPayload } from '@/components/UserModal'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
-import { Copy, Pencil, Plus, RotateCcw, Trash2, UserPlus } from 'lucide-react'
+import { CheckCircle2, Copy, FileJson, Pencil, PlugZap, Plus, RotateCcw, Trash2, Upload, UserPlus, Users } from 'lucide-react'
 
 const MONTHS = [
   'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
@@ -113,6 +114,8 @@ export function AdminUsersPage() {
   const [quickInviteBusy, setQuickInviteBusy] = useState(false)
   const [quickInviteError, setQuickInviteError] = useState<string | null>(null)
   const [quickInviteText, setQuickInviteText] = useState('')
+  const [methodologies, setMethodologies] = useState<WorkMethodology[]>([])
+  const [methodologyBusy, setMethodologyBusy] = useState(false)
 
   const loadUsers = useCallback(() => {
     api.get<User[]>('/api/users')
@@ -125,6 +128,16 @@ export function AdminUsersPage() {
     api.get<PeriodHistoryItem[]>('/api/admin/period-history').then(setPeriodHistory).catch(() => setPeriodHistory([]))
   }, [])
 
+  const loadMethodologies = useCallback(() => {
+    api
+      .get<WorkMethodology[]>('/api/work-tracks/methodologies')
+      .then(setMethodologies)
+      .catch((e) => {
+        toast.error(e instanceof Error ? e.message : 'Ошибка загрузки методологий')
+        setMethodologies([])
+      })
+  }, [])
+
   useEffect(() => {
     loadUsers()
   }, [loadUsers])
@@ -132,6 +145,10 @@ export function AdminUsersPage() {
   useEffect(() => {
     loadHistory()
   }, [loadHistory])
+
+  useEffect(() => {
+    if (currentUser?.role === 'admin') loadMethodologies()
+  }, [currentUser?.role, loadMethodologies])
 
   const now = new Date()
   const currentPeriodLabel = `${MONTHS[now.getMonth()]} ${now.getFullYear()}`
@@ -249,6 +266,7 @@ export function AdminUsersPage() {
         is_new_employee: payload.is_new_employee,
         task_workspace_enabled: payload.task_workspace_enabled,
         feedback_enabled: payload.feedback_enabled,
+        audit_enabled: payload.audit_enabled,
         competency_development_enabled: payload.competency_development_enabled,
         competency_constructor_enabled: payload.competency_constructor_enabled,
       })
@@ -263,6 +281,7 @@ export function AdminUsersPage() {
         is_new_employee: payload.is_new_employee,
         task_workspace_enabled: payload.task_workspace_enabled,
         feedback_enabled: payload.feedback_enabled,
+        audit_enabled: payload.audit_enabled,
         competency_development_enabled: payload.competency_development_enabled,
         competency_constructor_enabled: payload.competency_constructor_enabled,
         password: payload.password,
@@ -316,6 +335,7 @@ export function AdminUsersPage() {
           is_new_employee: false,
           task_workspace_enabled: false,
           feedback_enabled: false,
+          audit_enabled: false,
           competency_development_enabled: true,
           competency_constructor_enabled: false,
           password,
@@ -337,6 +357,38 @@ export function AdminUsersPage() {
       setQuickInviteError(message)
     } finally {
       setQuickInviteBusy(false)
+    }
+  }
+
+  const handleMethodologyImport = async (file: File | null) => {
+    if (!file) return
+    setMethodologyBusy(true)
+    try {
+      const text = await file.text()
+      const payload = JSON.parse(text) as Record<string, unknown>
+      const imported = await api.post<WorkMethodology>('/api/work-tracks/methodologies/import', {
+        payload,
+        source_kind: 'kubiki_json',
+      })
+      toast.success(`Методология импортирована: ${imported.display_version || imported.methodology_version || imported.title}`)
+      loadMethodologies()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Не удалось импортировать методологию')
+    } finally {
+      setMethodologyBusy(false)
+    }
+  }
+
+  const handleMethodologyActivate = async (methodology: WorkMethodology) => {
+    setMethodologyBusy(true)
+    try {
+      await api.post<WorkMethodology>(`/api/work-tracks/methodologies/${methodology.id}/activate`, {})
+      toast.success('Активная методология обновлена')
+      loadMethodologies()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Не удалось выбрать методологию')
+    } finally {
+      setMethodologyBusy(false)
     }
   }
 
@@ -379,6 +431,9 @@ export function AdminUsersPage() {
       </span>
       <span className={accessBadgeClass(u.feedback_enabled, 'bg-emerald-50 text-emerald-700')}>
         ОС: {u.feedback_enabled ? 'вкл' : 'выкл'}
+      </span>
+      <span className={accessBadgeClass(u.audit_enabled, 'bg-amber-50 text-amber-700')}>
+        Аудит: {u.audit_enabled ? 'вкл' : 'выкл'}
       </span>
       <span className={accessBadgeClass(u.competency_development_enabled, 'bg-blue-50 text-blue-700')}>
         Развитие: {u.competency_development_enabled ? 'вкл' : 'выкл'}
@@ -429,7 +484,20 @@ export function AdminUsersPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold text-slate-900">Сотрудники</h1>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-primary">Администрирование</p>
+          <h1 className="mt-1 text-2xl font-semibold text-slate-900">Сотрудники</h1>
+        </div>
+        <nav className="flex items-center rounded-md border border-slate-200 bg-white p-1" aria-label="Разделы администрирования">
+          <span className="inline-flex min-h-10 items-center gap-2 rounded bg-primary px-3 text-sm font-medium text-primary-foreground">
+            <Users className="h-4 w-4" />Сотрудники
+          </span>
+          <Link to="/admin/integrations" className="inline-flex min-h-10 items-center gap-2 rounded px-3 text-sm font-medium text-slate-500 hover:bg-slate-100 hover:text-slate-900">
+            <PlugZap className="h-4 w-4" />Интеграции
+          </Link>
+        </nav>
+      </header>
 
       {/* Управление сотрудниками */}
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -510,6 +578,7 @@ export function AdminUsersPage() {
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Статус</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Задачи</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">ОС</th>
+                <th className="px-4 py-3 text-left font-medium text-slate-600">Аудит</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Развитие</th>
                 <th className="px-4 py-3 text-left font-medium text-slate-600">Действия</th>
               </tr>
@@ -577,6 +646,11 @@ export function AdminUsersPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
+                    <span className={accessBadgeClass(u.audit_enabled, 'bg-amber-50 text-amber-700')}>
+                      {u.audit_enabled ? 'Вкл' : 'Выкл'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1">
                       {u.competency_development_enabled ? (
                         <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">Доступ</span>
@@ -597,6 +671,87 @@ export function AdminUsersPage() {
           </table>
         </div>
       </section>
+
+      {currentUser?.role === 'admin' && (
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <FileJson className="h-5 w-5 text-slate-500" />
+                <h2 className="font-medium text-slate-800">Методология проектного управления</h2>
+              </div>
+              <p className="mt-1 max-w-3xl text-sm text-slate-600">
+                Новые версии методологии импортируются здесь. Треки используют только активную версию, выбранную администратором.
+              </p>
+            </div>
+            <label className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 text-sm font-medium text-primary transition hover:bg-primary/15">
+              <Upload className="h-4 w-4" />
+              Импорт новой версии
+              <input
+                type="file"
+                accept="application/json,.json"
+                className="sr-only"
+                disabled={methodologyBusy}
+                onChange={(event) => {
+                  void handleMethodologyImport(event.target.files?.[0] || null)
+                  event.currentTarget.value = ''
+                }}
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 grid gap-3">
+            {methodologies.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-5 text-sm text-slate-500">
+                Методологии пока не импортированы. Импортируйте JSON, затем выберите активную версию.
+              </div>
+            ) : (
+              methodologies.map((methodology) => (
+                <article
+                  key={methodology.id}
+                  className={cn(
+                    'rounded-lg border p-3',
+                    methodology.is_active ? 'border-primary bg-primary/5' : 'border-slate-200 bg-slate-50/70'
+                  )}
+                >
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="font-medium text-slate-900">{methodology.title}</h3>
+                        {methodology.is_active && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            Активна
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {methodology.display_version || methodology.methodology_version || 'без версии'} · кубиков: {methodology.cubes_count} · маршрутов: {methodology.routes_count} · продуктов: {methodology.products_count}
+                      </p>
+                      {methodology.description && (
+                        <p className="mt-2 line-clamp-2 text-sm text-slate-600">{methodology.description}</p>
+                      )}
+                      {methodology.activated_at && (
+                        <p className="mt-2 text-xs text-slate-500">
+                          Выбрана: {new Date(methodology.activated_at).toLocaleString('ru')}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleMethodologyActivate(methodology)}
+                      disabled={methodologyBusy || methodology.is_active}
+                      className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {methodology.is_active ? 'Выбрана' : 'Сделать активной'}
+                    </button>
+                  </div>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+      )}
 
       <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">

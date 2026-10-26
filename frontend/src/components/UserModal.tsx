@@ -11,6 +11,7 @@ export type UserFormPayload = {
   is_new_employee: boolean
   task_workspace_enabled: boolean
   feedback_enabled: boolean
+  audit_enabled: boolean
   competency_development_enabled: boolean
   competency_constructor_enabled: boolean
   password?: string
@@ -43,6 +44,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
   const [isNewEmployee, setIsNewEmployee] = useState(false)
   const [taskWorkspaceEnabled, setTaskWorkspaceEnabled] = useState(false)
   const [feedbackEnabled, setFeedbackEnabled] = useState(false)
+  const [auditEnabled, setAuditEnabled] = useState(false)
   const [competencyDevelopmentEnabled, setCompetencyDevelopmentEnabled] = useState(true)
   const [competencyConstructorEnabled, setCompetencyConstructorEnabled] = useState(false)
   const [password, setPassword] = useState('')
@@ -61,6 +63,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setIsNewEmployee(Boolean(initial.is_new_employee))
       setTaskWorkspaceEnabled(Boolean(initial.task_workspace_enabled))
       setFeedbackEnabled(Boolean(initial.feedback_enabled))
+      setAuditEnabled(Boolean(initial.audit_enabled))
       setCompetencyDevelopmentEnabled(Boolean(initial.competency_development_enabled))
       setCompetencyConstructorEnabled(Boolean(initial.competency_constructor_enabled))
       setPassword('')
@@ -73,6 +76,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
       setIsNewEmployee(false)
       setTaskWorkspaceEnabled(false)
       setFeedbackEnabled(false)
+      setAuditEnabled(false)
       setCompetencyDevelopmentEnabled(true)
       setCompetencyConstructorEnabled(false)
       setPassword('')
@@ -124,6 +128,7 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
         is_new_employee: isNewEmployee,
         task_workspace_enabled: taskWorkspaceEnabled,
         feedback_enabled: feedbackEnabled,
+        audit_enabled: auditEnabled,
         competency_development_enabled: competencyDevelopmentEnabled,
         competency_constructor_enabled: competencyConstructorEnabled,
         ...(mode === 'create' ? { password } : undefined),
@@ -258,6 +263,18 @@ export function UserModal({ mode, initial, open, onClose, onSubmit }: UserModalP
                 <span>
                   <span className="block font-medium text-slate-800">Обратная связь</span>
                   <span className="block text-xs text-slate-500">Создание и рассмотрение обращений по системе.</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-3 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={auditEnabled}
+                  onChange={(e) => setAuditEnabled(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-slate-300"
+                />
+                <span>
+                  <span className="block font-medium text-slate-800">Аудит</span>
+                  <span className="block text-xs text-slate-500">Реестр договоров и атомизация элементов цифровых продуктов.</span>
                 </span>
               </label>
             </div>

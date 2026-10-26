@@ -9,9 +9,11 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
-from app.api.routes import absences, activity, admin, auth, calculator, catalog, client_events, competencies, contacts, dashboard, deadline_trackers, feedback, knowledge, notifications, personal_tasks, queue, quick_notes, reports, shop, tasks, users
+from app.api.routes import absences, activity, admin, ai_provider, audit, audit_synology, auth, calculator, catalog, client_events, competencies, contacts, dashboard, deadline_trackers, feedback, knowledge, notifications, personal_tasks, queue, quick_notes, reports, shop, tasks, users, work_tracks
 from app.database import AsyncSessionLocal
 from app.services.competencies import ensure_builtin_competencies
+from app.services.audit_documents import reconcile_staged_audit_documents
+from app.services.audit_synology import synology_session_store
 
 
 @asynccontextmanager
@@ -19,9 +21,10 @@ async def lifespan(app: FastAPI):
     """Жизненный цикл приложения (при необходимости — инициализация)."""
     async with AsyncSessionLocal() as session:
         await ensure_builtin_competencies(session)
+        await reconcile_staged_audit_documents(session)
         await session.commit()
     yield
-    # shutdown при необходимости
+    await synology_session_store.close_all()
 
 
 limiter = Limiter(key_func=get_remote_address)
@@ -67,6 +70,10 @@ app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"])
 app.include_router(quick_notes.router, prefix="/api/quick-notes", tags=["quick-notes"])
 app.include_router(personal_tasks.router, prefix="/api/personal-tasks", tags=["personal-tasks"])
 app.include_router(deadline_trackers.router, prefix="/api/deadline-trackers", tags=["deadline-trackers"])
+app.include_router(work_tracks.router, prefix="/api/work-tracks", tags=["work-tracks"])
+app.include_router(audit.router, prefix="/api/audit", tags=["audit"])
+app.include_router(audit_synology.router, prefix="/api/audit/synology", tags=["audit-synology"])
+app.include_router(ai_provider.router, prefix="/api/admin/integrations/ai", tags=["admin-ai-provider"])
 app.include_router(competencies.router, prefix="/api/competencies", tags=["competencies"])
 app.include_router(calculator.router, prefix="/api/calculator", tags=["calculator"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])

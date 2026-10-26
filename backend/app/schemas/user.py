@@ -20,6 +20,7 @@ class UserBase(BaseModel):
     is_new_employee: bool = False
     task_workspace_enabled: bool = False
     feedback_enabled: bool = False
+    audit_enabled: bool = False
     competency_development_enabled: bool = True
     competency_constructor_enabled: bool = False
     is_active: bool = True
@@ -36,6 +37,7 @@ class UserCreate(BaseModel):
     is_new_employee: bool = False
     task_workspace_enabled: bool = False
     feedback_enabled: bool = False
+    audit_enabled: bool = False
     competency_development_enabled: bool = True
     competency_constructor_enabled: bool = False
 
@@ -51,6 +53,7 @@ class UserUpdate(BaseModel):
     is_new_employee: bool | None = None
     task_workspace_enabled: bool | None = None
     feedback_enabled: bool | None = None
+    audit_enabled: bool | None = None
     competency_development_enabled: bool | None = None
     competency_constructor_enabled: bool | None = None
 
