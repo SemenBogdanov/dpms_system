@@ -7,6 +7,7 @@ import { LeagueBadge } from '@/components/LeagueBadge'
 import { UserModal, type UserFormPayload } from '@/components/UserModal'
 import { UserAdminHistoryModal } from '@/components/UserAdminHistoryModal'
 import { AdminStorageQuotaRequestsPanel } from '@/components/AdminStorageQuotaRequestsPanel'
+import { AdminServerBootPanel } from '@/components/AdminServerBootPanel'
 import { AuditCalendarAdminPanel } from '@/components/audit-calendar/AuditCalendarAdminPanel'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
@@ -498,6 +499,8 @@ export function AdminUsersPage() {
           </Link>
         </nav>
       </header>
+
+      {currentUser?.role === 'admin' && <AdminServerBootPanel />}
 
       {/* Управление сотрудниками */}
       <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

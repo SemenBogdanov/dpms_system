@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from pydantic import ValidationError
 from sqlalchemy import JSON, MetaData, event, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -17,6 +18,7 @@ from app.api.deps import get_current_user, get_db
 from app.api.routes import graphs
 from app.models.graph_document import GraphDocument
 from app.models.user import User
+from app.schemas.graph import GraphEdge, GraphPayload
 from app.services import graph_documents as service
 
 
@@ -179,6 +181,7 @@ class GraphStorageTests(unittest.IsolatedAsyncioTestCase):
             }
         ]
         payload["views"][0]["positions"]["node-2"] = {"x": 420, "y": 20}
+        payload["views"][0]["connectionLensEnabled"] = True
 
         created = await self.put(payload)
 
@@ -189,6 +192,7 @@ class GraphStorageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["nodes"][0]["width"], 320)
         self.assertEqual(saved["edges"][0]["routing"], "orthogonal")
         self.assertEqual(saved["edges"][0]["points"][1], {"x": 360.0, "y": 80.0})
+        self.assertTrue(saved["views"][0]["connectionLensEnabled"])
 
     async def test_identical_retry_is_idempotent_but_stale_change_conflicts(self):
         payload = graph_payload()
@@ -207,6 +211,43 @@ class GraphStorageTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"]["code"], "graph_revision_conflict")
         self.assertEqual(response.json()["detail"]["server_revision"], 1)
+
+    async def test_edge_ports_round_trip_and_clear_without_migration(self):
+        for version in (2, 3):
+            with self.subTest(version=version):
+                payload = graph_payload(client_id=f"graph-ports-v{version}")
+                payload["version"] = version
+                payload["nodes"].append({**payload["nodes"][0], "id": "node-2", "x": 420})
+                payload["edges"] = [{
+                    "id": "edge-1", "source": "node-1", "target": "node-2", "label": "ports",
+                    "sourcePort": "e:4", "targetPort": "n:0",
+                }]
+                created = await self.put(payload)
+                self.assertEqual(created.status_code, 200, created.text)
+                read = await self.client.get(f"/api/graphs/{payload['id']}")
+                self.assertEqual(read.status_code, 200, read.text)
+                edge = read.json()["payload"]["edges"][0]
+                self.assertEqual(edge["sourcePort"], "e:4")
+                self.assertEqual(edge["targetPort"], "n:0")
+
+                payload["edges"][0].update(sourcePort=None, targetPort=None)
+                updated = await self.put(payload, created.json()["revision"])
+                self.assertEqual(updated.status_code, 200, updated.text)
+                read = await self.client.get(f"/api/graphs/{payload['id']}")
+                edge = read.json()["payload"]["edges"][0]
+                self.assertIsNone(edge["sourcePort"])
+                self.assertIsNone(edge["targetPort"])
+
+    async def test_invalid_edge_ports_are_rejected_without_saving(self):
+        payload = graph_payload(client_id="graph-invalid-ports")
+        payload["nodes"].append({**payload["nodes"][0], "id": "node-2", "x": 420})
+        edge = {"id": "edge-1", "source": "node-1", "target": "node-2", "label": "ports"}
+        for field in ("sourcePort", "targetPort"):
+            with self.subTest(field=field):
+                payload["edges"] = [{**edge, field: "n:5"}]
+                response = await self.put(payload)
+                self.assertEqual(response.status_code, 422, response.text)
+                self.assertEqual((await self.client.get(f"/api/graphs/{payload['id']}")).status_code, 404)
 
     async def test_admin_has_no_access_to_another_users_graphs(self):
         payload = graph_payload()
@@ -245,6 +286,55 @@ class GraphStorageTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["detail"]["code"], "graph_id_mismatch")
+
+
+class GraphEdgePortTests(unittest.TestCase):
+    def edge(self, **ports):
+        return GraphEdge(id="edge-1", source="node-1", target="node-2", label="ports", **ports)
+
+    def test_missing_and_null_ports_default_to_none(self):
+        for ports in ({}, {"sourcePort": None}, {"targetPort": None}, {"sourcePort": None, "targetPort": None}):
+            with self.subTest(ports=ports):
+                edge = self.edge(**ports)
+                self.assertIsNone(edge.sourcePort)
+                self.assertIsNone(edge.targetPort)
+
+    def test_all_twenty_ports_are_valid_on_either_end(self):
+        for side in "nesw":
+            for index in range(5):
+                port = f"{side}:{index}"
+                for ports in ({"sourcePort": port}, {"targetPort": port}, {"sourcePort": port, "targetPort": port}):
+                    with self.subTest(ports=ports):
+                        edge = self.edge(**ports)
+                        restored = GraphEdge.model_validate_json(edge.model_dump_json())
+                        self.assertEqual(restored.sourcePort, ports.get("sourcePort"))
+                        self.assertEqual(restored.targetPort, ports.get("targetPort"))
+
+    def test_payload_json_round_trip_preserves_ports_and_connection_lens(self):
+        for version in (2, 3):
+            with self.subTest(version=version):
+                payload = graph_payload()
+                payload["version"] = version
+                payload["nodes"].append({**payload["nodes"][0], "id": "node-2", "x": 420})
+                payload["views"][0]["connectionLensEnabled"] = True
+                payload["edges"] = [{
+                    "id": "edge-1", "source": "node-1", "target": "node-2", "label": "ports",
+                    "sourcePort": "s:3", "targetPort": "w:1",
+                }]
+                model = GraphPayload.model_validate(payload)
+                restored = GraphPayload.model_validate_json(model.model_dump_json())
+                self.assertEqual(restored, model)
+                self.assertEqual(restored.edges[0].sourcePort, "s:3")
+                self.assertEqual(restored.edges[0].targetPort, "w:1")
+                self.assertTrue(restored.views[0].connectionLensEnabled)
+
+    def test_invalid_port_values_are_rejected(self):
+        invalid = ("", "N:0", "x:0", "north:0", "n", "n:-1", "n:5", "e:10", "w:00", "s:1.0", "n:0\n", " n:0", "n:0 ", 0, True, [], {})
+        for field in ("sourcePort", "targetPort"):
+            for value in invalid:
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(ValidationError):
+                        self.edge(**{field: value})
 
 
 class GraphMigrationContractTests(unittest.TestCase):

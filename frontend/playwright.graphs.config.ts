@@ -2,23 +2,18 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: 'graphs-integration.spec.ts',
+  testMatch: ['graphs-integration.spec.ts', 'graphs-*-20260924.spec.ts'],
   fullyParallel: false,
   timeout: 30_000,
   expect: {
     timeout: 8_000,
   },
   use: {
-    baseURL: 'http://127.0.0.1:4176',
+    baseURL: 'http://localhost:55177',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
-  webServer: {
-    command: 'npm run preview -- --host 127.0.0.1 --port 4176',
-    url: 'http://127.0.0.1:4176/login',
-    reuseExistingServer: true,
-    timeout: 30_000,
-  },
+  // Checklist 1: exercise the rebuilt local Docker candidate, never a second preview URL.
   projects: [
     {
       name: 'chromium-desktop',

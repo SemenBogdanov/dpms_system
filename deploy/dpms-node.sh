@@ -244,7 +244,7 @@ validate_env_file() {
 }
 
 healthcheck() {
-  local backend https_health https_root frontend_assets email_worker audit_worker deadline_worker
+  local backend https_health https_root frontend_assets email_worker audit_worker deadline_worker server_boot_worker
   log "== DPMS healthcheck =="
   log "time_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ -f "$DPMS_COMPOSE_FILE" ]]; then
@@ -306,6 +306,20 @@ healthcheck() {
       deadline_worker=missing
     fi
   fi
+  server_boot_worker=not_configured
+  if [[ -f "$DPMS_COMPOSE_FILE" ]] && \
+    docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
+      config --services 2>/dev/null | grep -Fx 'server-boot-worker' >/dev/null; then
+    if docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
+      ps --status running --services 2>/dev/null | grep -Fx 'server-boot-worker' >/dev/null && \
+      docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
+      exec -T server-boot-worker python -m app.workers.server_boot --healthcheck >/dev/null 2>&1; then
+      server_boot_worker=healthy
+    else
+      server_boot_worker=missing
+    fi
+  fi
+  log "server_boot_worker=$server_boot_worker"
   log "backend_health=$backend"
   log "https_health=$https_health"
   log "https_root=$https_root"
@@ -317,7 +331,7 @@ healthcheck() {
   if [[ "$backend" == 200 && "$https_health" == 200 && "$https_root" == 200 && \
     "$frontend_assets" == ok && "$email_worker" == running && \
     "$audit_worker" != missing && "$deadline_worker" != missing && \
-    "$web_push_worker" != missing ]]; then
+    "$web_push_worker" != missing && "$server_boot_worker" != missing ]]; then
     log "healthcheck_ok=1"
     return 0
   fi
@@ -795,6 +809,13 @@ promote_release() {
   [[ "$(resolve_ref "$sha")" == "$sha" ]] || die "repo cannot verify prepared commit sha"
   docker image inspect "$image_tag" >/dev/null || die "prepared image is missing: $image_tag"
   docker image inspect "$audit_worker_image_tag" >/dev/null || die "prepared audit worker image is missing: $audit_worker_image_tag"
+  if grep -q '^  server-boot-worker:' "$release_dir/deploy/docker-compose.prod.yml"; then
+    [[ -d /var/lib/dpms-boot-events && ! -L /var/lib/dpms-boot-events ]] || \
+      die "install and enable deploy/stability/dpms-boot-record.service before this release"
+    systemctl is-enabled --quiet dpms-boot-record.service && \
+      systemctl is-active --quiet dpms-boot-record.service || \
+      die "host boot recorder must be enabled and active before this release"
+  fi
   validate_env_file
   docker run --rm --env-file "$DPMS_ENV_FILE" "$image_tag" \
     python -c 'from app.services.web_push import validate_vapid_configuration; validate_vapid_configuration()' \
@@ -828,6 +849,9 @@ promote_release() {
   cd "$DPMS_LIVE_ROOT/deploy"
   if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fx deadline-worker >/dev/null; then
     runtime_services+=(deadline-worker)
+  fi
+  if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fx server-boot-worker >/dev/null; then
+    runtime_services+=(server-boot-worker)
   fi
   local -a connector_files=()
   if [[ -f "$DPMS_CONNECTOR_DIR/compose-activated" ]]; then
@@ -916,6 +940,12 @@ rollback_release() {
   else
     docker ps -q --filter "label=com.docker.compose.project=$DPMS_COMPOSE_PROJECT" \
       --filter "label=com.docker.compose.service=web-push-worker" | xargs -r docker stop >/dev/null
+  fi
+  if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fx server-boot-worker >/dev/null; then
+    runtime_services+=(server-boot-worker)
+  else
+    docker ps -q --filter "label=com.docker.compose.project=$DPMS_COMPOSE_PROJECT" \
+      --filter "label=com.docker.compose.service=server-boot-worker" | xargs -r docker stop >/dev/null
   fi
   local -a connector_files=()
   if [[ -f "$DPMS_CONNECTOR_DIR/compose-activated" ]]; then

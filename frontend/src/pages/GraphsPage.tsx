@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react'
 import { useAuth } from '@/contexts/AuthContext'
+import { useTheme, type ThemeMode } from '@/contexts/theme'
 import { ApiError, ApiUnavailableError } from '@/api/client'
 import { graphsApi, type GraphDocument, type GraphPayload } from '@/api/graphs'
 
@@ -9,6 +10,7 @@ type FrameState = 'loading' | 'ready' | 'error'
 const LOAD_TIMEOUT_MS = 12_000
 const HOST_READY_MESSAGE = 'dpms-graphs-host-ready'
 const WORKSPACE_READY_MESSAGE = 'dpms-graphs-workspace-ready'
+const THEME_MESSAGE = 'dpms-graphs-theme'
 const STORAGE_REQUEST_MESSAGE = 'dpms-graphs-storage-request'
 const STORAGE_RESPONSE_MESSAGE = 'dpms-graphs-storage-response'
 
@@ -33,11 +35,26 @@ function isStorageRequest(value: unknown): value is StorageRequest {
     && ['list', 'get', 'put', 'delete'].includes(request.operation || '')
 }
 
+function readHostTheme(fallback: ThemeMode): ThemeMode {
+  const theme = document.documentElement.dataset.theme
+  return theme === 'light' || theme === 'dark' || theme === 'rose' ? theme : fallback
+}
+
 export function GraphsPage() {
   const { user } = useAuth()
+  const { theme } = useTheme()
   const frameRef = useRef<HTMLIFrameElement>(null)
   const [frameState, setFrameState] = useState<FrameState>('loading')
   const [revision, setRevision] = useState(0)
+  // Freeze the URL theme until an explicit reload to preserve the current graph.
+  const [initialTheme, setInitialTheme] = useState(theme)
+
+  const sendTheme = useCallback(() => {
+    frameRef.current?.contentWindow?.postMessage(
+      { type: THEME_MESSAGE, version: 1, theme: readHostTheme(theme) },
+      window.location.origin
+    )
+  }, [theme])
 
   useEffect(() => {
     if (frameState !== 'loading') return
@@ -54,6 +71,7 @@ export function GraphsPage() {
       if (event.origin !== window.location.origin) return
       if (event.source !== frameRef.current?.contentWindow) return
       if (event.data?.type === WORKSPACE_READY_MESSAGE && event.data?.version === 1) {
+        sendTheme()
         setFrameState('ready')
         return
       }
@@ -113,17 +131,29 @@ export function GraphsPage() {
     }
 
     window.addEventListener('message', handleMessage)
-    return () => window.removeEventListener('message', handleMessage)
-  }, [revision])
+    const observer = new MutationObserver(sendTheme)
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    })
+    sendTheme()
+
+    return () => {
+      window.removeEventListener('message', handleMessage)
+      observer.disconnect()
+    }
+  }, [revision, sendTheme])
 
   const handleLoad = () => {
     frameRef.current?.contentWindow?.postMessage(
       { type: HOST_READY_MESSAGE, version: 1 },
       window.location.origin
     )
+    sendTheme()
   }
 
   const reload = () => {
+    setInitialTheme(readHostTheme(theme))
     setFrameState('loading')
     setRevision((current) => current + 1)
   }
@@ -135,7 +165,7 @@ export function GraphsPage() {
           key={revision}
           ref={frameRef}
           title="Рабочее пространство графов"
-          src={`/graph-workspace/index.html?embedded=1&owner=${encodeURIComponent(user?.id || 'unknown')}&revision=${revision}`}
+          src={`/graph-workspace/index.html?embedded=1&owner=${encodeURIComponent(user?.id || 'unknown')}&revision=${revision}&theme=${initialTheme}`}
           className="h-full w-full border-0 bg-background"
           referrerPolicy="same-origin"
           onLoad={handleLoad}

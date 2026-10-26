@@ -1,0 +1,9 @@
+# Synthetic local development event, not production history.
+[server_boot]
+format_version = 1
+event_id = 11111111111111111111111111111111
+boot_time_utc = 2026-09-24T07:00:00Z
+recorded_at_utc = 2026-09-24T07:00:05Z
+uptime_seconds_at_record = 5.000
+reason = unknown
+clock = system_clock_not_independently_verified

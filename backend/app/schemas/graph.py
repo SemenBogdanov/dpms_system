@@ -68,6 +68,8 @@ class GraphEdge(StrictInput):
     id: str = Field(min_length=1, max_length=100)
     source: str = Field(min_length=1, max_length=100)
     target: str = Field(min_length=1, max_length=100)
+    sourcePort: str | None = Field(default=None, pattern=r"^[nesw]:[0-4]$")
+    targetPort: str | None = Field(default=None, pattern=r"^[nesw]:[0-4]$")
     label: str = Field(min_length=1, max_length=80)
     routing: Literal["curve", "orthogonal", "straight"] = "curve"
     points: list[GraphPosition] = Field(default_factory=list, max_length=20)
@@ -96,6 +98,7 @@ class GraphView(StrictInput):
     viewport: GraphViewport
     focusNodeId: str | None = Field(default=None, max_length=100)
     focusDepth: Literal[0, 1, 2] = 0
+    connectionLensEnabled: bool = False
 
 
 class GraphAuditEntry(StrictInput):

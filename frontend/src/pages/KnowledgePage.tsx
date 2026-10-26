@@ -98,6 +98,9 @@ function renderKnowledgeBody(body: string): ReactElement[] {
   let paragraph: string[] = []
   let unordered: string[] = []
   let ordered: string[] = []
+  let fenceLength = 0
+  let codeLines: string[] = []
+  let codeBlockCount = 0
 
   const flushParagraph = () => {
     if (!paragraph.length) return
@@ -138,7 +141,38 @@ function renderKnowledgeBody(body: string): ReactElement[] {
     flushOrdered()
   }
 
-  body.split(/\r?\n/).forEach((rawLine) => {
+  const flushCode = () => {
+    codeBlockCount += 1
+    nodes.push(
+      <pre
+        key={`code-${nodes.length}`}
+        role="region"
+        aria-label={`Блок кода ${codeBlockCount}`}
+        tabIndex={0}
+        className="min-w-0 max-w-full overflow-x-auto whitespace-pre rounded-md border border-border bg-surface-soft p-3 font-mono text-sm leading-6 text-foreground [tab-size:4] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+      ><code>{codeLines.join('')}</code></pre>
+    )
+    fenceLength = 0
+    codeLines = []
+  }
+
+  // Keep line endings inside fences; only prose uses the existing trim/join rules.
+  const lines = body.match(/[^\n]*\n|[^\n]+$/g) ?? []
+  lines.forEach((rawLine) => {
+    const fenceLine = rawLine.replace(/\r?\n$/, '')
+    if (fenceLength) {
+      const closing = fenceLine.match(/^ {0,3}(`{3,})[\t ]*$/)
+      if (closing?.[1].length === fenceLength) flushCode()
+      else codeLines.push(rawLine)
+      return
+    }
+    const opening = fenceLine.match(/^ {0,3}(`{3,})[^`]*$/)
+    if (opening) {
+      flushParagraph()
+      flushLists()
+      fenceLength = opening[1].length
+      return
+    }
     const line = rawLine.trim()
     if (!line) {
       flushParagraph()
@@ -172,6 +206,7 @@ function renderKnowledgeBody(body: string): ReactElement[] {
     paragraph.push(line)
   })
 
+  if (fenceLength) flushCode()
   flushParagraph()
   flushLists()
   return nodes
@@ -297,14 +332,17 @@ export function KnowledgePage() {
   }, [loadArticles])
 
   useEffect(() => {
+    if (loading) return
     if (!articles.length) {
       setSelectedSlug('')
       return
     }
     if (articles.some((article) => article.slug === selectedSlug)) return
-    const startArticle = articles.find((article) => article.section === 'start')
+    const requestedSlug = new URLSearchParams(window.location.search).get('article')
+    const startArticle = articles.find((article) => article.slug === requestedSlug)
+      ?? articles.find((article) => article.section === 'start')
     setSelectedSlug(startArticle?.slug ?? articles[0].slug)
-  }, [articles, selectedSlug])
+  }, [articles, selectedSlug, loading])
 
   const selectedArticle = useMemo(
     () => articles.find((article) => article.slug === selectedSlug) ?? articles[0] ?? null,
