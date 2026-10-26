@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     EMAIL_WORKER_LEASE_SECONDS: int = 120
     EMAIL_WORKER_MAX_ATTEMPTS: int = 5
     EMAIL_MESSAGE_DELAY_SECONDS: int = 60 * 60
+    EMAIL_CHANGE_TTL_HOURS: int = 24
     EMAIL_RETRY_MAX_SECONDS: int = 900
 
     # Attachments

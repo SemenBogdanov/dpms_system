@@ -7,14 +7,16 @@ import os
 import urllib.error
 import urllib.request
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlparse
 
+from jose import jwt
 from sqlalchemy import delete
 from sqlalchemy.engine import make_url
 
 from app.config import settings
-from app.core.security import create_access_token, get_password_hash
+from app.core.security import ALGORITHM, create_access_token, get_password_hash
 from app.database import AsyncSessionLocal
 from app.models.activity import ActivityEvent
 from app.models.user import League, User, UserRole
@@ -129,6 +131,18 @@ async def run() -> None:
         expect(status, 200, "authenticated profile")
         assert isinstance(profile, dict) and profile.get("id") == str(active.id)
 
+        legacy_token = jwt.encode(
+            {
+                "sub": str(active.id),
+                "ver": active.auth_version,
+                "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+            },
+            settings.DPMS_SECRET_KEY,
+            algorithm=ALGORITHM,
+        )
+        status, _ = request("GET", "/api/auth/me", token=legacy_token)
+        expect(status, 200, "legacy access token compatibility")
+
         status, _ = request(
             "POST",
             "/api/auth/login",
@@ -146,7 +160,10 @@ async def run() -> None:
         status, _ = request("GET", "/api/auth/me", token=inactive_token)
         expect(status, 401, "inactive user session")
 
-        print("Auth session smoke OK: login, /me, revocation, inactive guard")
+        print(
+            "Auth session smoke OK: login, /me, legacy compatibility, "
+            "revocation, inactive guard"
+        )
     finally:
         ids = [user.id for user in (active, inactive) if user is not None]
         if ids:

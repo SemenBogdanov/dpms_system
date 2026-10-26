@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, get_current_user, get_current_user_for_password_setup
 from app.core.security import (
     create_access_token,
+    decode_email_change_token,
     get_password_hash,
     is_temporary_password_valid,
     validate_password_strength,
@@ -16,11 +17,33 @@ from app.core.security import (
 )
 from app.models.user import User
 from app.schemas.auth import LoginRequest, TokenResponse, SetPasswordRequest, ChangePasswordRequest
+from app.schemas.email_change import (
+    EmailChangeActionResult,
+    EmailChangePendingRead,
+    EmailChangeRequestRead,
+    EmailChangeSelfRequest,
+    EmailChangeTokenRequest,
+)
 from app.schemas.user import AuthenticatedUserRead, SidebarMenuOrderUpdate
 from app.services.activity import record_activity_event
+from app.services.email_change import (
+    EmailChangeServiceError,
+    cancel_email_change_by_link,
+    cancel_pending_email_change,
+    confirm_email_change,
+    create_email_change_request,
+    ensure_email_change_delivery_available,
+    expire_stale_email_change_requests,
+    get_pending_email_change,
+    normalize_email,
+)
 
 router = APIRouter()
 limiter = Limiter(key_func=get_remote_address)
+
+
+def _raise_email_change_error(error: EmailChangeServiceError) -> None:
+    raise HTTPException(status_code=error.status_code, detail=error.detail) from error
 
 
 def _user_to_read(user: User) -> AuthenticatedUserRead:
@@ -275,6 +298,110 @@ async def change_password(
     )
     await db.commit()
     return {"message": "Пароль успешно изменён. Войдите снова", "reauth_required": True}
+
+
+@router.get("/email-change", response_model=EmailChangePendingRead)
+async def get_email_change_status(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return only the current user's pending email-change request."""
+    expired = await expire_stale_email_change_requests(db, user_id=user.id)
+    if expired:
+        await db.commit()
+    pending = await get_pending_email_change(db, user_id=user.id)
+    return EmailChangePendingRead(
+        request=EmailChangeRequestRead.model_validate(pending) if pending else None
+    )
+
+
+@router.post("/email-change/request", response_model=EmailChangeRequestRead)
+@limiter.limit("3/hour")
+async def request_email_change(
+    request: Request,
+    body: EmailChangeSelfRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a self-service change after password reauthentication."""
+    try:
+        ensure_email_change_delivery_available()
+        normalized = normalize_email(str(body.new_email))
+        expired = await expire_stale_email_change_requests(
+            db,
+            user_id=user.id,
+            new_email=normalized,
+        )
+        if expired:
+            await db.commit()
+        user = await _lock_user_for_auth_change(request, db, user)
+        if user.password_hash is None or not verify_password(body.current_password, user.password_hash):
+            raise HTTPException(status_code=400, detail="Неверный текущий пароль")
+        return await create_email_change_request(
+            db,
+            target=user,
+            actor=user,
+            new_email=normalized,
+            request_kind="self",
+        )
+    except EmailChangeServiceError as error:
+        _raise_email_change_error(error)
+
+
+@router.post("/email-change/cancel", response_model=EmailChangeActionResult)
+@limiter.limit("10/minute")
+async def cancel_own_email_change(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel the current user's still-pending request from Settings."""
+    user = await _lock_user_for_auth_change(request, db, user)
+    cancelled = await cancel_pending_email_change(db, target=user, actor=user)
+    if cancelled is None:
+        raise HTTPException(status_code=404, detail="Активный запрос не найден")
+    return EmailChangeActionResult(message="Запрос на смену email отменён")
+
+
+@router.post("/email-change/confirm", response_model=EmailChangeActionResult)
+@limiter.limit("10/minute")
+async def confirm_email_change_link(
+    request: Request,
+    body: EmailChangeTokenRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Confirm ownership of the new mailbox; GET links never mutate state."""
+    del request
+    request_id = decode_email_change_token(body.token, expected_action="confirm")
+    if request_id is None:
+        raise HTTPException(status_code=400, detail="Ссылка недействительна или устарела")
+    try:
+        await confirm_email_change(db, request_id=request_id)
+    except EmailChangeServiceError as error:
+        _raise_email_change_error(error)
+    return EmailChangeActionResult(
+        message="Email изменён. Войдите с новым адресом.",
+        reauth_required=True,
+    )
+
+
+@router.post("/email-change/cancel-link", response_model=EmailChangeActionResult)
+@limiter.limit("10/minute")
+async def cancel_email_change_link(
+    request: Request,
+    body: EmailChangeTokenRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a pending request after an explicit action from the old mailbox."""
+    del request
+    request_id = decode_email_change_token(body.token, expected_action="cancel")
+    if request_id is None:
+        raise HTTPException(status_code=400, detail="Ссылка недействительна или устарела")
+    try:
+        await cancel_email_change_by_link(db, request_id=request_id)
+    except EmailChangeServiceError as error:
+        _raise_email_change_error(error)
+    return EmailChangeActionResult(message="Запрос на смену email отменён")
 
 
 @router.get("/me", response_model=AuthenticatedUserRead)
