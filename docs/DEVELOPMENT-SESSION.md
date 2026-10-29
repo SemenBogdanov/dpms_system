@@ -7,6 +7,12 @@ DPMS с настроенным Git remote. История хранится в Gi
 ## Начало сессии
 
 1. Прочитать `AGENTS.md` и актуальный project control layer PersonalOS.
+   Рабочий путь брать из поля `active worktree` в `02 Projects/dpms/PROJECT.md`,
+   не из исторического `code repo path` и не по названию каталога или ветки.
+   Сверить `git rev-parse --show-toplevel`, `git worktree list --porcelain`
+   и `git rev-parse --git-common-dir`. Общий `.git` может находиться в другой
+   рабочей папке; это не делает её источником текущего релиза. Если путь не задан,
+   отсутствует или не совпадает, остановиться и уточнить контекст, без fallback.
 2. Зафиксировать repo/worktree, текущую ветку, HEAD и исходный dirty status.
    Отделить свой scope от существующих изменений, не сбрасывать чужой WIP.
 3. Обновить сведения о remote: `git fetch origin`. Проверить upstream и
@@ -14,9 +20,11 @@ DPMS с настроенным Git remote. История хранится в Gi
    Если upstream отсутствует, явно выбрать целевую remote branch до push.
    Зафиксировать baseline SHA точного destination `refs/heads/<TARGET_BRANCH>`
    через свежий `git ls-remote` либо ожидаемое отсутствие согласованной новой ветки.
-4. Основной clean `main` обновлять только fast-forward. При dirty status или
-   divergence сначала сохранить и разобрать изменения, не выполнять blind pull,
-   reset, rebase чужой истории или автоматический force push.
+4. Обновлять только выбранную активную рабочую папку, когда это входит в scope,
+   и только fast-forward при clean status. Старый локальный `main` в другом
+   worktree не обновлять ради синхронизации текущей сессии. При dirty status или
+   divergence сначала разобрать свой scope, не выполнять blind pull, reset,
+   rebase чужой истории или автоматический force push.
 5. Указать verification commands, границы задачи и способ сохранения WIP.
    Проверка metadata не доказывает целостную интеграцию или работоспособность.
 
@@ -72,6 +80,10 @@ git ls-remote --exit-code origin refs/heads/<TARGET_BRANCH>
 
 ## Незавершённая работа
 
+- Различать синхронизацию текущего согласованного scope и сохранность исторического
+  WIP в других worktrees. Учтённый старый остаток не требует его merge, checkout,
+  удаления или изменения ради завершения текущей сессии. Общую сохранность всех
+  рабочих папок нельзя выводить из синхронизации одного scope.
 - Безопасный, проверенный на допустимость публикации WIP сохранять в именованной
   `wip/<scope>-<date>` либо `archive/<scope>-<date>` ветке и сверять её remote SHA.
 - В архиве указывать baseline, scope, причину незавершённости и ограничения.
