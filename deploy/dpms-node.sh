@@ -243,8 +243,29 @@ validate_env_file() {
   [[ -s "$DPMS_ENV_FILE" ]] || die "production env file is empty: $DPMS_ENV_FILE"
 }
 
+validate_web_push_release_mode() {
+  "$@" python - <<'PY'
+import os
+
+mode = os.getenv("DPMS_WEB_PUSH_MODE", "enabled")
+if mode == "enabled":
+    try:
+        from app.services.web_push import validate_vapid_configuration
+        validate_vapid_configuration()
+    except Exception:
+        raise SystemExit("Web Push VAPID configuration is missing or invalid")
+elif mode == "disabled":
+    # The worker ignores the mode: only an absent/empty key disables it.
+    if os.getenv("DPMS_WEB_PUSH_PRIVATE_KEY", ""):
+        raise SystemExit("Web Push disabled mode requires an absent or empty private key")
+else:
+    raise SystemExit("DPMS_WEB_PUSH_MODE must be enabled or disabled")
+print(mode)
+PY
+}
+
 healthcheck() {
-  local backend https_health https_root frontend_assets email_worker audit_worker deadline_worker server_boot_worker
+  local backend https_health https_root frontend_assets email_worker audit_worker deadline_worker server_boot_worker web_push_worker web_push_mode
   log "== DPMS healthcheck =="
   log "time_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ -f "$DPMS_COMPOSE_FILE" ]]; then
@@ -271,9 +292,13 @@ healthcheck() {
       config --services 2>/dev/null | grep -Fx 'web-push-worker' >/dev/null; then
     if docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
       ps --status running --services 2>/dev/null | grep -Fx 'web-push-worker' >/dev/null && \
-      docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
-      exec -T web-push-worker python -c 'from app.services.web_push import validate_vapid_configuration; validate_vapid_configuration()' >/dev/null 2>&1; then
-      web_push_worker=healthy
+      web_push_mode="$(validate_web_push_release_mode docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
+        exec -T web-push-worker 2>/dev/null)"; then
+      case "$web_push_mode" in
+        enabled) web_push_worker=healthy ;;
+        disabled) web_push_worker=disabled ;;
+        *) web_push_worker=missing ;;
+      esac
     else
       web_push_worker=missing
     fi
@@ -807,7 +832,7 @@ promote_release() {
       *) die "unknown promote arg: $1" ;;
     esac
   done
-  local release_dir manifest expected_approval sha image_tag audit_worker_image_tag migrations_count backup_dir network_args=() net_args runtime_migration_delta
+  local release_dir manifest expected_approval sha image_tag audit_worker_image_tag migrations_count backup_dir network_args=() net_args runtime_migration_delta web_push_mode
   local runtime_services=(backend email-worker audit-worker web-push-worker)
   release_dir="$(release_dir_for_id "$release_id")"
   manifest="$(manifest_path "$release_dir")"
@@ -830,9 +855,12 @@ promote_release() {
       die "host boot recorder must be enabled and active before this release"
   fi
   validate_env_file
-  docker run --rm --env-file "$DPMS_ENV_FILE" "$image_tag" \
-    python -c 'from app.services.web_push import validate_vapid_configuration; validate_vapid_configuration()' \
-    >/dev/null || die "Web Push VAPID configuration is missing or invalid"
+  web_push_mode="$(validate_web_push_release_mode docker run -i --rm --env-file "$DPMS_ENV_FILE" "$image_tag" 2>/dev/null)" \
+    || die "Web Push release mode or VAPID configuration is invalid"
+  case "$web_push_mode" in
+    enabled|disabled) log "web_push_mode=$web_push_mode" ;;
+    *) die "Web Push release mode check returned an invalid status" ;;
+  esac
   runtime_migration_delta="$(migration_delta "$image_tag")"
   if [[ -n "$runtime_migration_delta" ]]; then
     migrations_count=1
