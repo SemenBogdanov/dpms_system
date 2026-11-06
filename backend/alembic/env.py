@@ -17,7 +17,8 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# ConfigParser interpolation must preserve URL-encoded credentials verbatim.
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 _version_table_schema = settings.DB_SCHEMA or None
 
