@@ -27,6 +27,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { StorageQuotaSettingsPanel } from '@/components/StorageQuotaSettingsPanel'
+import { ContentLayoutSettingsPanel } from '@/components/ContentLayoutSettingsPanel'
 import { hasTaskWorkspaceAccess } from '@/lib/access'
 import {
   applySidebarItemLabels,
@@ -360,8 +361,8 @@ export function SettingsPage() {
         </p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.55fr)]">
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+      <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.55fr)]">
+        <section className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex min-w-0 items-start gap-3">
               <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -401,7 +402,7 @@ export function SettingsPage() {
           )}
         </section>
 
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <section className="min-w-0 rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <div className="flex items-start gap-3">
             <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
               <KeyRound className="h-5 w-5" />
@@ -424,6 +425,8 @@ export function SettingsPage() {
       </div>
 
       <StorageQuotaSettingsPanel />
+
+      {user && <ContentLayoutSettingsPanel user={user} />}
 
       {user && (
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -571,9 +574,9 @@ export function SettingsPage() {
           <fieldset
             disabled={menuLocked}
             aria-busy={importingMenu}
-            className="mt-5 grid min-w-0 gap-4 border-0 p-0 xl:grid-cols-[320px_minmax(0,1fr)_300px]"
+            className="mt-5 grid min-w-0 grid-cols-1 gap-4 border-0 p-0 xl:grid-cols-[320px_minmax(0,1fr)_300px]"
           >
-            <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+            <div className="min-w-0 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Основные кнопки</h3>
                 <button
@@ -666,7 +669,7 @@ export function SettingsPage() {
             </div>
 
             <div
-              className="rounded-lg border border-slate-200 p-4 dark:border-slate-700"
+              className="min-w-0 rounded-lg border border-slate-200 p-4 dark:border-slate-700"
               onDragOver={(event) => event.preventDefault()}
               onDrop={dropIntoSelectedButton}
             >
@@ -775,7 +778,7 @@ export function SettingsPage() {
               )}
             </div>
 
-            <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+            <div className="min-w-0 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">Доступные разделы</h3>
                 <span className="text-xs text-slate-400">{availableNav.length}</span>

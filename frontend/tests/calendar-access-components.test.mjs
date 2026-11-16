@@ -65,6 +65,7 @@ for (const role of ['executor', 'teamlead', 'admin']) {
         '@/components/ChangePasswordModal': { ChangePasswordModal: 'ChangePasswordModal' },
         '@/components/LeagueBadge': { LeagueBadge: 'LeagueBadge' },
         '@/components/StorageQuotaSettingsPanel': { StorageQuotaSettingsPanel: 'StorageQuotaSettingsPanel' },
+        '@/components/ContentLayoutSettingsPanel': { ContentLayoutSettingsPanel: 'ContentLayoutSettingsPanel' },
       })
       runtime.render(SettingsPage)
       runtime.flushEffects()
