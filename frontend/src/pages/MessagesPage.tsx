@@ -33,9 +33,10 @@ import { useAttention } from '@/contexts/attentionState'
 import { preventBackdropDismiss, useProtectedModal } from '@/hooks/useProtectedModal'
 import { cn } from '@/lib/utils'
 import { WebPushControl } from '@/components/WebPushControl'
+import { ImportedMailPanel } from '@/components/ImportedMailPanel'
 
 
-type MessagesTab = 'direct' | 'important'
+type MessagesTab = 'direct' | 'important' | 'mail'
 
 type ComposeForm = {
   recipientId: string
@@ -99,6 +100,7 @@ export function MessagesPage() {
   const [importantItems, setImportantItems] = useState<AttentionItem[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
+  const [importedUnread, setImportedUnread] = useState<number | null>(null)
   const [detail, setDetail] = useState<MessageThreadDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState('')
@@ -155,7 +157,7 @@ export function MessagesPage() {
     [detail?.posts],
   )
 
-  const tab: MessagesTab = searchParams.get('tab') === 'important' ? 'important' : 'direct'
+  const tab: MessagesTab = searchParams.get('tab') === 'mail' ? 'mail' : searchParams.get('tab') === 'important' ? 'important' : 'direct'
 
   const selectTab = (nextTab: MessagesTab) => {
     const next = new URLSearchParams(searchParams)
@@ -625,19 +627,19 @@ export function MessagesPage() {
           <h1 className="text-2xl font-semibold text-slate-900">Сообщения</h1>
           <p className="mt-1 text-sm text-slate-500">Обращения коллег и важные события системы</p>
         </div>
-        <button
+        {tab !== 'mail' && <button
           type="button"
           onClick={openCompose}
           className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
         >
           <Plus className="h-4 w-4" />
           Новое письмо
-        </button>
+        </button>}
       </div>
       <WebPushControl />
 
       <div
-        className="flex w-full gap-1 overflow-x-auto rounded-lg border border-slate-200 bg-white p-1 sm:w-fit"
+        className="flex w-full flex-wrap gap-1 rounded-lg border border-slate-200 bg-white p-1 sm:w-fit"
         role="tablist"
         aria-label="Категории сообщений"
       >
@@ -677,16 +679,31 @@ export function MessagesPage() {
             </span>
           )}
         </button>
+        <button
+          type="button"
+          onClick={() => selectTab('mail')}
+          role="tab"
+          aria-selected={tab === 'mail'}
+          aria-controls={tab === 'mail' ? 'imported-mail-panel' : undefined}
+          className={cn(
+            'inline-flex min-h-11 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-md px-4 text-sm font-medium transition sm:flex-none',
+            tab === 'mail' ? 'bg-primary text-primary-foreground' : 'text-slate-600 hover:bg-slate-50',
+          )}
+        >
+          <Mail aria-hidden="true" className="h-4 w-4" />
+          Почта и встречи
+          {tab === 'mail' && importedUnread !== null && importedUnread > 0 && <span aria-label={`Непрочитанных в DPMS: ${importedUnread}`} className="rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-semibold text-white">{importedUnread}</span>}
+        </button>
       </div>
 
-      {loadError && (
+      {loadError && tab !== 'mail' && (
         <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700" role="alert">
           {loadError}
           <button type="button" onClick={() => void loadOverview()}>Повторить</button>
         </div>
       )}
 
-      {tab === 'direct' ? (
+      {tab === 'mail' ? <ImportedMailPanel onUnreadCountChange={setImportedUnread} /> : tab === 'direct' ? (
         <section
           className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:grid lg:min-h-[620px] lg:grid-cols-[360px_minmax(0,1fr)]"
           role="tabpanel"

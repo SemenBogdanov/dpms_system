@@ -28,6 +28,7 @@ import { ChangePasswordModal } from '@/components/ChangePasswordModal'
 import { LeagueBadge } from '@/components/LeagueBadge'
 import { StorageQuotaSettingsPanel } from '@/components/StorageQuotaSettingsPanel'
 import { ContentLayoutSettingsPanel } from '@/components/ContentLayoutSettingsPanel'
+import { OutlookConnectorSettingsPanel } from '@/components/OutlookConnectorSettingsPanel'
 import { hasTaskWorkspaceAccess } from '@/lib/access'
 import {
   applySidebarItemLabels,
@@ -427,6 +428,8 @@ export function SettingsPage() {
       <StorageQuotaSettingsPanel />
 
       {user && <ContentLayoutSettingsPanel user={user} />}
+
+      {user && <OutlookConnectorSettingsPanel />}
 
       {user && (
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-900">

@@ -16,6 +16,7 @@ from app.api.routes import audit_legacy_transfer
 from app.api.routes import audit_calendar
 from app.api.routes import web_push
 from app.api.routes import graphs
+from app.api.routes import mail_import
 from app.api.routes import server_boot
 from app.api.routes import usage
 from app.database import AsyncSessionLocal
@@ -70,6 +71,7 @@ app.include_router(notifications.router, prefix="/api/notifications", tags=["not
 app.include_router(messages.router, prefix="/api/messages", tags=["messages"])
 app.include_router(web_push.router, prefix="/api/web-push", tags=["web-push"])
 app.include_router(graphs.router, prefix="/api/graphs", tags=["graphs"])
+app.include_router(mail_import.router, prefix="/api/mail-import", tags=["mail-import"])
 app.include_router(server_boot.router, prefix="/api/admin/server-boots", tags=["admin"])
 app.include_router(usage.admin_router, prefix="/api/admin/usage", tags=["admin"])
 app.include_router(usage.router, prefix="/api/usage", tags=["usage"])
