@@ -248,6 +248,11 @@ test('per-section margins apply across routes while graph canvas keeps its heigh
     await page.goto(path)
     const frame = page.locator(`[data-content-section="${id}"]`)
     await expect(frame).toHaveAttribute('data-layout-custom', 'true')
+    // The shell renders before lazy page modules; wait before leaving the route.
+    if (id === 'settings') await expect(settingsPanel(page)).toBeVisible()
+    if (id === 'personal-tasks') await expect(page.getByRole('heading', { name: 'Личные задачи', exact: true })).toBeVisible()
+    if (id === 'queue') await expect(page.getByRole('heading', { name: 'Глобальная очередь', exact: true })).toBeVisible()
+    if (id === 'graphs') await expect(page.locator('iframe')).toBeVisible()
     const geometry = await frameGeometry(page)
     expect(geometry.width).toBeCloseTo(Math.max(Math.min(geometry.available, minWidth), geometry.available * (1 - margin / 50)), 0)
     expect(geometry.left).toBeCloseTo(geometry.right, 0)
