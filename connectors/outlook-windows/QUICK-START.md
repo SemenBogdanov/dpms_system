@@ -57,13 +57,17 @@ Get-FileHash .\DPMS.OutlookConnector.exe -Algorithm SHA256
 по разрешённому HTTPS и IT разрешает новый сервис. Gateway пока не установлен.
 Это не обход корпоративных ограничений: адрес/порт и экспорт должны быть одобрены.
 
-На рабочем Windows в обычном PowerShell выполните две точечные проверки.
-Вместо `DB_HOST` укажите известное вам имя/IP сервера БД. Не присылайте сам адрес,
-полный сетевой вывод или credentials; нужны только два значения True/False.
+На рабочем Windows в обычном PowerShell выполните блок ниже. Он сам попросит
+адрес. Введите **IP-адрес виртуальной машины, где работает БД**, тот же, который
+проверяли через ping, либо её DNS-имя. Без `https://`, порта и `/`.
+Нужен адрес ВМ, доступный с рабочего компьютера, не внутренний IP Docker-контейнера
+и не `localhost`. Не присылайте сам адрес, полный сетевой вывод или credentials;
+нужны только два значения True/False.
 
 ```powershell
-Test-NetConnection -ComputerName 'DB_HOST' -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue
-Test-NetConnection -ComputerName 'DB_HOST' -Port 5432 -InformationLevel Quiet -WarningAction SilentlyContinue
+$dbHost = Read-Host 'Введите IP или DNS-имя ВМ с базой данных'
+"443 = $(Test-NetConnection -ComputerName $dbHost -Port 443 -InformationLevel Quiet -WarningAction SilentlyContinue)"
+"5432 = $(Test-NetConnection -ComputerName $dbHost -Port 5432 -InformationLevel Quiet -WarningAction SilentlyContinue)"
 ```
 
 Это проверки TCP, не изменение настроек, не чтение БД и не сканирование диапазона.
