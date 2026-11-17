@@ -44,7 +44,10 @@ def main() -> None:
     port = parsed.port or 5432
     username = unquote(parsed.username)
     password = unquote(parsed.password)
-    sslmode = parse_qs(parsed.query).get("sslmode", ["prefer"])[0]
+    sslmodes = parse_qs(parsed.query, keep_blank_values=True).get("sslmode", ["require"])
+    if len(sslmodes) != 1 or not sslmodes[0]:
+        raise SystemExit("ambiguous database TLS mode")
+    sslmode = sslmodes[0]
     if sslmode in {"disable", "allow", "prefer"}:
         sslmode = "require"
     if sslmode not in {"require", "verify-ca", "verify-full"}:

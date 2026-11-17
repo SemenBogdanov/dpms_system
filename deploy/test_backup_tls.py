@@ -25,6 +25,11 @@ class BackupTLSTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.configure("?sslmode=typo")
 
+    def test_empty_and_repeated_modes_rejected(self):
+        for suffix in ("?sslmode=", "?sslmode=prefer&sslmode=verify-full", "?sslmode=require&sslmode=require"):
+            with self.subTest(suffix=suffix), self.assertRaises(SystemExit):
+                self.configure(suffix)
+
     def configure(self, suffix):
         with tempfile.TemporaryDirectory() as directory:
             payload = json.dumps(["DATABASE_URL=postgresql+asyncpg://synthetic:synthetic@db.invalid/fixture" + suffix])
