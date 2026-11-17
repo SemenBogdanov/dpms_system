@@ -703,12 +703,113 @@ prepare_release() {
   print_approval_sheet "$release_dir"
 }
 
+prepare_frontend_public_permissions() {
+  python3 - "$1" <<'PY'
+import os
+from pathlib import Path
+import stat
+import sys
+
+
+def normalize_public_tree(root):
+    pending = [root]
+    while pending:
+        path = pending.pop()
+        mode = path.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            path.chmod(0o755)
+            pending.extend(path.iterdir())
+        elif stat.S_ISREG(mode):
+            path.chmod(0o644)
+        else:
+            raise ValueError("static tree must contain only regular files and directories")
+
+
+def nginx_worker_identity(proc=Path("/proc")):
+    identities = set()
+    host_root = Path("/").stat()
+    host_mount = (proc / "self/ns/mnt").stat()
+    for process in proc.iterdir():
+        if not process.name.isdigit():
+            continue
+        try:
+            if (process / "comm").read_text().strip() != "nginx":
+                continue
+            fields = dict(line.split(":", 1) for line in (process / "status").read_text().splitlines() if ":" in line)
+            uids = tuple(map(int, fields["Uid"].split()))
+            if len(uids) != 4 or len(set(uids)) != 1:
+                raise ValueError("inconsistent nginx identity")
+            if uids[0] == 0:
+                continue  # Ignore the privileged master, never probe as root.
+            gids = tuple(map(int, fields["Gid"].split()))
+            groups = tuple(sorted(set(map(int, fields["Groups"].split()))))
+            if len(gids) != 4 or len(set(gids)) != 1:
+                raise ValueError("inconsistent nginx identity")
+            worker_root = (process / "root").stat()
+            worker_mount = (process / "ns/mnt").stat()
+            if (worker_root.st_dev, worker_root.st_ino) != (host_root.st_dev, host_root.st_ino):
+                raise ValueError("nginx root differs from host")
+            if (worker_mount.st_dev, worker_mount.st_ino) != (host_mount.st_dev, host_mount.st_ino):
+                raise ValueError("nginx mount namespace differs from host")
+            identities.add((uids[0], gids[0], groups))
+        except (FileNotFoundError, ProcessLookupError):
+            continue  # A process may exit while /proc is enumerated.
+    if len(identities) != 1:
+        raise ValueError("cannot establish one live nginx worker identity")
+    return identities.pop()
+
+
+def check_nginx_access(root):
+    uid, gid, groups = nginx_worker_identity()
+    os.setgroups(groups)
+    os.setgid(gid)
+    os.setuid(uid)
+    for parent in (root, *root.parents):
+        if not os.access(parent, os.X_OK, effective_ids=True):
+            raise PermissionError("nginx cannot traverse static path")
+    pending = [root]
+    while pending:
+        path = pending.pop()
+        mode = path.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            if not os.access(path, os.X_OK, effective_ids=True):
+                raise PermissionError("nginx cannot traverse static directory")
+            pending.extend(path.iterdir())
+        elif stat.S_ISREG(mode):
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            os.close(descriptor)
+        else:
+            raise ValueError("unexpected static entry")
+
+
+def main(path):
+    root = Path(path).absolute()
+    normalize_public_tree(root)
+    if not (root / "index.html").is_file():
+        raise ValueError("static index is missing")
+    check_nginx_access(root)
+
+
+if __name__ == "__main__":
+    try:
+        main(sys.argv[1])
+    except (OSError, ValueError, KeyError, NotImplementedError):
+        sys.exit("frontend permissions/nginx access check failed")
+PY
+}
+
 copy_runtime_files_from_release() {
   local release_dir="$1"
-  mkdir -p "$DPMS_LIVE_ROOT/backend" "$DPMS_LIVE_ROOT/deploy" "$DPMS_LIVE_ROOT/frontend/releases"
+  mkdir -p "$DPMS_LIVE_ROOT/backend" "$DPMS_LIVE_ROOT/deploy"
   rsync -a --delete "$release_dir/backend/" "$DPMS_LIVE_ROOT/backend/" --exclude='__pycache__/' --exclude='*.pyc'
   rsync -a "$release_dir/deploy/" "$DPMS_LIVE_ROOT/deploy/" --exclude='.env*'
-  mkdir -p "$DPMS_LIVE_ROOT/frontend/releases/$(basename "$release_dir")"
+  local public_dir
+  for public_dir in "$DPMS_LIVE_ROOT/frontend" "$DPMS_LIVE_ROOT/frontend/releases" \
+    "$DPMS_LIVE_ROOT/frontend/releases/$(basename "$release_dir")"; do
+    [[ ! -L "$public_dir" ]] || die "frontend public directory must not be a symlink"
+    mkdir -p "$public_dir"
+    chmod 0755 "$public_dir"
+  done
   rm -rf "$DPMS_LIVE_ROOT/frontend/releases/$(basename "$release_dir")/dist"
   cp -a "$release_dir/frontend/dist" "$DPMS_LIVE_ROOT/frontend/releases/$(basename "$release_dir")/dist"
   local live_dist="$DPMS_LIVE_ROOT/frontend/dist"
@@ -717,6 +818,7 @@ copy_runtime_files_from_release() {
     # Keep old hashed chunks reachable for mobile browsers that still hold a cached index.html.
     rsync -a --ignore-existing "$live_dist/assets/" "$release_dist/assets/"
   fi
+  prepare_frontend_public_permissions "$release_dist" || die "frontend is not accessible to nginx; symlink unchanged"
   if [[ -e "$live_dist" && ! -L "$live_dist" ]]; then
     mv "$live_dist" "$DPMS_LIVE_ROOT/frontend/dist.previous.$(date -u +%Y%m%dT%H%M%SZ)"
   fi

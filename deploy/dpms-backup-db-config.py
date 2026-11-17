@@ -45,6 +45,10 @@ def main() -> None:
     username = unquote(parsed.username)
     password = unquote(parsed.password)
     sslmode = parse_qs(parsed.query).get("sslmode", ["prefer"])[0]
+    if sslmode in {"disable", "allow", "prefer"}:
+        sslmode = "require"
+    if sslmode not in {"require", "verify-ca", "verify-full"}:
+        raise SystemExit("unsupported database TLS mode")
 
     pgpass_path = output_dir / ".pgpass"
     pgpass_path.write_text(
