@@ -10,7 +10,20 @@ public interface IIngestionClient
     Task<SyncResult> Sync(SyncBatch batch, CancellationToken cancellation);
 }
 
-public sealed class DpmsClient : IIngestionClient, IDisposable
+public interface IConnectorClient : IIngestionClient, IDisposable { }
+
+public static class IngestionClient
+{
+    public static IConnectorClient Create(DeviceSession session, LocalState? state = null, Action<LocalState>? save = null) => session.Transport switch
+    {
+        ConnectorTransport.Https => new DpmsClient(session.ServerUrl, session.DeviceSecret),
+        ConnectorTransport.PostgreSql when session.Database is not null => new PostgresClient(session.Database, session.DeviceSecret,
+            state is not null && save is not null ? new PostgresRequestJournal(state, save) : null),
+        _ => throw new ConnectorException("local_state_invalid"),
+    };
+}
+
+public sealed class DpmsClient : IConnectorClient
 {
     private readonly HttpClient client;
     private readonly string? deviceSecret;

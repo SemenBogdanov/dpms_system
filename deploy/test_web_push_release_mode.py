@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,7 @@ import unittest
 
 SOURCE = Path(__file__).resolve().parent / "dpms-node.sh"
 TEXT = SOURCE.read_text()
+BASH = shutil.which("bash") or "/bin/bash"
 
 
 def function(name):
@@ -18,12 +20,14 @@ def function(name):
 
 
 CHECK = function("validate_web_push_release_mode")
+COMPOSE_SERVICES = function("compose_service_list")
 HEALTHCHECK = function("healthcheck")
 PROMOTE_CHECK = re.search(
     r"^  validate_env_file\n(.*?)^  runtime_migration_delta=",
     function("promote_release"), re.M | re.S,
 ).group(1)
 SYNTHETIC_VALUE = "public-synthetic-fixture-not-a-vapid-value"
+SERVICES = ("backend", "email-worker", "web-push-worker", "mail-import-worker")
 DOCKER_STUB = r'''
 import json
 import os
@@ -38,14 +42,20 @@ if args[0] == "run":
         sys.exit("mock Docker requires stdin attachment")
 elif args[0] == "compose":
     if args[-2:] == ["config", "--services"]:
-        print("email-worker\nweb-push-worker")
+        if os.environ["COMPOSE_FAILURE"] == "1":
+            sys.exit(1)
+        print(os.environ["COMPOSE_SERVICES"])
         sys.exit(0)
     if "ps" in args:
         if "--services" in args:
-            print("email-worker")
+            print("backend\nemail-worker\nmail-import-worker")
             if os.environ["WORKER_RUNNING"] == "1":
                 print("web-push-worker")
         sys.exit(0)
+    if args[-6:] == ["exec", "-T", "mail-import-worker", "python", "-m", "app.workers.mail_import_queue"]:
+        sys.exit("worker execution must be healthcheck-only")
+    if args[-7:] == ["exec", "-T", "mail-import-worker", "python", "-m", "app.workers.mail_import_queue", "--healthcheck"]:
+        sys.exit(0 if os.environ["MAIL_WORKER_HEALTHY"] == "1" else 1)
     if args[-5:] != ["exec", "-T", "web-push-worker", "python", "-"]:
         sys.exit("unexpected mock Docker compose command")
 else:
@@ -71,15 +81,26 @@ exec(compile(sys.stdin.read(), "<synthetic-web-push-check>", "exec"))
 
 class WebPushReleaseModeTests(unittest.TestCase):
     def run_check(self, mode=None, private_key=SYNTHETIC_VALUE, *, health=False,
-                  vapid_valid=True, worker_running=True, docker_failure=False):
+                  vapid_valid=True, worker_running=True, docker_failure=False,
+                  compose_failure=False, compose_services=SERVICES, timeout_match="",
+                  mail_worker_healthy=True):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             docker = root / "docker"
             docker.write_text("#!" + sys.executable + "\n" + DOCKER_STUB)
             docker.chmod(0o755)
             compose = root / "compose.yml"
-            compose.write_text("synthetic fixture; existence check only\n")
+            compose_text = "services:\n" + "".join(
+                "  " + service + ":\n    image: synthetic-image\n" for service in compose_services
+            )
+            compose.write_text(compose_text)
+            release = root / "release"
+            (release / "deploy").mkdir(parents=True)
+            (release / "deploy/docker-compose.prod.yml").write_text(compose_text)
+            connector = root / "connector"
+            connector.mkdir()
             calls = root / "calls.jsonl"
+            calls.touch()
             validations = root / "validations.log"
             # Never inherit the caller's runtime configuration or credentials.
             env = {
@@ -87,12 +108,18 @@ class WebPushReleaseModeTests(unittest.TestCase):
                 "DPMS_ENV_FILE": str(root / "synthetic-runtime-input"),
                 "DPMS_COMPOSE_FILE": str(compose),
                 "DPMS_COMPOSE_PROJECT": "isolated-test",
+                "DPMS_CONNECTOR_DIR": str(connector),
                 "DPMS_DOMAIN_PUNY": "example.invalid",
+                "SYNTHETIC_RELEASE": str(release),
                 "CALL_LOG": str(calls),
                 "VALIDATION_LOG": str(validations),
                 "VAPID_VALID": "1" if vapid_valid else "0",
                 "WORKER_RUNNING": "1" if worker_running else "0",
                 "DOCKER_FAILURE": "1" if docker_failure else "0",
+                "COMPOSE_FAILURE": "1" if compose_failure else "0",
+                "COMPOSE_SERVICES": "\n".join(compose_services),
+                "TIMEOUT_MATCH": timeout_match,
+                "MAIL_WORKER_HEALTHY": "1" if mail_worker_healthy else "0",
             }
             if mode is not None:
                 env["DPMS_WEB_PUSH_MODE"] = mode
@@ -103,10 +130,17 @@ log() { printf '%s\\n' "$*"; }
 die() { printf 'ERROR: %s\\n' "$*" >&2; exit 1; }
 curl() { printf '200'; }
 frontend_asset_healthcheck() { return 0; }
+timeout() {
+  [[ "$1" == --kill-after=5s && "$2" == 15s ]] || return 97
+  shift 2
+  if [[ -n "$TIMEOUT_MATCH" && " $* " == *"$TIMEOUT_MATCH"* ]]; then return 124; fi
+  "$@"
+}
 image_tag=synthetic-image
-''' + CHECK + "\n" + (HEALTHCHECK + "\nhealthcheck\n" if health else PROMOTE_CHECK)
+release_dir="$SYNTHETIC_RELEASE"
+''' + COMPOSE_SERVICES + "\n" + CHECK + "\n" + (HEALTHCHECK + "\nhealthcheck\n" if health else PROMOTE_CHECK)
             result = subprocess.run(
-                ["bash", "-c", script], env=env, capture_output=True, text=True,
+                [BASH, "-c", script], env=env, capture_output=True, text=True,
                 timeout=10,
             )
             docker_calls = [json.loads(line) for line in calls.read_text().splitlines()]
@@ -122,10 +156,11 @@ image_tag=synthetic-image
                 self.assertEqual(result.stdout, "web_push_mode=enabled\n")
                 self.assertEqual(result.stderr, "")
                 self.assertEqual(validations, ["called"])
-                self.assertEqual(len(calls), 1)
-                self.assertEqual(calls[0][:3], ["run", "-i", "--rm"])
-                self.assertIn("--env-file", calls[0])
-                self.assertEqual(calls[0][-3:], ["synthetic-image", "python", "-"])
+                self.assertEqual(len(calls), 2)
+                self.assertEqual(calls[0][-2:], ["config", "--services"])
+                self.assertEqual(calls[1][:3], ["run", "-i", "--rm"])
+                self.assertIn("--env-file", calls[1])
+                self.assertEqual(calls[1][-3:], ["synthetic-image", "python", "-"])
 
     def test_enabled_rejects_absent_or_empty_private_key(self):
         for mode in (None, "enabled"):
@@ -181,6 +216,7 @@ image_tag=synthetic-image
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("web_push_worker=" + status + "\n", result.stdout)
                 self.assertIn("healthcheck_ok=1\n", result.stdout)
+                self.assertIn("mail_import_worker=healthy\n", result.stdout)
                 self.assertEqual(validations, expected_calls)
                 self.assertTrue(any(call[-5:] == ["exec", "-T", "web-push-worker", "python", "-"] for call in calls))
 
@@ -202,8 +238,33 @@ image_tag=synthetic-image
         result, calls, validations = self.run_check("disabled", None, health=True, worker_running=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("web_push_worker=missing\n", result.stdout)
-        self.assertFalse(any("exec" in call for call in calls))
+        self.assertFalse(any(call[-5:] == ["exec", "-T", "web-push-worker", "python", "-"] for call in calls))
         self.assertEqual(validations, [])
+
+    def test_compose_failure_empty_and_timeout_block_both_gates(self):
+        for health in (False, True):
+            for changes in ({"compose_failure": True}, {"compose_services": ()},
+                            {"timeout_match": "config --services"}):
+                with self.subTest(health=health, changes=changes):
+                    result, calls, validations = self.run_check("disabled", None, health=health, **changes)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(validations, [])
+                    self.assertTrue(all(call[-2:] == ["config", "--services"] for call in calls))
+                    self.assertNotIn("healthcheck_ok=1", result.stdout)
+                    if health:
+                        self.assertIn("compose_services=failed", result.stdout)
+                    else:
+                        self.assertIn("candidate compose services could not be read", result.stderr)
+
+    def test_healthy_web_push_does_not_mask_failed_mail_worker(self):
+        for changes in ({"mail_worker_healthy": False}, {"timeout_match": "exec -T mail-import-worker"}):
+            with self.subTest(changes=changes):
+                result, _, validations = self.run_check(health=True, **changes)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(validations, ["called"])
+                self.assertIn("web_push_worker=healthy", result.stdout)
+                self.assertIn("mail_import_worker=missing", result.stdout)
+                self.assertNotIn("healthcheck_ok=1", result.stdout)
 
     def test_docker_failure_is_fail_closed_for_both_gates(self):
         for health in (False, True):

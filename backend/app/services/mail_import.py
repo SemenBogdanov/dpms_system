@@ -139,10 +139,22 @@ async def locked_device(db: AsyncSession, value: str, *, pairing: bool = False):
     if not re.fullmatch(r"[A-Za-z0-9_-]{43}", value):
         raise error(401, "invalid_device")
     hashed = digest(value, "pair" if pairing else "device")
+    return await locked_device_by_digest(db, hashed, pairing=pairing)
+
+
+async def locked_device_by_digest(
+    db: AsyncSession, hashed: str, *, pairing: bool = False, device_id: UUID | None = None,
+):
+    """Internal queue entry point; never accept digests as public bearer credentials."""
+    if not re.fullmatch(r"[0-9a-f]{64}", hashed):
+        raise error(401, "invalid_device")
     field = MailImportDevice.pairing_code_hash if pairing else MailImportDevice.device_secret_hash
-    identity = (await db.execute(select(
+    query = select(
         MailImportDevice.id, MailImportDevice.owner_id,
-    ).where(field == hashed))).one_or_none()
+    ).where(field == hashed)
+    if device_id is not None:
+        query = query.where(MailImportDevice.id == device_id)
+    identity = (await db.execute(query)).one_or_none()
     if identity is None:
         raise error(401, "invalid_device")
     owner = await require_owner(db, identity.owner_id, device=True)
@@ -248,6 +260,11 @@ def apply_item(
 
 async def sync_items(db: AsyncSession, value: str, body: SyncRequest) -> SyncRead:
     device, owner = await locked_device(db, value)
+    return await sync_locked(db, device, owner, body)
+
+
+async def sync_locked(db: AsyncSession, device: MailImportDevice, owner, body: SyncRequest) -> SyncRead:
+    """Shared import rules; caller holds the revalidated owner/device locks."""
     await lock_import(db, owner.id, body.mailbox_id)
     # Expiry may have elapsed while waiting for the mailbox/quota locks.
     now = utc_now()

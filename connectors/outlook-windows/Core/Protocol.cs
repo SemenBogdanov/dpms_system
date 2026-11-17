@@ -86,12 +86,18 @@ public sealed record PairResult(
     bool IncludeAttachments = false);
 public sealed record DeviceSession(
     string ServerUrl, Guid DeviceId, string DeviceSecret, string OwnerName, bool IncludeBody,
-    bool IncludeAttachments = false);
+    bool IncludeAttachments = false, ConnectorTransport Transport = ConnectorTransport.Https,
+    PostgresSettings? Database = null)
+{
+    public override string ToString() => "DeviceSession { redacted }";
+}
+public enum ConnectorTransport { Https = 0, PostgreSql = 1 }
 public sealed record SyncBatch(
     string MailboxId, string MailboxLabel, string SourceState, IReadOnlyList<ImportedItem> Items,
     int ProtocolVersion = 1, bool ScanComplete = true, int SkippedItems = 0);
 public sealed record SyncResult(
     int Accepted, int Created, int Updated, int Unchanged, int Stale, DateTimeOffset SyncedAt);
+public sealed record DatabaseRequest(Guid RequestId, string PayloadHash);
 
 public sealed class LocalState
 {
@@ -103,6 +109,7 @@ public sealed class LocalState
     public List<string> PendingEntries { get; set; } = [];
     public string? SnapshotMailboxId { get; set; }
     public int CycleSkipped { get; set; }
+    public DatabaseRequest? PendingDatabaseRequest { get; set; }
 }
 
 public sealed class ConnectorException(string code) : Exception(code)

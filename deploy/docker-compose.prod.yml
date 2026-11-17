@@ -45,6 +45,33 @@ services:
       backend:
         condition: service_healthy
 
+  mail-import-worker:
+    image: deploy-backend:latest
+    command: ["python", "-m", "app.workers.mail_import_queue"]
+    restart: always
+    stop_grace_period: 30s
+    env_file:
+      - ${DPMS_ENV_FILE:-/opt/dpms/deploy/.env.prod}
+    environment:
+      MAIL_IMPORT_QUEUE_HEARTBEAT: /tmp/mail-import-queue.heartbeat
+      MAIL_IMPORT_QUEUE_POLL_SECONDS: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    depends_on:
+      backend:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.workers.mail_import_queue", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
   deadline-worker:
     image: deploy-backend:latest
     command: ["python", "-m", "app.workers.deadline_reminders"]

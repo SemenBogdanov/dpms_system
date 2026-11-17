@@ -52,6 +52,7 @@ from app.models.email_outbox import EmailOutbox
 from app.models.web_push import WebPushDelivery, WebPushSubscription
 from app.models.graph_document import GraphDocument
 from app.models.mail_import import MailImportAttachment, MailImportDevice, MailImportItem
+from app.models.mail_import_queue import MailImportDBDevice, MailImportDBLogin, MailImportQueue
 from app.models.server_boot import ServerBootEvent, ServerBootImportStatus
 from app.models.messages import (
     CommunicationEvent,

@@ -264,9 +264,27 @@ print(mode)
 PY
 }
 
+compose_service_list() {
+  local compose_file="$1" services
+  local -a connector_files=()
+  if [[ -f "$DPMS_CONNECTOR_DIR/compose-activated" ]]; then
+    [[ -r "$DPMS_CONNECTOR_DIR/connector.override.json" ]] || return 1
+    connector_files=(-f "$DPMS_CONNECTOR_DIR/connector.override.json")
+  fi
+  services="$(DPMS_ENV_FILE="$DPMS_ENV_FILE" timeout --kill-after=5s 15s \
+    docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$compose_file" "${connector_files[@]}" \
+    config --services 2>/dev/null)" || return 1
+  [[ -n "$services" ]] || return 1
+  printf '%s\n' "$services"
+}
+
 healthcheck() {
-  local backend https_health https_root frontend_assets email_worker audit_worker deadline_worker server_boot_worker web_push_worker web_push_mode
+  local backend https_health https_root frontend_assets email_worker audit_worker deadline_worker server_boot_worker web_push_worker web_push_mode mail_import_worker configured_services
   log "== DPMS healthcheck =="
+  if ! configured_services="$(compose_service_list "$DPMS_COMPOSE_FILE")"; then
+    log "compose_services=failed"
+    return 1
+  fi
   log "time_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ -f "$DPMS_COMPOSE_FILE" ]]; then
     docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" ps || true
@@ -287,9 +305,7 @@ healthcheck() {
     email_worker=missing
   fi
   web_push_worker=not_configured
-  if [[ -f "$DPMS_COMPOSE_FILE" ]] && \
-    docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
-      config --services 2>/dev/null | grep -Fx 'web-push-worker' >/dev/null; then
+  if grep -Fx 'web-push-worker' <<< "$configured_services" >/dev/null; then
     if docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
       ps --status running --services 2>/dev/null | grep -Fx 'web-push-worker' >/dev/null && \
       web_push_mode="$(validate_web_push_release_mode docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
@@ -303,9 +319,7 @@ healthcheck() {
       web_push_worker=missing
     fi
   fi
-  if [[ -f "$DPMS_COMPOSE_FILE" ]] && \
-    docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
-      config --services 2>/dev/null | grep -Fx 'audit-worker' >/dev/null; then
+  if grep -Fx 'audit-worker' <<< "$configured_services" >/dev/null; then
     if docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
       ps --status running --services 2>/dev/null | grep -Fx 'audit-worker' >/dev/null; then
       audit_worker=running
@@ -316,9 +330,7 @@ healthcheck() {
     audit_worker=not_configured
   fi
   deadline_worker=not_configured
-  if [[ -f "$DPMS_COMPOSE_FILE" ]] && \
-    docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
-      config --services 2>/dev/null | grep -Fx 'deadline-worker' >/dev/null; then
+  if grep -Fx 'deadline-worker' <<< "$configured_services" >/dev/null; then
     if docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
       ps --status running --services 2>/dev/null | grep -Fx 'deadline-worker' >/dev/null; then
       if docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
@@ -332,9 +344,7 @@ healthcheck() {
     fi
   fi
   server_boot_worker=not_configured
-  if [[ -f "$DPMS_COMPOSE_FILE" ]] && \
-    docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
-      config --services 2>/dev/null | grep -Fx 'server-boot-worker' >/dev/null; then
+  if grep -Fx 'server-boot-worker' <<< "$configured_services" >/dev/null; then
     if docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
       ps --status running --services 2>/dev/null | grep -Fx 'server-boot-worker' >/dev/null && \
       docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
@@ -344,6 +354,17 @@ healthcheck() {
       server_boot_worker=missing
     fi
   fi
+  mail_import_worker=not_configured
+  if grep -Fx 'mail-import-worker' <<< "$configured_services" >/dev/null; then
+    mail_import_worker=missing
+    if timeout --kill-after=5s 15s docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
+      ps --status running --services 2>/dev/null | grep -Fx 'mail-import-worker' >/dev/null && \
+      timeout --kill-after=5s 15s docker compose -p "$DPMS_COMPOSE_PROJECT" -f "$DPMS_COMPOSE_FILE" \
+      exec -T mail-import-worker python -m app.workers.mail_import_queue --healthcheck >/dev/null 2>&1; then
+      mail_import_worker=healthy
+    fi
+  fi
+  log "mail_import_worker=$mail_import_worker"
   log "server_boot_worker=$server_boot_worker"
   log "backend_health=$backend"
   log "https_health=$https_health"
@@ -356,7 +377,8 @@ healthcheck() {
   if [[ "$backend" == 200 && "$https_health" == 200 && "$https_root" == 200 && \
     "$frontend_assets" == ok && "$email_worker" == running && \
     "$audit_worker" != missing && "$deadline_worker" != missing && \
-    "$web_push_worker" != missing && "$server_boot_worker" != missing ]]; then
+    "$web_push_worker" != missing && "$server_boot_worker" != missing && \
+    "$mail_import_worker" != missing ]]; then
     log "healthcheck_ok=1"
     return 0
   fi
@@ -934,7 +956,7 @@ promote_release() {
       *) die "unknown promote arg: $1" ;;
     esac
   done
-  local release_dir manifest expected_approval sha image_tag audit_worker_image_tag migrations_count backup_dir network_args=() net_args runtime_migration_delta web_push_mode
+  local release_dir manifest expected_approval sha image_tag audit_worker_image_tag migrations_count backup_dir network_args=() net_args runtime_migration_delta web_push_mode configured_services
   local runtime_services=(backend email-worker audit-worker web-push-worker)
   release_dir="$(release_dir_for_id "$release_id")"
   manifest="$(manifest_path "$release_dir")"
@@ -957,6 +979,8 @@ promote_release() {
       die "host boot recorder must be enabled and active before this release"
   fi
   validate_env_file
+  configured_services="$(compose_service_list "$release_dir/deploy/docker-compose.prod.yml")" \
+    || die "candidate compose services could not be read"
   web_push_mode="$(validate_web_push_release_mode docker run -i --rm --env-file "$DPMS_ENV_FILE" "$image_tag" 2>/dev/null)" \
     || die "Web Push release mode or VAPID configuration is invalid"
   case "$web_push_mode" in
@@ -974,6 +998,7 @@ promote_release() {
   local_model_guard_pause
   backup_dir="$(backup_app_state "$release_id")"
   log "app_backup_dir=$backup_dir"
+  stop_mail_import_worker || die "mail-import worker could not be stopped before promote"
   if [[ "$migrations_count" -gt 0 ]]; then
     log "external_db_backup_id=$backup_id"
     log "running approved Alembic migrations"
@@ -990,11 +1015,14 @@ promote_release() {
   install_nginx_config_from_release "$release_dir"
   install_tool_from_release "$release_dir"
   cd "$DPMS_LIVE_ROOT/deploy"
-  if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fx deadline-worker >/dev/null; then
+  if grep -Fx deadline-worker <<< "$configured_services" >/dev/null; then
     runtime_services+=(deadline-worker)
   fi
-  if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fx server-boot-worker >/dev/null; then
+  if grep -Fx server-boot-worker <<< "$configured_services" >/dev/null; then
     runtime_services+=(server-boot-worker)
+  fi
+  if grep -Fx mail-import-worker <<< "$configured_services" >/dev/null; then
+    runtime_services+=(mail-import-worker)
   fi
   local -a connector_files=()
   if [[ -f "$DPMS_CONNECTOR_DIR/compose-activated" ]]; then
@@ -1011,6 +1039,19 @@ promote_release() {
   log "promote_ok=1"
   log "release_id=$release_id"
   log "rollback_command=/opt/dpms-tools/dpms-node.sh rollback $backup_dir"
+}
+
+stop_mail_import_worker() {
+  local container_ids container
+  container_ids="$(timeout --kill-after=5s 15s docker ps -aq \
+    --filter "label=com.docker.compose.project=$DPMS_COMPOSE_PROJECT" \
+    --filter "label=com.docker.compose.service=mail-import-worker")" || return 1
+  [[ -n "$container_ids" ]] || return 0
+  while IFS= read -r container; do
+    # Disable daemon-restart resurrection before stopping any in-flight transaction.
+    timeout --kill-after=5s 15s docker update --restart=no "$container" >/dev/null || return 1
+    timeout --kill-after=5s 45s docker stop --time 30 "$container" >/dev/null || return 1
+  done <<< "$container_ids"
 }
 
 stop_retired_server_boot_worker() {
@@ -1031,9 +1072,10 @@ stop_retired_server_boot_worker() {
 rollback_release() {
   require_root
   with_lock
-  local backup_dir="${1:-}"
+  local backup_dir="${1:-}" configured_services
   local runtime_services=(backend email-worker)
   [[ -n "$backup_dir" && -d "$backup_dir" ]] || die "usage: rollback <backup-dir>"
+  stop_mail_import_worker || die "mail-import worker could not be stopped before rollback"
   local_model_guard_pause
   if [[ -f "$backup_dir/previous-backend-image-id.txt" ]]; then
     local previous_image
@@ -1082,27 +1124,32 @@ rollback_release() {
     cp "$backup_dir/current-release-before.txt" "$DPMS_LIVE_ROOT/current-release"
   fi
   cd "$DPMS_LIVE_ROOT/deploy"
-  if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fx audit-worker >/dev/null; then
+  configured_services="$(compose_service_list "$DPMS_COMPOSE_FILE")" \
+    || die "restored compose services could not be read"
+  if grep -Fx audit-worker <<< "$configured_services" >/dev/null; then
     runtime_services+=(audit-worker)
   else
     docker rm -f deploy-audit-worker-1 >/dev/null 2>&1 || true
   fi
-  if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fx deadline-worker >/dev/null; then
+  if grep -Fx deadline-worker <<< "$configured_services" >/dev/null; then
     runtime_services+=(deadline-worker)
   else
     docker ps -q --filter "label=com.docker.compose.project=$DPMS_COMPOSE_PROJECT" \
       --filter "label=com.docker.compose.service=deadline-worker" | xargs -r docker stop >/dev/null
   fi
-  if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fx web-push-worker >/dev/null; then
+  if grep -Fx web-push-worker <<< "$configured_services" >/dev/null; then
     runtime_services+=(web-push-worker)
   else
     docker ps -q --filter "label=com.docker.compose.project=$DPMS_COMPOSE_PROJECT" \
       --filter "label=com.docker.compose.service=web-push-worker" | xargs -r docker stop >/dev/null
   fi
-  if DPMS_ENV_FILE="$DPMS_ENV_FILE" docker compose -p "$DPMS_COMPOSE_PROJECT" -f docker-compose.prod.yml config --services | grep -Fx server-boot-worker >/dev/null; then
+  if grep -Fx server-boot-worker <<< "$configured_services" >/dev/null; then
     runtime_services+=(server-boot-worker)
   else
     stop_retired_server_boot_worker
+  fi
+  if grep -Fx mail-import-worker <<< "$configured_services" >/dev/null; then
+    runtime_services+=(mail-import-worker)
   fi
   local -a connector_files=()
   if [[ -f "$DPMS_CONNECTOR_DIR/compose-activated" ]]; then

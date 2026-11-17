@@ -11,7 +11,21 @@ internal sealed class MainForm : Form
     private const string RunPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private readonly ProtectedState storage = new();
     private LocalState state = new();
+    private readonly ComboBox transport = new() { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly TextBox server = new() { Dock = DockStyle.Fill, PlaceholderText = "https://", MaxLength = 500 };
+    private readonly TextBox databaseHost = new() { Dock = DockStyle.Fill, MaxLength = 253 };
+    private readonly NumericUpDown databasePort = new() { Minimum = 1, Maximum = 65535, Value = 58923, Width = 100 };
+    private readonly TextBox databaseName = new() { Dock = DockStyle.Fill };
+    private readonly TextBox databaseSchema = new() { Dock = DockStyle.Fill };
+    private readonly TextBox databaseUsername = new() { Dock = DockStyle.Fill };
+    private readonly TextBox databasePassword = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true };
+    private readonly TextBox databaseCertificate = new() { Dock = DockStyle.Fill };
+    private readonly TextBox deviceName = new() { Dock = DockStyle.Fill, Text = Environment.MachineName, MaxLength = 100 };
+    private readonly Button selectCertificate = new() { Text = "...", AutoSize = true, AccessibleName = "Выбрать сертификат CA" };
+    private readonly ToolTip tooltips = new();
+    private readonly TableLayoutPanel httpsInputs = CreateInputs();
+    private readonly TableLayoutPanel databaseInputs = CreateInputs();
+    private readonly TableLayoutPanel deviceInputs = CreateInputs();
     private readonly TextBox code = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true, MaxLength = 100 };
     private readonly Button pair = new() { Text = "Подключить", AutoSize = true };
     private readonly Button start = new() { Text = "Запустить", AutoSize = true };
@@ -19,10 +33,10 @@ internal sealed class MainForm : Form
     private readonly Button unlink = new() { Text = "Отвязать", AutoSize = true };
     private readonly NumericUpDown days = new() { Minimum = 1, Maximum = 90, Value = 30, Width = 90 };
     private readonly CheckBox autorun = new() { Text = "Запускать при входе в Windows", AutoSize = true };
-    private readonly Label account = new() { AutoSize = true, MaximumSize = new Size(620, 0) };
-    private readonly Label status = new() { Text = "Не подключено", AutoSize = true, MaximumSize = new Size(620, 0) };
-    private readonly Label details = new() { AutoSize = true, MaximumSize = new Size(620, 0) };
-    private readonly Label last = new() { AutoSize = true, MaximumSize = new Size(620, 0) };
+    private readonly Label account = new() { AutoSize = true };
+    private readonly Label status = new() { Text = "Не подключено", AutoSize = true };
+    private readonly Label details = new() { AutoSize = true };
+    private readonly Label last = new() { AutoSize = true };
     private readonly NotifyIcon tray = new() { Icon = SystemIcons.Application, Text = "DPMS Outlook", Visible = true };
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 60_000 };
     private CancellationTokenSource? operation;
@@ -36,14 +50,21 @@ internal sealed class MainForm : Form
 
     public MainForm(bool minimized)
     {
+        SuspendLayout();
         Text = "DPMS Outlook";
         Icon = SystemIcons.Application;
         Font = new Font("Segoe UI", 10);
+        AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(680, 570);
-        MinimumSize = new Size(640, 550);
+        ClientSize = new Size(720, 720);
+        MinimumSize = new Size(480, 320);
         StartPosition = FormStartPosition.CenterScreen;
+        transport.Items.AddRange(["PostgreSQL", "HTTPS"]);
+        transport.SelectedIndex = 0;
         BuildLayout();
+        transport.SelectedIndexChanged += (_, _) => RefreshTransport();
+        selectCertificate.Click += (_, _) => SelectCertificate();
+        tooltips.SetToolTip(selectCertificate, "Выбрать сертификат CA");
         var menu = new ContextMenuStrip();
         menu.Items.Add("Открыть", null, (_, _) => ShowWindow());
         menu.Items.Add("Синхронизировать", null, async (_, _) => await SyncNow());
@@ -74,7 +95,7 @@ internal sealed class MainForm : Form
                 throw new ConnectorException("local_state_invalid");
             ScanSnapshot.Validate(state.PendingEntries);
             days.Value = state.HistoryDays;
-            server.Text = state.Session?.ServerUrl ?? "";
+            LoadConnectionFields();
         }
         catch
         {
@@ -98,17 +119,28 @@ internal sealed class MainForm : Form
         RefreshState();
         Shown += async (_, _) =>
         {
+            var area = Screen.FromControl(this).WorkingArea;
+            if (Width > area.Width || Height > area.Height)
+            {
+                var width = Math.Min(Width, area.Width);
+                var height = Math.Min(Height, area.Height);
+                Bounds = new Rectangle(area.Left + (area.Width - width) / 2,
+                    area.Top + (area.Height - height) / 2, width, height);
+            }
             if (minimized && !invalidState && state.Session is not null) Hide();
             timer.Start();
             if (state.AutoSync && !invalidState) await SyncNow();
         };
+        ResumeLayout(performLayout: true);
     }
 
     private void BuildLayout()
     {
+        var viewport = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         var layout = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, Padding = new Padding(24), ColumnCount = 1, AutoScroll = true,
+            Dock = DockStyle.Top, Padding = new Padding(24), ColumnCount = 1, RowCount = 0,
+            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         void Row(Control control)
@@ -120,17 +152,40 @@ internal sealed class MainForm : Form
         }
         Row(new Label { Text = "Outlook", Font = new Font(Font.FontFamily, 18, FontStyle.Bold), AutoSize = true });
         Row(account);
-        var inputs = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true };
-        inputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
-        inputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        inputs.Controls.Add(new Label { Text = "Адрес приёмника", AutoSize = true, Padding = new Padding(0, 5, 0, 0) }, 0, 0);
-        inputs.Controls.Add(server, 1, 0);
-        inputs.Controls.Add(new Label { Text = "Код подключения", AutoSize = true, Padding = new Padding(0, 5, 0, 0) }, 0, 1);
-        inputs.Controls.Add(code, 1, 1);
-        inputs.Controls.Add(new Label { Text = "Период, дней", AutoSize = true, Padding = new Padding(0, 5, 0, 0) }, 0, 2);
-        inputs.Controls.Add(days, 1, 2);
+        var connection = CreateInputs();
+        AddInput(connection, "Подключение", transport);
+        Row(connection);
+        AddInput(httpsInputs, "Адрес приёмника", server);
+        AddInput(httpsInputs, "Код подключения", code);
+        Row(httpsInputs);
+        AddInput(databaseInputs, "Узел БД", databaseHost);
+        AddInput(databaseInputs, "Порт", databasePort);
+        AddInput(databaseInputs, "База данных", databaseName);
+        AddInput(databaseInputs, "Схема", databaseSchema);
+        AddInput(databaseInputs, "Пользователь БД", databaseUsername);
+        AddInput(databaseInputs, "Пароль БД", databasePassword);
+        var certificate = new TableLayoutPanel
+        {
+            ColumnCount = 2, RowCount = 1, Dock = DockStyle.Top, AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = Padding.Empty,
+        };
+        certificate.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        certificate.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        certificate.Controls.Add(databaseCertificate, 0, 0);
+        certificate.Controls.Add(selectCertificate, 1, 0);
+        databaseCertificate.PlaceholderText = "Необязательно";
+        AddInput(databaseInputs, "Сертификат CA", certificate);
+        Row(databaseInputs);
+        AddInput(deviceInputs, "Имя устройства", deviceName);
+        Row(deviceInputs);
+        var inputs = CreateInputs();
+        AddInput(inputs, "Период, дней", days);
         Row(inputs);
-        var commands = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Top, WrapContents = true };
+        var commands = new FlowLayoutPanel
+        {
+            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Top, WrapContents = true,
+        };
         foreach (var button in new[] { pair, start, sync, unlink })
         {
             button.Margin = new Padding(0, 0, 8, 8);
@@ -142,33 +197,142 @@ internal sealed class MainForm : Form
         Row(details);
         Row(last);
         Row(autorun);
-        Controls.Add(layout);
+        layout.SizeChanged += (_, _) =>
+        {
+            var width = Math.Max(1, layout.ClientSize.Width - layout.Padding.Horizontal);
+            foreach (var label in new[] { account, status, details, last })
+                label.MaximumSize = new Size(width, 0);
+            commands.MaximumSize = new Size(width, 0);
+        };
+        viewport.Controls.Add(layout);
+        Controls.Add(viewport);
+        RefreshTransport();
     }
 
-    private async Task Pair()
+    private static TableLayoutPanel CreateInputs()
+    {
+        var inputs = new TableLayoutPanel
+        {
+            ColumnCount = 2, RowCount = 0, Dock = DockStyle.Top,
+            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+        };
+        inputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
+        inputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        return inputs;
+    }
+
+    private static void AddInput(TableLayoutPanel inputs, string text, Control control)
+    {
+        var row = inputs.RowCount++;
+        inputs.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        inputs.Controls.Add(new Label
+        {
+            Text = text, AutoSize = true, Padding = new Padding(0, 5, 0, 0),
+            Anchor = AnchorStyles.Left | AnchorStyles.Top,
+        }, 0, row);
+        inputs.Controls.Add(control, 1, row);
+    }
+
+    private ConnectorTransport SelectedTransport => transport.SelectedIndex == 0
+        ? ConnectorTransport.PostgreSql : ConnectorTransport.Https;
+
+    private void RefreshTransport()
+    {
+        var database = SelectedTransport == ConnectorTransport.PostgreSql;
+        databaseInputs.Visible = database;
+        deviceInputs.Visible = database && state.Session is null;
+        httpsInputs.Visible = !database;
+    }
+
+    private void LoadConnectionFields()
+    {
+        var session = state.Session;
+        if (session is not null && session.Transport is not (ConnectorTransport.Https or ConnectorTransport.PostgreSql))
+            throw new ConnectorException("local_state_invalid");
+        var settings = session?.Transport == ConnectorTransport.PostgreSql
+            ? session.Database ?? throw new ConnectorException("local_state_invalid") : null;
+        settings?.Validate();
+        transport.SelectedIndex = session?.Transport == ConnectorTransport.Https ? 1 : 0;
+        server.Text = session?.ServerUrl ?? "";
+        databaseHost.Text = settings?.Host ?? "";
+        databasePort.Value = settings?.Port ?? 58923;
+        databaseName.Text = settings?.Database ?? "";
+        databaseSchema.Text = settings?.Schema ?? "";
+        databaseUsername.Text = settings?.Username ?? "";
+        databasePassword.Text = settings?.Password ?? "";
+        databaseCertificate.Text = settings?.RootCertificate ?? "";
+        deviceName.Text = Environment.MachineName;
+    }
+
+    private PostgresSettings ReadDatabaseSettings()
+    {
+        var settings = new PostgresSettings(databaseHost.Text.Trim(), (int)databasePort.Value,
+            databaseName.Text.Trim(), databaseSchema.Text.Trim(), databaseUsername.Text.Trim(),
+            databasePassword.Text, string.IsNullOrWhiteSpace(databaseCertificate.Text) ? null : databaseCertificate.Text.Trim());
+        settings.Validate();
+        return settings;
+    }
+
+    private void SelectCertificate()
     {
         if (busy || invalidState || state.Session is not null) return;
         try
         {
-            var uri = Protocol.Server(server.Text);
-            var value = code.Text.Trim();
-            if (value.Length != 43 || value.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '_' or '-')))
+            using var picker = new OpenFileDialog
+            {
+                Title = "Сертификат центра сертификации",
+                Filter = "Сертификаты CA (*.pem;*.crt;*.cer)|*.pem;*.crt;*.cer|Все файлы (*.*)|*.*",
+                CheckFileExists = true, Multiselect = false, RestoreDirectory = true, AddToRecent = false,
+            };
+            if (picker.ShowDialog(this) == DialogResult.OK) databaseCertificate.Text = picker.FileName;
+        }
+        catch { status.Text = "Не удалось выбрать сертификат CA."; }
+    }
+
+    private async Task Pair()
+    {
+        if (busy || invalidState || exiting || state.Session is not null) return;
+        var startDatabaseSync = false;
+        try
+        {
+            var selectedTransport = SelectedTransport;
+            var database = selectedTransport == ConnectorTransport.PostgreSql ? ReadDatabaseSettings() : null;
+            var serverUrl = selectedTransport == ConnectorTransport.Https ? Protocol.Server(server.Text).AbsoluteUri : "";
+            var value = database is not null ? deviceName.Text.Trim() : code.Text.Trim();
+            if (database is not null)
+            {
+                if (value.Length is < 1 or > 100 || value.Any(char.IsControl))
+                    throw new ConnectorException("invalid_device_name");
+            }
+            else if (value.Length != 43 || value.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '_' or '-')))
                 throw new ConnectorException("invalid_pairing_code");
             SetBusy(true);
             operation = new CancellationTokenSource();
             status.Text = "Подключение...";
-            using var client = new DpmsClient(uri.AbsoluteUri);
-            var result = await client.Pair(value, operation.Token);
+            PairResult result;
+            if (database is not null)
+            {
+                using var client = new PostgresClient(database);
+                result = await client.Connect(value, operation.Token);
+            }
+            else
+            {
+                using var client = new DpmsClient(serverUrl);
+                result = await client.Pair(value, operation.Token);
+            }
             var next = new LocalState
             {
                 HistoryDays = (int)days.Value,
-                Session = new DeviceSession(uri.AbsoluteUri, result.DeviceId, result.DeviceSecret,
-                    result.OwnerName, result.IncludeBody, result.IncludeAttachments),
+                AutoSync = selectedTransport == ConnectorTransport.PostgreSql,
+                Session = new DeviceSession(serverUrl, result.DeviceId, result.DeviceSecret,
+                    result.OwnerName, result.IncludeBody, result.IncludeAttachments,
+                    Transport: selectedTransport, Database: database),
             };
-            // Keep automatic import off until the user explicitly starts this device.
+            // The explicit database connect action starts import only after protected persistence succeeds.
             storage.Save(next);
             state = next;
-            status.Text = "Подключено. Синхронизация на паузе.";
+            startDatabaseSync = next.AutoSync;
+            status.Text = next.AutoSync ? "Подключено. Синхронизация включена." : "Подключено. Синхронизация на паузе.";
         }
         catch (Exception error) { ShowError(error); }
         finally
@@ -177,6 +341,7 @@ internal sealed class MainForm : Form
             operation?.Dispose(); operation = null;
             SetBusy(false);
         }
+        if (startDatabaseSync && state.AutoSync && !exiting) await SyncNow();
     }
 
     private async Task Toggle()
@@ -216,13 +381,13 @@ internal sealed class MainForm : Form
         try
         {
             var session = state.Session ?? throw new ConnectorException("not_paired");
+            using var client = IngestionClient.Create(session, state, storage.Save);
             status.Text = "Чтение Outlook...";
             var scan = await Scan(new ScanOptions(session.IncludeBody, session.IncludeAttachments,
                 state.HistoryDays, Acknowledged: state.Acknowledged, PendingEntries: state.PendingEntries,
                 SnapshotMailboxId: state.SnapshotMailboxId), operation.Token);
             if (scan.Error is not null) throw new ConnectorException(scan.Error);
             status.Text = "Передача в DPMS...";
-            using var client = new DpmsClient(session.ServerUrl, session.DeviceSecret);
             var cancellation = operation.Token;
             var report = await Task.Run(() => new SyncEngine().Deliver(scan, state, client, storage.Save, cancellation), cancellation);
             status.Text = report.Incomplete ? "Перенос неполный" : "Синхронизация завершена";
@@ -320,6 +485,7 @@ internal sealed class MainForm : Form
             storage.Save(next);
             state = next;
             invalidState = false;
+            LoadConnectionFields();
             code.Clear(); details.Text = "";
             status.Text = "Не подключено";
             RefreshState();
@@ -356,7 +522,8 @@ internal sealed class MainForm : Form
             + (session.IncludeBody ? "Полный текст" : "Только метаданные")
             + (session.IncludeAttachments ? ", вложения включены" : ", без вложений");
         pair.Enabled = !busy && !invalidState && session is null;
-        server.Enabled = code.Enabled = pair.Enabled;
+        transport.Enabled = httpsInputs.Enabled = databaseInputs.Enabled = deviceInputs.Enabled = pair.Enabled;
+        RefreshTransport();
         days.Enabled = !busy && !invalidState;
         start.Enabled = !invalidState && !changingSync && session is not null && (!busy || state.AutoSync);
         start.Text = state.AutoSync ? "Пауза" : "Запустить";
@@ -371,17 +538,34 @@ internal sealed class MainForm : Form
         if (exiting) return;
         status.Text = error switch
         {
+            ConnectorException { Code: "pair_uncertain" } when SelectedTransport == ConnectorTransport.PostgreSql
+                => ErrorText("connect_uncertain"),
             ConnectorException known => ErrorText(known.Code),
             OperationCanceledException => state.AutoSync ? "Нет ответа. Повтор при следующей синхронизации." : "На паузе",
             HttpRequestException => "Нет соединения с приёмником. Доставка будет повторена.",
-            ArgumentException => "Нужен HTTPS-адрес без пути, параметров и пароля.",
-            _ => "Операция не завершена. Повторите попытку; при сбое подключения создайте новый код в DPMS.",
+            ArgumentException => SelectedTransport == ConnectorTransport.PostgreSql
+                ? ErrorText("db_settings_invalid") : "Нужен HTTPS-адрес без пути, параметров и пароля.",
+            _ => SelectedTransport == ConnectorTransport.PostgreSql
+                ? "Операция не завершена. Проверьте параметры БД и доступ устройства."
+                : "Операция не завершена. Повторите попытку; при сбое подключения создайте новый код в DPMS.",
         };
     }
 
     private static string ErrorText(string code) => code switch
     {
         "invalid_pairing_code" => "Некорректный код подключения.",
+        "invalid_device_name" => "Укажите имя устройства от 1 до 100 символов без управляющих символов.",
+        "connect_uncertain" => "Результат подключения неизвестен. Перед повтором попросите администратора проверить привязку устройства.",
+        "db_settings_invalid" => "Некорректные параметры БД. Проверьте узел, порт, базу, схему, пользователя, пароль и сертификат CA.",
+        "db_unavailable" => "Нет соединения с БД. Проверьте доступность сервера и параметры подключения.",
+        "db_tls_failed" => "Не удалось установить защищённое соединение с БД. Проверьте имя сервера и сертификат CA.",
+        "db_tls_configuration" => "Заблокированы неявные настройки TLS PostgreSQL (PGSSL* или локальные клиентские сертификаты). Выберите сертификат CA явно и запустите коннектор в чистом окружении без этих настроек.",
+        "db_login_failed" => "БД отклонила вход. Проверьте пользователя, пароль и права доступа.",
+        "db_login_not_provisioned" => "Вход в БД выполнен, но учётная запись не связана с пользователем DPMS. Попросите администратора настроить это соответствие на сервере. Менять пароль не нужно.",
+        "db_not_installed" => "Приёмник DPMS не установлен в указанной базе и схеме. Обратитесь к администратору.",
+        "db_pending" => "Обработка в БД продолжается. Доставка будет повторена без создания дубликатов.",
+        "db_queue_full" => "Очередь приёмника БД заполнена. Доставка будет повторена.",
+        "pair_uncertain" => "Результат подключения неизвестен. Проверьте устройства в DPMS; перед повтором отзовите незавершённое подключение и создайте новый код.",
         "access_denied" => "Доступ отклонён или отозван. Проверьте подключение в DPMS.",
         "outlook_unavailable" => "Classic Outlook недоступен. Откройте Outlook с рабочим профилем.",
         "outlook_timeout" => "Outlook не ответил за три минуты. Проверьте его окна и запросы разрешений.",
@@ -430,7 +614,7 @@ internal sealed class MainForm : Form
                 }
             }
             catch { }
-            tray.Dispose(); timer.Dispose();
+            tray.Dispose(); timer.Dispose(); tooltips.Dispose();
         }
         base.OnFormClosing(e);
     }

@@ -3,12 +3,15 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 
 SOURCE = Path(__file__).resolve().parents[1] / "dpms-node.sh"
+BASH = shutil.which("bash") or "/bin/bash"
 FUNCTION = re.search(
     r"^stop_retired_server_boot_worker\(\) \{\n.*?^\}",
     SOURCE.read_text(), re.M | re.S,
@@ -21,7 +24,7 @@ class BootWorkerReleaseTests(unittest.TestCase):
             root = Path(temp)
             docker = root / "docker"
             docker.write_text(
-                "#!/usr/bin/env python3\n"
+                "#!" + sys.executable + "\n"
                 "import json,os,sys\n"
                 "with open(os.environ['CALL_LOG'],'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
                 "if sys.argv[1]=='ps' and os.environ['FAIL_LIST']=='1': sys.exit(1)\n"
@@ -30,13 +33,14 @@ class BootWorkerReleaseTests(unittest.TestCase):
             )
             docker.chmod(0o755)
             log = root / "calls.jsonl"
+            log.touch()
             result = subprocess.run(
-                ["bash", "-c", "set -e\nDPMS_COMPOSE_PROJECT=isolated-test\n" + FUNCTION + "\nstop_retired_server_boot_worker"],
-                env={**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                [BASH, "-c", "set -e\nDPMS_COMPOSE_PROJECT=isolated-test\n" + FUNCTION + "\nstop_retired_server_boot_worker"],
+                env={"PATH": str(root) + os.pathsep + os.defpath,
                      "CALL_LOG": str(log), "TEST_IDS": ids,
                      "FAIL_LIST": "1" if fail_list else "0",
                      "FAIL_UPDATE": "1" if fail_update else "0"},
-                capture_output=True, text=True,
+                capture_output=True, text=True, timeout=10,
             )
             calls = [json.loads(line) for line in log.read_text().splitlines()]
             return result, calls
