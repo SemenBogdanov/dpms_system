@@ -58,11 +58,10 @@ internal static class InstanceHandoff
             using var peer = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             peer.CancelAfter(PeerTimeout);
             if (await TryConfirmAsync(server, command, reply, peer.Token).ConfigureAwait(false))
-            {
                 requestExit();
-                return;
-            }
 
+            // On a failed shutdown the same instance can accept another replacement request.
+            if (cancellation.IsCancellationRequested) return;
             server.Disconnect();
         }
     }

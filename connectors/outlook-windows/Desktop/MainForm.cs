@@ -521,6 +521,7 @@ internal sealed class MainForm : Form
     private async Task<ScanResult> Scan(ScanOptions options, CancellationToken cancellation)
     {
         await StopScanner();
+        cancellation.ThrowIfCancellationRequested();
         AttachmentStaging.Cleanup();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         timeout.CancelAfter(TimeSpan.FromMinutes(3));
@@ -597,7 +598,7 @@ internal sealed class MainForm : Form
         if (busy || exiting) return;
         if (MessageBox.Show(this,
             "Удалить подключение с этого компьютера? Доступ устройства на сервере отзывается отдельно в настройках DPMS. Импортированные данные сохранятся.",
-            "Отвязать Outlook", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes || exiting) return;
+            "Отвязать Outlook", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes || busy || exiting) return;
         try
         {
             var next = new LocalState { HistoryDays = (int)days.Value };

@@ -10,18 +10,28 @@ public sealed class InstanceHandoffTests
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(10);
 
     [Fact]
-    public async Task ValidRequestReturnsOldPidAndDispatchesExactlyOnce()
+    public async Task ValidRequestsReturnOldPidAndDispatchOncePerRequest()
     {
         var name = Guid.NewGuid().ToString("N");
         using var server = InstanceHandoff.CreateServer(name);
         using var deadline = new CancellationTokenSource(TestTimeout);
         var requests = 0;
+        var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var listener = InstanceHandoff.ListenAsync(server, Environment.ProcessId,
-            () => Interlocked.Increment(ref requests), deadline.Token);
+            () =>
+            {
+                if (Interlocked.Increment(ref requests) == 1) first.TrySetResult();
+                else second.TrySetResult();
+            }, deadline.Token);
 
         Assert.Equal(Environment.ProcessId, await InstanceHandoff.RequestExitAsync(name, deadline.Token));
-        await listener.WaitAsync(deadline.Token);
+        await first.Task.WaitAsync(deadline.Token);
         Assert.Equal(1, requests);
+        Assert.Equal(Environment.ProcessId, await InstanceHandoff.RequestExitAsync(name, deadline.Token));
+        await second.Task.WaitAsync(deadline.Token);
+        Assert.Equal(2, requests);
+        await StopListener(deadline, listener);
     }
 
     [Theory]
@@ -33,8 +43,9 @@ public sealed class InstanceHandoffTests
         using var server = InstanceHandoff.CreateServer(name);
         using var deadline = new CancellationTokenSource(TestTimeout);
         var requests = 0;
+        var dispatched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var listener = InstanceHandoff.ListenAsync(server, Environment.ProcessId,
-            () => Interlocked.Increment(ref requests), deadline.Token);
+            () => { Interlocked.Increment(ref requests); dispatched.TrySetResult(); }, deadline.Token);
 
         using (var client = new NamedPipeClientStream(".", name, PipeDirection.InOut,
                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly))
@@ -49,8 +60,9 @@ public sealed class InstanceHandoffTests
         Assert.False(listener.IsCompleted);
         Assert.Equal(0, Volatile.Read(ref requests));
         Assert.Equal(Environment.ProcessId, await InstanceHandoff.RequestExitAsync(name, deadline.Token));
-        await listener.WaitAsync(deadline.Token);
+        await dispatched.Task.WaitAsync(deadline.Token);
         Assert.Equal(1, requests);
+        await StopListener(deadline, listener);
     }
 
     [Theory]
@@ -62,8 +74,9 @@ public sealed class InstanceHandoffTests
         using var server = InstanceHandoff.CreateServer(name);
         using var deadline = new CancellationTokenSource(TestTimeout);
         var requests = 0;
+        var dispatched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var listener = InstanceHandoff.ListenAsync(server, Environment.ProcessId,
-            () => Interlocked.Increment(ref requests), deadline.Token);
+            () => { Interlocked.Increment(ref requests); dispatched.TrySetResult(); }, deadline.Token);
 
         using (var client = new NamedPipeClientStream(".", name, PipeDirection.InOut,
                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly))
@@ -81,8 +94,9 @@ public sealed class InstanceHandoffTests
         Assert.False(listener.IsCompleted);
         Assert.Equal(0, Volatile.Read(ref requests));
         Assert.Equal(Environment.ProcessId, await InstanceHandoff.RequestExitAsync(name, deadline.Token));
-        await listener.WaitAsync(deadline.Token);
+        await dispatched.Task.WaitAsync(deadline.Token);
         Assert.Equal(1, requests);
+        await StopListener(deadline, listener);
     }
 
     [Fact]
@@ -97,5 +111,11 @@ public sealed class InstanceHandoffTests
 
         await listener.WaitAsync(TestTimeout);
         Assert.False(dispatched);
+    }
+
+    private static async Task StopListener(CancellationTokenSource lifetime, Task listener)
+    {
+        await lifetime.CancelAsync();
+        await listener.WaitAsync(TestTimeout);
     }
 }
