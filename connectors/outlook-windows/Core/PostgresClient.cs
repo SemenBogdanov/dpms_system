@@ -76,8 +76,15 @@ internal sealed class NpgsqlExecutor(PostgresSettings settings) : IPostgresExecu
             settings.RejectImplicitTlsFiles(Environment.GetEnvironmentVariable, File.Exists, OperatingSystem.IsWindows());
             await using var connection = new NpgsqlConnection(settings.ConnectionSettings().ConnectionString);
             await connection.OpenAsync(cancellation);
+            await using var readOnly = function == "mail_import_db_protocol"
+                ? await connection.BeginTransactionAsync(cancellation) : null;
+            if (readOnly is not null)
+            {
+                await using var guard = new NpgsqlCommand("SET TRANSACTION READ ONLY", connection, readOnly);
+                await guard.ExecuteNonQueryAsync(cancellation);
+            }
             var parameters = string.Join(",", Enumerable.Range(1, arguments.Length).Select(i => "$" + i));
-            await using var command = new NpgsqlCommand($"SELECT \"{settings.Schema}\".\"{function}\"({parameters})::text", connection);
+            await using var command = new NpgsqlCommand($"SELECT \"{settings.Schema}\".\"{function}\"({parameters})::text", connection, readOnly);
             foreach (var argument in arguments)
                 command.Parameters.Add(new NpgsqlParameter
                 {
@@ -203,14 +210,18 @@ public sealed class PostgresClient : IConnectorClient
         catch (OperationCanceledException) { throw new ConnectorException("pair_uncertain"); }
     }
 
-    public async Task<PairResult> Connect(string deviceName, CancellationToken cancellation)
+    public async Task CheckConnection(CancellationToken cancellation)
     {
-        deviceName = deviceName.Trim();
-        if (deviceName.Length is < 1 or > 120 || deviceName.Any(char.IsControl))
-            throw new ConnectorException("db_settings_invalid");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         deadline.CancelAfter(timeout);
-        using var protocol = await Call("mail_import_db_protocol", [], deadline.Token);
+        try { await VerifyLoginProtocol(deadline.Token); }
+        catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
+        { throw new ConnectorException("db_unavailable"); }
+    }
+
+    private async Task VerifyLoginProtocol(CancellationToken cancellation)
+    {
+        using var protocol = await Call("mail_import_db_protocol", [], cancellation);
         var root = protocol.RootElement;
         if (!root.TryGetProperty("protocol_version", out var version) || version.ValueKind != JsonValueKind.Number
             || !version.TryGetInt32(out var protocolVersion) || protocolVersion != 1
@@ -219,6 +230,16 @@ public sealed class PostgresClient : IConnectorClient
             || !root.TryGetProperty("login_mode", out var mode) || mode.ValueKind != JsonValueKind.String
             || mode.GetString() != "role_bound")
             throw new ConnectorException("db_not_installed");
+    }
+
+    public async Task<PairResult> Connect(string deviceName, CancellationToken cancellation)
+    {
+        deviceName = deviceName.Trim();
+        if (deviceName.Length is < 1 or > 120 || deviceName.Any(char.IsControl))
+            throw new ConnectorException("db_settings_invalid");
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        deadline.CancelAfter(timeout);
+        await VerifyLoginProtocol(deadline.Token);
         var secret = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         try
         {

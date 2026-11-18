@@ -112,6 +112,30 @@ public sealed class PostgresTests
     }
 
     [Fact]
+    public async Task ConnectionCheckUsesOnlyProtocolAndDoesNotRegisterADevice()
+    {
+        var fake = new Fake((_, _) => Json(new
+        {
+            protocol_version = 1, maximum_batch_bytes = Protocol.MaximumBatchBytes, login_mode = "role_bound",
+        }));
+        using var client = new PostgresClient(fake);
+        await client.CheckConnection(CancellationToken.None);
+        var call = Assert.Single(fake.Calls);
+        Assert.Equal("mail_import_db_protocol", call.Function);
+        Assert.Empty(call.Arguments);
+    }
+
+    [Fact]
+    public async Task ConnectionCheckRejectsIncompatibleProtocolWithoutRegistration()
+    {
+        var fake = new Fake((_, _) => Json(new { protocol_version = 1, maximum_batch_bytes = Protocol.MaximumBatchBytes }));
+        using var client = new PostgresClient(fake);
+        var error = await Assert.ThrowsAsync<ConnectorException>(() => client.CheckConnection(CancellationToken.None));
+        Assert.Equal("db_not_installed", error.Code);
+        Assert.Equal("mail_import_db_protocol", Assert.Single(fake.Calls).Function);
+    }
+
+    [Fact]
     public async Task DatabaseLoginConnectNeedsNoPairingCodeOrClientOwnerId()
     {
         var fake = new Fake((function, args) => function switch

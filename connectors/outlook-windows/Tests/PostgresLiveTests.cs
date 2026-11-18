@@ -72,6 +72,9 @@ public sealed class PostgresLiveTests
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(65));
         Assert.Null(Environment.GetEnvironmentVariable("OUTLOOK_TEST_PAIRING_CODE"));
         using var enrollment = new PostgresClient(settings);
+        await enrollment.CheckConnection(deadline.Token);
+        Signal(directory, "connection-checked");
+        await WaitFor(directory, "connection-check-verified", deadline.Token);
         var connected = await enrollment.Connect("Synthetic TLS laptop", deadline.Token);
         Assert.NotEqual(Guid.Empty, connected.DeviceId);
         Assert.Equal("Synthetic owner", connected.OwnerName);
@@ -169,6 +172,8 @@ public sealed class PostgresLiveTests
         var denied = await Assert.ThrowsAsync<ConnectorException>(() => unmapped.Connect("Synthetic unmapped", deadline.Token));
         Assert.Equal("db_login_not_provisioned", denied.Code);
         using var wrong = new PostgresClient(settings with { Password = "synthetic-wrong-password" });
+        var probe = await Assert.ThrowsAsync<ConnectorException>(() => wrong.CheckConnection(deadline.Token));
+        Assert.Equal("db_login_failed", probe.Code);
         var login = await Assert.ThrowsAsync<ConnectorException>(() => wrong.Connect("Synthetic wrong password", deadline.Token));
         Assert.Equal("db_login_failed", login.Code);
     }

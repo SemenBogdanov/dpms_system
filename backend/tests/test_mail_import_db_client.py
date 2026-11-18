@@ -298,6 +298,7 @@ class PostgresClientLiveTests(unittest.IsolatedAsyncioTestCase):
 
     async def round_trip(self):
         await self.assert_http_rejects_db_device()
+        devices_before_probe = await self.rows("SELECT count(*) FROM mail_import_devices")
         log = (self.artifacts / "live.log").open("wb")
         self.addCleanup(log.close)
         process = await asyncio.create_subprocess_exec(
@@ -308,6 +309,11 @@ class PostgresClientLiveTests(unittest.IsolatedAsyncioTestCase):
             start_new_session=True,
         )
         self.addAsyncCleanup(self.stop_process, process)
+        await self.wait_for(lambda: self.marker("connection-checked"), process)
+        self.assertEqual(await self.rows("SELECT count(*) FROM mail_import_devices"), devices_before_probe)
+        self.assertFalse(await self.rows("SELECT 1 FROM mail_import_queue"))
+        self.assertFalse(await self.rows("SELECT 1 FROM mail_import_items"))
+        (self.cluster / "connection-check-verified").touch()
         await self.wait_for(self.pending, process)
         devices = await self.rows("SELECT id, owner_id, include_body, include_attachments, pairing_code_hash "
                                   "FROM mail_import_devices WHERE name = 'Synthetic TLS laptop'")

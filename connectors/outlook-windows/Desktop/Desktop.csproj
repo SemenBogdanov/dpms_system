@@ -10,7 +10,7 @@
     <AssemblyName>DPMS.OutlookConnector</AssemblyName>
     <PublishTrimmed>false</PublishTrimmed>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../Core/Core.csproj" /></ItemGroup>
 </Project>

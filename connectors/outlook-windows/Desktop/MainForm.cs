@@ -27,6 +27,7 @@ internal sealed class MainForm : Form
     private readonly TableLayoutPanel databaseInputs = CreateInputs();
     private readonly TableLayoutPanel deviceInputs = CreateInputs();
     private readonly TextBox code = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true, MaxLength = 100 };
+    private readonly Button checkConnection = new() { Text = "Проверить соединение", AutoSize = true };
     private readonly Button pair = new() { Text = "Подключить", AutoSize = true };
     private readonly Button start = new() { Text = "Запустить", AutoSize = true };
     private readonly Button sync = new() { Text = "Синхронизировать", AutoSize = true };
@@ -72,6 +73,7 @@ internal sealed class MainForm : Form
         menu.Items.Add("Выход", null, async (_, _) => await ExitApp());
         tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => ShowWindow();
+        checkConnection.Click += async (_, _) => await CheckDatabaseConnection();
         pair.Click += async (_, _) => await Pair();
         sync.Click += async (_, _) => await SyncNow();
         start.Click += async (_, _) => await Toggle();
@@ -186,7 +188,7 @@ internal sealed class MainForm : Form
             AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Dock = DockStyle.Top, WrapContents = true,
         };
-        foreach (var button in new[] { pair, start, sync, unlink })
+        foreach (var button in new[] { checkConnection, pair, start, sync, unlink })
         {
             button.Margin = new Padding(0, 0, 8, 8);
             button.Padding = new Padding(8, 4, 8, 4);
@@ -242,6 +244,8 @@ internal sealed class MainForm : Form
         databaseInputs.Visible = database;
         deviceInputs.Visible = database && state.Session is null;
         httpsInputs.Visible = !database;
+        checkConnection.Visible = database && state.Session is null;
+        pair.Text = database && state.Session is null ? "Подключить и начать импорт" : "Подключить";
     }
 
     private void LoadConnectionFields()
@@ -287,6 +291,27 @@ internal sealed class MainForm : Form
             if (picker.ShowDialog(this) == DialogResult.OK) databaseCertificate.Text = picker.FileName;
         }
         catch { status.Text = "Не удалось выбрать сертификат CA."; }
+    }
+
+    private async Task CheckDatabaseConnection()
+    {
+        if (busy || invalidState || exiting || state.Session is not null || SelectedTransport != ConnectorTransport.PostgreSql) return;
+        try
+        {
+            var settings = ReadDatabaseSettings();
+            SetBusy(true);
+            operation = new CancellationTokenSource();
+            status.Text = "Проверка соединения...";
+            using var client = new PostgresClient(settings);
+            await client.CheckConnection(operation.Token);
+            if (!exiting) status.Text = "Соединение с БД установлено. Приёмник DPMS отвечает. Импорт не запущен.";
+        }
+        catch (Exception error) { ShowError(error); }
+        finally
+        {
+            operation?.Dispose(); operation = null;
+            SetBusy(false);
+        }
     }
 
     private async Task Pair()
@@ -522,6 +547,7 @@ internal sealed class MainForm : Form
             + (session.IncludeBody ? "Полный текст" : "Только метаданные")
             + (session.IncludeAttachments ? ", вложения включены" : ", без вложений");
         pair.Enabled = !busy && !invalidState && session is null;
+        checkConnection.Enabled = pair.Enabled;
         transport.Enabled = httpsInputs.Enabled = databaseInputs.Enabled = deviceInputs.Enabled = pair.Enabled;
         RefreshTransport();
         days.Enabled = !busy && !invalidState;
