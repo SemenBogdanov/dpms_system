@@ -12,6 +12,9 @@ internal sealed class ProtectedState
     private readonly string directory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DPMS", "OutlookConnector");
     private string FilePath => Path.Combine(directory, "connection.state");
+    public string OutboxRoot => Path.Combine(directory, "outbox");
+    public static byte[] Protect(byte[] bytes) => Transform(bytes, protect: true);
+    public static byte[] Unprotect(byte[] bytes) => Transform(bytes, protect: false);
 
     public LocalState Load()
     {

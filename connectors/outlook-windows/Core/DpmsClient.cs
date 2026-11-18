@@ -65,6 +65,26 @@ public sealed class DpmsClient : IConnectorClient
         return result;
     }
 
+    public async Task CheckConnection(CancellationToken cancellation)
+    {
+        // An HTTPS health check checks the API, never sends the device bearer or a sync payload.
+        using var response = await client.GetAsync("health", HttpCompletionOption.ResponseHeadersRead, cancellation);
+        if (response.StatusCode != HttpStatusCode.OK) throw new ConnectorException("endpoint_unavailable");
+        await using var body = await response.Content.ReadAsStreamAsync(cancellation);
+        var bytes = new byte[4097];
+        var length = await body.ReadAtLeastAsync(bytes, bytes.Length, false, cancellation);
+        if (length == bytes.Length) throw new ConnectorException("invalid_response");
+        try
+        {
+            using var document = JsonDocument.Parse(bytes.AsMemory(0, length));
+            if (document.RootElement.ValueKind != JsonValueKind.Object
+                || !document.RootElement.TryGetProperty("status", out var status)
+                || status.ValueKind != JsonValueKind.String || status.GetString() != "ok")
+                throw new ConnectorException("invalid_response");
+        }
+        catch (JsonException) { throw new ConnectorException("invalid_response"); }
+    }
+
     private async Task<T> Post<T>(string path, object payload, CancellationToken cancellation)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);

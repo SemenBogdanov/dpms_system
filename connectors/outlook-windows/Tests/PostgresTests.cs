@@ -135,6 +135,35 @@ public sealed class PostgresTests
         Assert.Equal("mail_import_db_protocol", Assert.Single(fake.Calls).Function);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BoundConnectionCheckReadsDeviceStatusWithoutEnqueue(bool revoked)
+    {
+        var fake = new Fake((function, args) => function switch
+        {
+            "mail_import_db_protocol" => Json(new
+            {
+                protocol_version = 1, maximum_batch_bytes = Protocol.MaximumBatchBytes, login_mode = "role_bound",
+            }),
+            "mail_import_db_status" => Json(new
+            {
+                request_id = args[1], state = "error", error_status = revoked ? 401 : 404,
+                error_code = revoked ? "invalid_device" : "request_not_found",
+            }),
+            _ => throw new InvalidOperationException("Unexpected test request."),
+        });
+        using var client = new PostgresClient(fake, Secret);
+        if (revoked)
+        {
+            var failure = await Assert.ThrowsAsync<ConnectorException>(() => client.CheckConnection(CancellationToken.None));
+            Assert.Equal("access_denied", failure.Code);
+        }
+        else await client.CheckConnection(CancellationToken.None);
+
+        Assert.Equal(new[] { "mail_import_db_protocol", "mail_import_db_status" }, fake.Calls.Select(call => call.Function));
+    }
+
     [Fact]
     public async Task DatabaseLoginConnectNeedsNoPairingCodeOrClientOwnerId()
     {

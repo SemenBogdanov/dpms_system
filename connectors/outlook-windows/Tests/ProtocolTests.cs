@@ -323,6 +323,20 @@ public sealed class ProtocolTests
 
 public sealed class HttpTests
 {
+    [Fact]
+    public async Task HttpHealthCheckNeverSendsBearerOrMail()
+    {
+        using var client = new DpmsClient("https://example.invalid", "synthetic-device-value", new Handler(request =>
+        {
+            Assert.Equal(HttpMethod.Get, request.Method);
+            Assert.Equal("/health", request.RequestUri?.AbsolutePath);
+            Assert.Null(request.Headers.Authorization);
+            Assert.Null(request.Content);
+            return JsonResponse(new { status = "ok" });
+        }));
+        await client.CheckConnection(CancellationToken.None);
+    }
+
     [Theory]
     [InlineData(401, "access_denied")]
     [InlineData(403, "access_denied")]

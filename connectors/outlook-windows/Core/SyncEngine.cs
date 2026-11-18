@@ -12,7 +12,8 @@ public sealed class SyncEngine
 
     public async Task<DeliveryReport> Deliver(
         ScanResult scan, LocalState state, IIngestionClient client,
-        Action<LocalState> persist, CancellationToken cancellation)
+        Action<LocalState> persist, CancellationToken cancellation, bool advanceCursor = true,
+        Action<ImportedItem>? onVersionConflict = null)
     {
         if (scan.Error is not null) throw new ConnectorException(scan.Error);
         if (scan.Items.Count > 5000 || scan.MailboxId.Length != 64)
@@ -20,7 +21,7 @@ public sealed class SyncEngine
         ScanSnapshot.Validate(scan.RemainingEntries ?? []);
         scan = scan with
         {
-            Skipped = Math.Min(5000, scan.Skipped + state.CycleSkipped),
+            Skipped = Math.Min(5000, scan.Skipped + (advanceCursor ? state.CycleSkipped : 0)),
             Truncated = scan.Truncated || scan.RemainingEntries is { Count: > 0 },
         };
         var items = scan.Items.GroupBy(item => item.SourceId)
@@ -37,7 +38,10 @@ public sealed class SyncEngine
             if (state.Acknowledged.TryGetValue(key, out var acknowledged) && acknowledged == fingerprint) continue;
             if (state.ConflictedVersions.TryGetValue(key, out var rejectedVersion)
                 && rejectedVersion == item.SourceModifiedAt.UtcTicks)
+            {
                 versionConflicts++;
+                onVersionConflict?.Invoke(item);
+            }
             else pending.Add(item);
         }
         var previouslyKnownConflicts = versionConflicts;
@@ -61,7 +65,7 @@ public sealed class SyncEngine
             await DeliverBatch(Batch(scan with { Truncated = true }, []));
 
         var skipped = Skipped();
-        if (pageFinished)
+        if (pageFinished && advanceCursor)
         {
             // Do not advance the snapshot over a group that still needs conflict isolation.
             var previousEntries = state.PendingEntries;
@@ -107,6 +111,7 @@ public sealed class SyncEngine
                 {
                     RememberConflict(batch.Items[0]);
                     versionConflicts++;
+                    onVersionConflict?.Invoke(batch.Items[0]);
                     return true;
                 }
                 // The rejected batch was atomic; split it without acknowledging any rejected item.
@@ -116,12 +121,21 @@ public sealed class SyncEngine
             }
 
             // No local checkpoint moves until the server has committed and acknowledged the batch.
-            var next = new Dictionary<string, string>(state.Acknowledged);
+            var previousAcks = state.Acknowledged;
+            var previousConflicts = state.ConflictedVersions;
+            var previousDelivery = state.LastSyncAt;
+            var next = new Dictionary<string, string>(previousAcks);
+            var nextConflicts = previousConflicts;
             foreach (var item in batch.Items)
             {
                 var key = CheckKey(scan, item);
                 next[key] = fingerprints[item.SourceId];
-                state.ConflictedVersions.Remove(key);
+                if (nextConflicts.ContainsKey(key))
+                {
+                    if (ReferenceEquals(nextConflicts, previousConflicts))
+                        nextConflicts = new Dictionary<string, long>(previousConflicts);
+                    nextConflicts.Remove(key);
+                }
             }
             if (next.Count > 10_000)
             {
@@ -129,8 +143,17 @@ public sealed class SyncEngine
                 next = next.Where(pair => current.Contains(pair.Key)).ToDictionary();
             }
             state.Acknowledged = next;
+            state.ConflictedVersions = nextConflicts;
             state.LastSyncAt = result.SyncedAt;
-            persist(state);
+            try { persist(state); }
+            catch
+            {
+                // A spool item may be deleted only against a durable acknowledgement.
+                state.Acknowledged = previousAcks;
+                state.ConflictedVersions = previousConflicts;
+                state.LastSyncAt = previousDelivery;
+                throw;
+            }
             sent += result.Accepted;
             created += result.Created;
             updated += result.Updated;

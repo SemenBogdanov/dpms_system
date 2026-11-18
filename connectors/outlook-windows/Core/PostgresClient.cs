@@ -113,7 +113,7 @@ internal sealed class NpgsqlExecutor(PostgresSettings settings) : IPostgresExecu
             }
             await using var source = builder.Build();
             await using var connection = await source.OpenConnectionAsync(cancellation);
-            await using var readOnly = function == "mail_import_db_protocol"
+            await using var readOnly = function is "mail_import_db_protocol" or "mail_import_db_status"
                 ? await connection.BeginTransactionAsync(cancellation) : null;
             if (readOnly is not null)
             {
@@ -268,7 +268,24 @@ public sealed class PostgresClient : IConnectorClient
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         deadline.CancelAfter(timeout);
-        try { await VerifyLoginProtocol(deadline.Token); }
+        try
+        {
+            await VerifyLoginProtocol(deadline.Token);
+            if (deviceSecret is null) return;
+            if (!ValidSecret(deviceSecret)) throw new ConnectorException("access_denied");
+            // A missing random receipt proves that the read-only status function recognized this device.
+            var probeId = Guid.NewGuid();
+            using var status = await Call("mail_import_db_status", [deviceSecret, probeId], deadline.Token);
+            var root = status.RootElement;
+            if (ValidateReceipt(root, probeId) != "error")
+                throw new ConnectorException("invalid_response");
+            if (root.TryGetProperty("error_status", out var number) && number.ValueKind == JsonValueKind.Number
+                && number.TryGetInt32(out var code) && code == 404
+                && root.TryGetProperty("error_code", out var detail) && detail.ValueKind == JsonValueKind.String
+                && detail.GetString() == "request_not_found") return;
+            var failure = ErrorCode(root);
+            throw new ConnectorException(failure == "access_denied" ? failure : "invalid_response");
+        }
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
         { throw new ConnectorException("db_unavailable"); }
     }

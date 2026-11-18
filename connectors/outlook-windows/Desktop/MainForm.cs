@@ -1,749 +1,848 @@
-using System.Diagnostics;
-using System.Text;
-using System.Text.Json;
-using Microsoft.Win32;
+using System.Drawing.Text;
 using Dpms.OutlookConnector;
+using Microsoft.Win32;
 
 namespace Dpms.OutlookConnector.Desktop;
 
 internal sealed class MainForm : Form
 {
     private const string RunPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const int MaxLogEvents = 500;
     private readonly ProtectedState storage = new();
-    private LocalState state = new();
-    private readonly ComboBox transport = new() { Dock = DockStyle.Fill, DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly TextBox server = new() { Dock = DockStyle.Fill, PlaceholderText = "https://", MaxLength = 500 };
-    private readonly TextBox databaseHost = new() { Dock = DockStyle.Fill, MaxLength = 253 };
-    private readonly NumericUpDown databasePort = new() { Minimum = 1, Maximum = 65535, Value = 58923, Width = 100 };
-    private readonly TextBox databaseName = new() { Dock = DockStyle.Fill };
-    private readonly TextBox databaseSchema = new() { Dock = DockStyle.Fill };
-    private readonly TextBox databaseUsername = new() { Dock = DockStyle.Fill };
-    private readonly TextBox databasePassword = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true };
-    private readonly TextBox databaseCertificate = new() { Dock = DockStyle.Fill };
-    private readonly TextBox databaseCertificatePin = new() { Dock = DockStyle.Fill, PlaceholderText = "Необязательно" };
-    private readonly TextBox deviceName = new() { Dock = DockStyle.Fill, Text = Environment.MachineName, MaxLength = 100 };
-    private readonly Button selectCertificate = new() { Text = "...", AutoSize = true, AccessibleName = "Выбрать сертификат CA" };
+    private readonly OutlookWorker outlookWorker = new();
+    private readonly System.Windows.Forms.Timer scheduler = new() { Interval = 1000 };
     private readonly ToolTip tooltips = new();
-    private readonly TableLayoutPanel httpsInputs = CreateInputs();
-    private readonly TableLayoutPanel databaseInputs = CreateInputs();
-    private readonly TableLayoutPanel deviceInputs = CreateInputs();
-    private readonly TextBox code = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true, MaxLength = 100 };
-    private readonly Button checkConnection = new() { Text = "Проверить соединение", AutoSize = true };
-    private readonly Button pair = new() { Text = "Подключить", AutoSize = true };
-    private readonly Button start = new() { Text = "Запустить", AutoSize = true };
-    private readonly Button sync = new() { Text = "Синхронизировать", AutoSize = true };
-    private readonly Button unlink = new() { Text = "Отвязать", AutoSize = true };
-    private readonly Button logButton = new() { Text = "Лог", AutoSize = true, MinimumSize = new Size(80, 0) };
-    private readonly Button exitButton = new() { Text = "Выход", AutoSize = true, MinimumSize = new Size(80, 0) };
-    private readonly NumericUpDown days = new() { Minimum = 1, Maximum = 90, Value = 30, Width = 90 };
-    private readonly CheckBox autorun = new() { Text = "Запускать при входе в Windows", AutoSize = true };
-    private readonly Label account = new() { AutoSize = true };
-    private readonly Label status = new() { Text = "Не подключено", AutoSize = true };
-    private readonly Label details = new() { AutoSize = true };
-    private readonly Label last = new() { AutoSize = true };
     private readonly NotifyIcon tray = new() { Icon = SystemIcons.Application, Text = "DPMS Outlook", Visible = true };
-    private readonly System.Windows.Forms.Timer timer = new() { Interval = 60_000 };
-    private CancellationTokenSource? operation;
-    private Process? scanner;
-    private Task? syncJob;
-    private Task? connectionJob;
-    private Task? toggleJob;
-    private const int MaximumLogEvents = 200;
-    private readonly Queue<string> activity = new(MaximumLogEvents);
+    private readonly Label mailBadge = Badge("Почта");
+    private readonly Label dpmsBadge = Badge("DPMS");
+    private readonly Button connection = Command("Соединение", "\uE713");
+    private readonly Button start = Command("Запустить", "\uE768");
+    private readonly Button sync = Command("Синхронизировать", "\uE895");
+    private readonly Button unlink = Command("Отвязать", "\uE8A7");
+    private readonly Button logButton = Command("Лог", "\uE9D9");
+    private readonly Button exitButton = Command("Выход", "\uE8BB");
+    private readonly Queue<JournalEvent> activity = new(MaxLogEvents);
+    private LocalState state = new();
+    private ConnectorSettings settings = new();
+    private LinkReading mail = new(LinkState.Unknown, "check_required");
+    private LinkReading dpms = new(LinkState.Unknown, "check_required");
+    private OutlookProbeResult? profile;
+    private DurableOutbox? outbox;
+    private IReadOnlyList<OutboxPreview> queuePreview = [];
+    private int waiting, held;
+    private ConnectionForm? connectionWindow;
     private LogForm? logWindow;
-    private bool exiting;
-    private bool readyToClose;
-    private bool busy;
-    private bool loading = true;
-    private bool invalidState;
-    private bool changingSync;
+    private DateTimeOffset nextSync, nextCheck, nextAlert;
+    private CancellationTokenSource? operation;
+    private Task? activeJob;
+    private bool invalidState, exiting, readyToClose;
+
+    private sealed record LinkReading(LinkState State, string Code, DateTimeOffset? CheckedAt = null);
+    private bool Busy => operation is not null;
+    private bool BothOnline => QueuedDelivery.CanSend(mail.State, dpms.State);
+    private bool Editing => connectionWindow is { IsDisposed: false };
+    private bool Configured => settings.Transport == ConnectorTransport.PostgreSql
+        ? settings.Database is not null : !string.IsNullOrWhiteSpace(settings.ServerUrl);
 
     public MainForm(bool minimized, bool replaced = false)
     {
-        SuspendLayout();
         Text = "DPMS Outlook";
         Icon = SystemIcons.Application;
         Font = new Font("Segoe UI", 10);
         AutoScaleDimensions = new SizeF(96, 96);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(720, 720);
-        MinimumSize = new Size(480, 320);
+        FormBorderStyle = FormBorderStyle.FixedSingle;
+        MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        var version = typeof(MainForm).Assembly.GetName().Version?.ToString(3) ?? "";
-        Log(replaced ? $"Предыдущий процесс завершён. Запущен коннектор {version}." : $"Запущен коннектор {version}.");
-        transport.Items.AddRange(["PostgreSQL", "HTTPS"]);
-        transport.SelectedIndex = 0;
+        ClientSize = new Size(232, 306);
         BuildLayout();
-        transport.SelectedIndexChanged += (_, _) => RefreshTransport();
-        selectCertificate.Click += (_, _) => SelectCertificate();
-        tooltips.SetToolTip(selectCertificate, "Выбрать сертификат CA");
-        tooltips.SetToolTip(databaseCertificatePin, "Только SHA-256 сертификата сервера, подтверждённый администратором. Вводится вместо CA.");
+
+        var version = typeof(MainForm).Assembly.GetName().Version?.ToString(3) ?? "";
+        Write(JournalLevel.Info, "Коннектор", "started",
+            replaced ? $"Предыдущий процесс завершён. Запущен коннектор {version}." : $"Запущен коннектор {version}.");
+        LoadState();
+        try { AttachmentStaging.Cleanup(); }
+        catch (ConnectorException error) { invalidState = true; WriteError("Outlook", error); }
+
+        connection.Click += (_, _) => ShowConnection();
+        start.Click += async (_, _) => await Toggle();
+        sync.Click += async (_, _) => await RunCommand(SyncNow);
+        unlink.Click += async (_, _) => await Unlink();
+        logButton.Click += (_, _) => ShowLog();
+        exitButton.Click += async (_, _) => await ExitApp();
+        scheduler.Tick += async (_, _) => await Tick();
         var menu = new ContextMenuStrip();
         menu.Items.Add("Открыть", null, (_, _) => ShowWindow());
-        menu.Items.Add("Синхронизировать", null, async (_, _) => await SyncNow());
+        menu.Items.Add("Лог", null, (_, _) => ShowLog());
+        menu.Items.Add("Синхронизировать", null, async (_, _) => await RunCommand(SyncNow));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Выход", null, async (_, _) => await ExitApp());
         tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => ShowWindow();
-        checkConnection.Click += async (_, _) => await TrackConnection(CheckDatabaseConnection);
-        pair.Click += async (_, _) => await TrackConnection(Pair);
-        sync.Click += async (_, _) => await SyncNow();
-        start.Click += async (_, _) => { if (!changingSync && !exiting) await (toggleJob = Toggle()); };
-        unlink.Click += (_, _) => Unlink();
-        logButton.Click += (_, _) => ShowLog();
-        exitButton.Click += async (_, _) => await ExitApp();
-        timer.Tick += async (_, _) => { if (state.AutoSync) await SyncNow(); };
-        autorun.CheckedChanged += (_, _) => ChangeAutorun();
-        days.ValueChanged += (_, _) =>
-        {
-            if (loading || busy || exiting) return;
-            state.HistoryDays = (int)days.Value;
-            state.PendingEntries = [];
-            state.SnapshotMailboxId = null;
-            state.CycleSkipped = 0;
-            try { storage.Save(state); } catch { status.Text = ErrorText("local_protection_failed"); }
-        };
-        try
-        {
-            state = storage.Load();
-            if (state.Acknowledged is null || state.Acknowledged.Count > 10_000 || state.HistoryDays is < 1 or > 90
-                || state.PendingEntries is null || state.CycleSkipped is < 0 or > 5000
-                || state.ConflictedVersions is null || state.ConflictedVersions.Count > SyncEngine.MaximumRememberedConflicts
-                || state.ConflictedVersions.Values.Any(ticks => ticks <= 0 || ticks > DateTime.MaxValue.Ticks))
-                throw new ConnectorException("local_state_invalid");
-            ScanSnapshot.Validate(state.PendingEntries);
-            days.Value = state.HistoryDays;
-            LoadConnectionFields();
-        }
-        catch
-        {
-            invalidState = true;
-            state = new LocalState();
-            status.Text = ErrorText("local_state_invalid");
-            Log(status.Text);
-        }
-        try { AttachmentStaging.Cleanup(); }
-        catch
-        {
-            state.AutoSync = false;
-            status.Text = ErrorText("staging_cleanup_failed");
-            Log(status.Text);
-        }
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(RunPath);
-            autorun.Checked = key?.GetValue("DPMS.OutlookConnector") is string;
-        }
-        catch { autorun.Enabled = false; }
-        loading = false;
-        RefreshState();
-        if (state.Session is not null)
-            Log(state.AutoSync ? "Подключение загружено. Синхронизация активна." : "Подключение загружено. Синхронизация на паузе.");
         Shown += async (_, _) =>
         {
-            var area = Screen.FromControl(this).WorkingArea;
-            if (Width > area.Width || Height > area.Height)
-            {
-                var width = Math.Min(Width, area.Width);
-                var height = Math.Min(Height, area.Height);
-                Bounds = new Rectangle(area.Left + (area.Width - width) / 2,
-                    area.Top + (area.Height - height) / 2, width, height);
-            }
             if (minimized && !invalidState && state.Session is not null) Hide();
-            timer.Start();
-            if (state.AutoSync && !invalidState) await SyncNow();
+            scheduler.Start();
+            if (!invalidState && Configured)
+                await RunCommand(async cancellation =>
+                {
+                    if (state.Session is not null) await OpenOutbox();
+                    await CheckRuntime(cancellation, flushOnRecovery: false);
+                    if (state.AutoSync) await SyncNow(cancellation);
+                    else nextSync = DateTimeOffset.UtcNow.AddMinutes(settings.SyncMinutes);
+                });
         };
-        ResumeLayout(performLayout: true);
+        RefreshUi();
     }
 
     private void BuildLayout()
     {
-        var viewport = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
-        var layout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top, Padding = new Padding(24), ColumnCount = 1, RowCount = 0,
-            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
+        var layout = new TableLayoutPanel { ColumnCount = 1, RowCount = 7, Dock = DockStyle.Fill, Padding = new Padding(10) };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        void Row(Control control)
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        var badges = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Margin = Padding.Empty };
+        badges.Controls.AddRange([mailBadge, dpmsBadge]);
+        layout.Controls.Add(badges, 0, 0);
+        var buttons = new[] { connection, start, sync, unlink, logButton, exitButton };
+        for (var index = 0; index < buttons.Length; index++)
         {
-            var index = layout.RowCount++;
-            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            control.Margin = new Padding(0, 0, 0, 12);
-            layout.Controls.Add(control, 0, index);
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 39));
+            layout.Controls.Add(buttons[index], 0, index + 1);
+            tooltips.SetToolTip(buttons[index], buttons[index].Text);
         }
-        Row(new Label { Text = "Outlook", Font = new Font(Font.FontFamily, 18, FontStyle.Bold), AutoSize = true });
-        Row(account);
-        var connection = CreateInputs();
-        AddInput(connection, "Подключение", transport);
-        Row(connection);
-        AddInput(httpsInputs, "Адрес приёмника", server);
-        AddInput(httpsInputs, "Код подключения", code);
-        Row(httpsInputs);
-        AddInput(databaseInputs, "Узел БД", databaseHost);
-        AddInput(databaseInputs, "Порт", databasePort);
-        AddInput(databaseInputs, "База данных", databaseName);
-        AddInput(databaseInputs, "Схема", databaseSchema);
-        AddInput(databaseInputs, "Пользователь БД", databaseUsername);
-        AddInput(databaseInputs, "Пароль БД", databasePassword);
-        var certificate = new TableLayoutPanel
-        {
-            ColumnCount = 2, RowCount = 1, Dock = DockStyle.Top, AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = Padding.Empty,
-        };
-        certificate.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        certificate.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        certificate.Controls.Add(databaseCertificate, 0, 0);
-        certificate.Controls.Add(selectCertificate, 1, 0);
-        databaseCertificate.PlaceholderText = "Необязательно";
-        AddInput(databaseInputs, "Сертификат CA", certificate);
-        AddInput(databaseInputs, "SHA-256 сервера", databaseCertificatePin);
-        Row(databaseInputs);
-        AddInput(deviceInputs, "Имя устройства", deviceName);
-        Row(deviceInputs);
-        var inputs = CreateInputs();
-        AddInput(inputs, "Период, дней", days);
-        Row(inputs);
-        var commands = new FlowLayoutPanel
-        {
-            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            Dock = DockStyle.Top, WrapContents = true,
-        };
-        foreach (var button in new[] { checkConnection, pair, start, sync, unlink, logButton, exitButton })
-        {
-            button.Margin = new Padding(0, 0, 8, 8);
-            button.Padding = new Padding(8, 4, 8, 4);
-            commands.Controls.Add(button);
-        }
-        Row(commands);
-        Row(status);
-        Row(details);
-        Row(last);
-        Row(autorun);
-        layout.SizeChanged += (_, _) =>
-        {
-            var width = Math.Max(1, layout.ClientSize.Width - layout.Padding.Horizontal);
-            foreach (var label in new[] { account, status, details, last })
-                label.MaximumSize = new Size(width, 0);
-            commands.MaximumSize = new Size(width, 0);
-        };
-        viewport.Controls.Add(layout);
-        Controls.Add(viewport);
-        RefreshTransport();
+        Controls.Add(layout);
     }
 
-    private static TableLayoutPanel CreateInputs()
+    private static Label Badge(string name) => new()
     {
-        var inputs = new TableLayoutPanel
-        {
-            ColumnCount = 2, RowCount = 0, Dock = DockStyle.Top,
-            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
-        };
-        inputs.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
-        inputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        return inputs;
+        AutoSize = true, Text = name, AccessibleName = name, Margin = new Padding(2, 4, 10, 0),
+    };
+
+    private static Button Command(string text, string glyph) => new()
+    {
+        Text = text, AccessibleName = text, Image = IconImage(glyph), TextAlign = ContentAlignment.MiddleLeft,
+        ImageAlign = ContentAlignment.MiddleLeft, TextImageRelation = TextImageRelation.ImageBeforeText,
+        Dock = DockStyle.Fill, Margin = new Padding(0, 2, 0, 2), Padding = new Padding(8, 0, 4, 0),
+    };
+
+    private static Bitmap IconImage(string glyph)
+    {
+        var image = new Bitmap(20, 20);
+        using var graphics = Graphics.FromImage(image);
+        using var font = new Font("Segoe MDL2 Assets", 13, GraphicsUnit.Pixel);
+        using var brush = new SolidBrush(SystemColors.ControlText);
+        graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+        graphics.DrawString(glyph, font, brush, new PointF(1, 3));
+        return image;
     }
 
-    private static void AddInput(TableLayoutPanel inputs, string text, Control control)
+    private void LoadState()
     {
-        var row = inputs.RowCount++;
-        inputs.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        inputs.Controls.Add(new Label
-        {
-            Text = text, AutoSize = true, Padding = new Padding(0, 5, 0, 0),
-            Anchor = AnchorStyles.Left | AnchorStyles.Top,
-        }, 0, row);
-        inputs.Controls.Add(control, 1, row);
-    }
-
-    private ConnectorTransport SelectedTransport => transport.SelectedIndex == 0
-        ? ConnectorTransport.PostgreSql : ConnectorTransport.Https;
-
-    private void RefreshTransport()
-    {
-        var database = SelectedTransport == ConnectorTransport.PostgreSql;
-        databaseInputs.Visible = database;
-        deviceInputs.Visible = database && state.Session is null;
-        httpsInputs.Visible = !database;
-        checkConnection.Visible = database && state.Session is null;
-        pair.Text = database && state.Session is null ? "Подключить и начать импорт" : "Подключить";
-    }
-
-    private void LoadConnectionFields()
-    {
-        var session = state.Session;
-        if (session is not null && session.Transport is not (ConnectorTransport.Https or ConnectorTransport.PostgreSql))
-            throw new ConnectorException("local_state_invalid");
-        var settings = session?.Transport == ConnectorTransport.PostgreSql
-            ? session.Database ?? throw new ConnectorException("local_state_invalid") : null;
-        settings?.Validate();
-        transport.SelectedIndex = session?.Transport == ConnectorTransport.Https ? 1 : 0;
-        server.Text = session?.ServerUrl ?? "";
-        databaseHost.Text = settings?.Host ?? "";
-        databasePort.Value = settings?.Port ?? 58923;
-        databaseName.Text = settings?.Database ?? "";
-        databaseSchema.Text = settings?.Schema ?? "";
-        databaseUsername.Text = settings?.Username ?? "";
-        databasePassword.Text = settings?.Password ?? "";
-        databaseCertificate.Text = settings?.RootCertificate ?? "";
-        databaseCertificatePin.Text = settings?.ServerCertificateSha256 ?? "";
-        deviceName.Text = Environment.MachineName;
-    }
-
-    private PostgresSettings ReadDatabaseSettings()
-    {
-        var settings = new PostgresSettings(databaseHost.Text.Trim(), (int)databasePort.Value,
-            databaseName.Text.Trim(), databaseSchema.Text.Trim(), databaseUsername.Text.Trim(),
-            databasePassword.Text,
-            RootCertificate: string.IsNullOrWhiteSpace(databaseCertificate.Text) ? null : databaseCertificate.Text.Trim(),
-            ServerCertificateSha256: string.IsNullOrWhiteSpace(databaseCertificatePin.Text) ? null : databaseCertificatePin.Text.Trim());
-        settings.Validate();
-        return settings;
-    }
-
-    private void SelectCertificate()
-    {
-        if (busy || invalidState || state.Session is not null) return;
         try
         {
-            using var picker = new OpenFileDialog
-            {
-                Title = "Сертификат центра сертификации",
-                Filter = "Сертификаты CA (*.pem;*.crt;*.cer)|*.pem;*.crt;*.cer|Все файлы (*.*)|*.*",
-                CheckFileExists = true, Multiselect = false, RestoreDirectory = true, AddToRecent = false,
-            };
-            if (picker.ShowDialog(this) == DialogResult.OK && !exiting) databaseCertificate.Text = picker.FileName;
+            state = storage.Load();
+            if (state.Acknowledged is null || state.Acknowledged.Count > 10_000
+                || state.ConflictedVersions is null || state.ConflictedVersions.Count > SyncEngine.MaximumRememberedConflicts
+                || state.ConflictedVersions.Values.Any(ticks => ticks <= 0 || ticks > DateTime.MaxValue.Ticks)
+                || state.PendingEntries is null || state.CycleSkipped is < 0 or > 5000
+                || state.CaptureMailboxId is { } mailbox && !ValidHash(mailbox))
+                throw new ConnectorException("local_state_invalid");
+            ScanSnapshot.Validate(state.PendingEntries);
+            if (state.Session is { } bound && (bound.DeviceId == Guid.Empty
+                || bound.Transport is not (ConnectorTransport.PostgreSql or ConnectorTransport.Https)))
+                throw new ConnectorException("local_state_invalid");
+            settings = state.Settings ?? FromLegacyState();
+            settings.Validate(requireEndpoint: state.Session is not null);
+            if (state.Session is { } session && !SameDestination(settings, session))
+                throw new ConnectorException("local_state_invalid");
+            if (state.Session is not null)
+                Write(JournalLevel.Info, "Коннектор", "state_loaded",
+                    state.AutoSync ? "Подключение восстановлено. Синхронизация активна." : "Подключение восстановлено. Синхронизация на паузе.");
         }
-        catch { status.Text = "Не удалось выбрать сертификат CA."; }
-    }
-
-    private async Task CheckDatabaseConnection()
-    {
-        if (busy || invalidState || exiting || state.Session is not null || SelectedTransport != ConnectorTransport.PostgreSql) return;
-        try
+        catch
         {
-            var settings = ReadDatabaseSettings();
-            SetBusy(true);
-            operation = new CancellationTokenSource();
-            status.Text = "Проверка соединения...";
-            Log(status.Text);
-            using var client = new PostgresClient(settings);
-            await client.CheckConnection(operation.Token);
-            if (!exiting)
-            {
-                status.Text = "Соединение с БД установлено. Приёмник DPMS отвечает. Импорт не запущен.";
-                Log(status.Text);
-            }
-        }
-        catch (Exception error) { ShowError(error); }
-        finally
-        {
-            operation?.Dispose(); operation = null;
-            SetBusy(false);
+            // Do not replace a protected state that could not be read.
+            invalidState = true;
+            Write(JournalLevel.Error, "Коннектор", "local_state_invalid", ConnectorText.Describe("local_state_invalid"));
         }
     }
 
-    private Task TrackConnection(Func<Task> command) =>
-        exiting || connectionJob is { IsCompleted: false } ? Task.CompletedTask : connectionJob = command();
-
-    private async Task Pair()
+    private ConnectorSettings FromLegacyState()
     {
-        if (busy || invalidState || exiting || state.Session is not null) return;
-        var startDatabaseSync = false;
+        var autorun = false;
         try
         {
-            var selectedTransport = SelectedTransport;
-            var database = selectedTransport == ConnectorTransport.PostgreSql ? ReadDatabaseSettings() : null;
-            var serverUrl = selectedTransport == ConnectorTransport.Https ? Protocol.Server(server.Text).AbsoluteUri : "";
-            var value = database is not null ? deviceName.Text.Trim() : code.Text.Trim();
-            if (database is not null)
-            {
-                if (value.Length is < 1 or > 100 || value.Any(char.IsControl))
-                    throw new ConnectorException("invalid_device_name");
-            }
-            else if (value.Length != 43 || value.Any(c => !(char.IsAsciiLetterOrDigit(c) || c is '_' or '-')))
-                throw new ConnectorException("invalid_pairing_code");
-            SetBusy(true);
-            operation = new CancellationTokenSource();
-            status.Text = "Подключение...";
-            Log(status.Text);
-            PairResult result;
-            if (database is not null)
-            {
-                using var client = new PostgresClient(database);
-                result = await client.Connect(value, operation.Token);
-            }
-            else
-            {
-                using var client = new DpmsClient(serverUrl);
-                result = await client.Pair(value, operation.Token);
-            }
-            var next = new LocalState
-            {
-                HistoryDays = (int)days.Value,
-                AutoSync = selectedTransport == ConnectorTransport.PostgreSql,
-                Session = new DeviceSession(serverUrl, result.DeviceId, result.DeviceSecret,
-                    result.OwnerName, result.IncludeBody, result.IncludeAttachments,
-                    Transport: selectedTransport, Database: database),
-            };
-            // The explicit database connect action starts import only after protected persistence succeeds.
-            storage.Save(next);
-            state = next;
-            startDatabaseSync = next.AutoSync;
-            status.Text = next.AutoSync ? "Подключено. Синхронизация включена." : "Подключено. Синхронизация на паузе.";
-            Log(status.Text);
+            using var key = Registry.CurrentUser.OpenSubKey(RunPath);
+            autorun = key?.GetValue("DPMS.OutlookConnector") is string;
         }
-        catch (Exception error) { ShowError(error); }
-        finally
+        catch { }
+        return new ConnectorSettings
         {
-            code.Clear();
-            operation?.Dispose(); operation = null;
-            SetBusy(false);
+            Transport = state.Session?.Transport ?? ConnectorTransport.PostgreSql,
+            Database = state.Session?.Database, ServerUrl = state.Session?.ServerUrl ?? "",
+            DeviceName = Environment.MachineName, HistoryDays = state.HistoryDays, Autorun = autorun,
+        };
+    }
+
+    private static bool SameDestination(ConnectorSettings draft, DeviceSession session)
+    {
+        if (session.Transport != draft.Transport) return false;
+        if (session.Transport == ConnectorTransport.Https)
+            return Protocol.Server(draft.ServerUrl).Equals(Protocol.Server(session.ServerUrl));
+        return draft.Database is { } wanted && session.Database is { } bound
+            && wanted.Host.Equals(bound.Host, StringComparison.OrdinalIgnoreCase) && wanted.Port == bound.Port
+            && wanted.Database == bound.Database && wanted.Schema == bound.Schema && wanted.Username == bound.Username;
+    }
+
+    private void ShowConnection()
+    {
+        if (exiting || Busy || invalidState) return;
+        if (connectionWindow is { IsDisposed: false } open) { open.Activate(); return; }
+        var window = new ConnectionForm(settings, state.Session is not null, OutlookSummary(profile, mail.CheckedAt),
+            (draft, cancellation) => RunExclusive(token => CheckDraft(draft, token), cancellation),
+            (draft, code, cancellation) => RunExclusive(async token =>
+            {
+                await BindHttps(draft, code, token);
+                return true;
+            }, cancellation),
+            SaveSettings, ConnectorText.Describe);
+        connectionWindow = window;
+        window.FormClosed += (_, _) => { connectionWindow = null; if (!exiting) RefreshUi(); };
+        window.Show(this);
+        RefreshUi();
+    }
+
+    private void SaveSettings(ConnectorSettings draft)
+    {
+        if (Busy || exiting) throw new ConnectorException("operation_busy");
+        draft.Validate();
+        var oldSession = state.Session;
+        if (oldSession is not null && !SameDestination(draft, oldSession))
+            throw new ConnectorException("settings_invalid");
+        var oldOptions = state.Settings;
+        var oldDays = state.HistoryDays;
+        var staleDpms = settings.Transport != draft.Transport || settings.Database != draft.Database
+            || settings.ServerUrl != draft.ServerUrl;
+        var oldEntries = state.PendingEntries;
+        var oldSnapshot = state.SnapshotMailboxId;
+        var oldSkipped = state.CycleSkipped;
+        var oldStarted = state.CaptureCycleStartedAt;
+        var oldHealthy = state.CaptureCycleHealthy;
+        var oldOutlookIncident = state.OutlookIncident;
+        var oldDpmsIncident = state.DpmsIncident;
+        var newAlerts = settings.Alerts != draft.Alerts;
+        if (settings.Autorun != draft.Autorun || draft.Autorun) SetAutorun(draft.Autorun);
+        try
+        {
+            state.Settings = draft;
+            state.HistoryDays = draft.HistoryDays;
+            if (oldSession?.Transport == ConnectorTransport.PostgreSql)
+                state.Session = oldSession with { Database = draft.Database };
+            if (oldDays != draft.HistoryDays) ResetPage();
+            if (newAlerts) state.OutlookIncident = state.DpmsIncident = null;
+            Persist(state);
         }
-        if (startDatabaseSync && state.AutoSync && !exiting) await SyncNow();
+        catch
+        {
+            state.Settings = oldOptions;
+            state.HistoryDays = oldDays;
+            state.Session = oldSession;
+            state.PendingEntries = oldEntries;
+            state.SnapshotMailboxId = oldSnapshot;
+            state.CycleSkipped = oldSkipped;
+            state.CaptureCycleStartedAt = oldStarted;
+            state.CaptureCycleHealthy = oldHealthy;
+            state.OutlookIncident = oldOutlookIncident;
+            state.DpmsIncident = oldDpmsIncident;
+            if (settings.Autorun != draft.Autorun)
+            {
+                try { SetAutorun(settings.Autorun); }
+                catch (ConnectorException error) { WriteError("Настройки", error); }
+            }
+            throw;
+        }
+        settings = draft;
+        var now = DateTimeOffset.UtcNow;
+        nextCheck = (staleDpms || newAlerts) && Configured ? now : now.AddMinutes(settings.CheckMinutes);
+        nextSync = now.AddMinutes(settings.SyncMinutes);
+        if (staleDpms) dpms = new LinkReading(LinkState.Unknown, "check_required");
+        Write(JournalLevel.Info, "Настройки", "settings_saved", "Настройки сохранены локально.");
+        RefreshUi();
+    }
+
+    private static void SetAutorun(bool enabled)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(RunPath);
+            if (enabled) key.SetValue("DPMS.OutlookConnector", $"\"{Environment.ProcessPath}\" --minimized");
+            else key.DeleteValue("DPMS.OutlookConnector", throwOnMissingValue: false);
+        }
+        catch { throw new ConnectorException("autorun_failed"); }
+    }
+
+    private async Task BindHttps(ConnectorSettings draft, string code, CancellationToken cancellation)
+    {
+        if (state.Session is not null || draft.Transport != ConnectorTransport.Https)
+            throw new ConnectorException("settings_invalid");
+        draft.Validate();
+        using var client = new DpmsClient(draft.ServerUrl);
+        var result = await client.Pair(code, cancellation);
+        SetBoundSession(draft, result, automatic: false);
+        try { SetAutorun(draft.Autorun); }
+        catch (ConnectorException error) { WriteError("Настройки", error); }
+        nextCheck = DateTimeOffset.UtcNow;
+    }
+
+    private void SetBoundSession(ConnectorSettings draft, PairResult result, bool automatic)
+    {
+        var next = new LocalState
+        {
+            Settings = draft, HistoryDays = draft.HistoryDays, AutoSync = automatic,
+            Session = new DeviceSession(draft.Transport == ConnectorTransport.Https ? Protocol.Server(draft.ServerUrl).AbsoluteUri : "",
+                result.DeviceId, result.DeviceSecret, result.OwnerName, result.IncludeBody, result.IncludeAttachments,
+                Transport: draft.Transport, Database: draft.Database),
+        };
+        Persist(next);
+        settings = draft;
+        state = next;
+        outbox = null;
+        profile = null;
+        mail = dpms = new LinkReading(LinkState.Unknown, "check_required");
+        Write(JournalLevel.Info, "DPMS", "paired", "Устройство подключено.");
+        RefreshUi();
     }
 
     private async Task Toggle()
     {
-        if (state.Session is null || invalidState || changingSync || exiting) return;
-        changingSync = true;
-        start.Enabled = false;
-        var enabled = !state.AutoSync;
-        try
+        if (exiting || invalidState || Editing) return;
+        if (state.AutoSync)
         {
-            var previous = state.AutoSync;
-            state.AutoSync = enabled;
-            if (!enabled)
-            {
-                operation?.Cancel();
-                if (syncJob is { } running) await running;
-                status.Text = "На паузе";
-            }
-            try { storage.Save(state); } catch { state.AutoSync = previous; throw; }
-            Log(enabled ? "Автоматическая синхронизация включена." : "Синхронизация поставлена на паузу.");
-            RefreshState();
-        }
-        catch (Exception error) { ShowError(error); }
-        finally { changingSync = false; if (!exiting) RefreshState(); }
-        if (enabled && state.AutoSync && !exiting) await SyncNow();
-    }
-
-    private Task SyncNow()
-    {
-        if (busy || invalidState || state.Session is null || exiting) return Task.CompletedTask;
-        return syncJob = RunSync();
-    }
-
-    private async Task RunSync()
-    {
-        SetBusy(true);
-        operation = new CancellationTokenSource();
-        try
-        {
-            var session = state.Session ?? throw new ConnectorException("not_paired");
-            using var client = IngestionClient.Create(session, state, storage.Save);
-            status.Text = "Чтение Outlook...";
-            Log(status.Text);
-            var scan = await Scan(new ScanOptions(session.IncludeBody, session.IncludeAttachments,
-                state.HistoryDays, Acknowledged: state.Acknowledged, PendingEntries: state.PendingEntries,
-                SnapshotMailboxId: state.SnapshotMailboxId), operation.Token);
-            if (scan.Error is not null) throw new ConnectorException(scan.Error);
-            status.Text = "Передача в DPMS...";
-            Log(status.Text);
-            var cancellation = operation.Token;
-            var report = await Task.Run(() => new SyncEngine().Deliver(scan, state, client, storage.Save, cancellation), cancellation);
-            status.Text = report.Incomplete ? "Перенос неполный" : "Синхронизация завершена";
-            details.Text = $"Передано: {report.Sent}. Новых: {report.Created}. Обновлено: {report.Updated}. "
-                + $"Пропущено: {report.Skipped}. "
-                + (scan.SourceState == "offline" ? "Outlook не в сети." : "Источник: локальный профиль Outlook.")
-                + (scan.Truncated ? " Достигнут предел одной проверки; потребуется следующий проход." : "");
-            if (scan.SkipDetails is { Count: > 0 } skips)
-            {
-                var shown = skips.Select(DescribeSkip);
-                var other = scan.Skipped - skips.Sum(skip => skip.Count);
-                var heading = scan.Skipped == report.Skipped ? "Причины пропусков" : "Причины в этом проходе";
-                details.Text += $"\n{heading}:\n" + string.Join("\n", shown)
-                    + (other > 0 ? $"\nПрочие: {other}." : "");
-            }
-            if (report.VersionConflicts > 0)
-                details.Text += $"\nКонфликт версии: {report.VersionConflicts}. Копии в DPMS не изменены.";
-            if (report.ConflictCheckDeferred)
-                details.Text += "\nПроверка остальных писем продолжится в следующем проходе.";
-            Log(status.Text + ". " + details.Text);
-        }
-        catch (Exception error)
-        {
-            if (error is ConnectorException { Code: "access_denied" })
+            try
             {
                 state.AutoSync = false;
-                try { storage.Save(state); } catch { /* Keep automatic sync stopped in memory. */ }
+                try { Persist(state); } catch { state.AutoSync = true; throw; }
+                Cancel();
+                Write(JournalLevel.Info, "Коннектор", "paused", "Синхронизация поставлена на паузу.");
             }
-            ShowError(error);
+            catch (Exception error) { WriteError("Коннектор", error); }
+            RefreshUi();
+            return;
         }
-        finally
+        if (Busy) return;
+        if (state.Session is null && (settings.Transport != ConnectorTransport.PostgreSql || settings.Database is null))
+        { ShowConnection(); return; }
+        await RunCommand(async cancellation =>
         {
-            operation.Dispose(); operation = null;
-            syncJob = null;
-            SetBusy(false);
-        }
-    }
-
-    private static string DescribeSkip(ScanSkipDetail skip)
-    {
-        var stage = skip.Stage switch
-        {
-            ScanStage.OpenItem => "открытие письма",
-            ScanStage.VerifyInbox => "проверка папки «Входящие»",
-            ScanStage.MessageClass => "тип письма",
-            ScanStage.DownloadState => "состояние загрузки",
-            ScanStage.Identity => "идентификатор письма",
-            ScanStage.Properties => "свойства письма",
-            ScanStage.Meeting => "свойства встречи",
-            ScanStage.Body => "текст письма",
-            ScanStage.Recipients => "получатели",
-            ScanStage.Attachments => "вложения",
-            ScanStage.Encode => "подготовка к передаче",
-            _ => "чтение Outlook",
-        };
-        var reason = skip.Code switch
-        {
-            "source_left_inbox" => "письмо уже не во «Входящих»",
-            "source_not_downloaded" => "письмо ещё не полностью загружено",
-            "missing_item_identity" => "нет PR_SOURCE_KEY или полной пары ключей MAPI",
-            "invalid_item_identity" => "неверный формат идентификатора MAPI",
-            "item_too_large" => "превышен предел размера",
-            "unsupported_attachment" => "формат вложения не поддерживается",
-            "unsupported_text" => "неподдерживаемые символы",
-            "invalid_source_date" => "некорректная дата",
-            "incomplete_meeting" => "неполные данные встречи",
-            "source_changed_during_scan" => "письмо изменилось во время чтения",
-            "outlook_com" => "ошибка Outlook",
-            _ => "не удалось прочитать данные",
-        };
-        var statusCode = skip.HResult is int hresult ? $" (0x{hresult:X8})" : "";
-        return $"{stage}: {reason}{statusCode}, пропущено {skip.Count}.";
-    }
-
-    private async Task<ScanResult> Scan(ScanOptions options, CancellationToken cancellation)
-    {
-        await StopScanner();
-        cancellation.ThrowIfCancellationRequested();
-        AttachmentStaging.Cleanup();
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-        timeout.CancelAfter(TimeSpan.FromMinutes(3));
-        var process = new Process
-        {
-            StartInfo = new ProcessStartInfo(Environment.ProcessPath!, "--scan")
+            if (state.Session is null)
             {
-                UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
-                StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = Encoding.UTF8,
-            },
-        };
+                settings.Validate();
+                using var database = new PostgresClient(settings.Database!);
+                var result = await database.Connect(settings.DeviceName, cancellation);
+                SetBoundSession(settings, result, automatic: true);
+            }
+            else
+            {
+                state.AutoSync = true;
+                try { Persist(state); } catch { state.AutoSync = false; throw; }
+            }
+            Write(JournalLevel.Info, "Коннектор", "resumed", "Автоматическая синхронизация включена.");
+            RefreshUi();
+            await SyncNow(cancellation);
+        });
+    }
+
+    private async Task Tick()
+    {
+        if (Busy || Editing || exiting || invalidState || !Configured) return;
+        var now = DateTimeOffset.UtcNow;
+        if (now >= nextCheck)
+            await RunCommand(cancellation => CheckRuntime(cancellation, flushOnRecovery: true));
+        else if (now >= nextSync && state.AutoSync && state.Session is not null)
+            await RunCommand(SyncNow);
+    }
+
+    private async Task<ConnectionCheckSummary> CheckDraft(ConnectorSettings draft, CancellationToken cancellation)
+    {
+        var observed = await ProbeOutlook(draft, cancellation);
+        var matching = state.Session is { } linked && SameDestination(draft, linked);
+        var remote = await ProbeDpms(draft, matching ? state.Session : null, cancellation);
+        if (Configured && (matching || state.Session is null) && draft.Transport == settings.Transport
+            && draft.Database == settings.Database && draft.ServerUrl == settings.ServerUrl)
+        {
+            ApplyOutlook(observed);
+            ApplyDpms(remote);
+            nextCheck = DateTimeOffset.UtcNow.AddMinutes(settings.CheckMinutes);
+            await TryNotify(cancellation);
+        }
+        Write(remote.State == LinkState.Online && observed.State == LinkState.Online ? JournalLevel.Info : JournalLevel.Warning,
+            "Связь", "manual_check", $"Почта: {ProbeText(observed)}. DPMS: {ConnectorText.Describe(remote.Code)}");
+        return new ConnectionCheckSummary(OutlookSummary(observed, DateTimeOffset.UtcNow),
+            ConnectorText.Describe(remote.Code) + (remote.CheckedAt is { } at ? $" ({at.ToLocalTime():g})" : ""));
+    }
+
+    private async Task CheckRuntime(CancellationToken cancellation, bool flushOnRecovery)
+    {
+        nextCheck = DateTimeOffset.UtcNow.AddMinutes(settings.CheckMinutes);
+        var wasOnline = BothOnline;
+        ApplyOutlook(await ProbeOutlook(settings, cancellation));
+        ApplyDpms(await ProbeDpms(settings, state.Session, cancellation));
+        await TryNotify(cancellation);
+        if (flushOnRecovery && !wasOnline && BothOnline && state.AutoSync)
+            await SyncNow(cancellation);
+    }
+
+    private async Task<OutlookProbeResult> ProbeOutlook(ConnectorSettings options, CancellationToken cancellation)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        timeout.CancelAfter(TimeSpan.FromSeconds(options.CheckTimeoutSeconds));
+        try { return await outlookWorker.Probe(timeout.Token); }
+        catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
+        { return new OutlookProbeResult(false, LinkState.Offline, "check_timeout"); }
+        catch (Exception error) when (!cancellation.IsCancellationRequested)
+        { return new OutlookProbeResult(false, LinkState.Offline, ConnectorText.Code(error)); }
+    }
+
+    private static async Task<LinkReading> ProbeDpms(ConnectorSettings draft, DeviceSession? session, CancellationToken cancellation)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        timeout.CancelAfter(TimeSpan.FromSeconds(draft.CheckTimeoutSeconds));
         try
         {
-            if (!process.Start()) throw new ConnectorException("outlook_scan_failed");
-            scanner = process;
-            var output = ReadBounded(process.StandardOutput, 80_000_000, timeout.Token);
-            var errors = ReadBounded(process.StandardError, 65536, timeout.Token);
-            await process.StandardInput.WriteAsync(JsonSerializer.Serialize(options, Protocol.Json).AsMemory(), timeout.Token);
-            process.StandardInput.Close();
-            var json = await output;
-            await errors;
-            await process.WaitForExitAsync(timeout.Token);
-            return await Task.Run(() => JsonSerializer.Deserialize<ScanResult>(json, Protocol.Json)
-                ?? throw new ConnectorException("invalid_scan"), timeout.Token);
+            if (draft.Transport == ConnectorTransport.PostgreSql)
+            {
+                using var client = new PostgresClient(draft.Database ?? throw new ConnectorException("settings_invalid"), session?.DeviceSecret);
+                await client.CheckConnection(timeout.Token);
+            }
+            else
+            {
+                using var client = new DpmsClient(draft.ServerUrl);
+                await client.CheckConnection(timeout.Token);
+            }
+            return new LinkReading(LinkState.Online, "dpms_ok", DateTimeOffset.UtcNow);
         }
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
-        { throw new ConnectorException("outlook_timeout"); }
+        { return new LinkReading(LinkState.Offline, "check_timeout", DateTimeOffset.UtcNow); }
+        catch (Exception error) when (!cancellation.IsCancellationRequested)
+        { return new LinkReading(LinkState.Offline, ConnectorText.Code(error), DateTimeOffset.UtcNow); }
+    }
+
+    private static string ProbeText(OutlookProbeResult result) => result.State == LinkState.Online
+        ? "доступен" : ConnectorText.Describe(result.Code);
+
+    private static string OutlookSummary(OutlookProbeResult? result, DateTimeOffset? checkedAt = null) => result is null
+        ? "Outlook не проверен"
+        : $"{(result.ClientAvailable ? "Classic Outlook доступен" : "Classic Outlook недоступен")}\n"
+            + $"{(result.AccountType == "exchange" ? "Microsoft Exchange / Microsoft 365" : result.AccountType ?? "Тип учётной записи не определён")}  {result.MailboxLabel ?? ""}\n"
+            + "Почтовый сервер: " + ProbeText(result)
+            + (checkedAt is { } at ? $" ({at.ToLocalTime():g})" : "");
+
+    private void ApplyOutlook(OutlookProbeResult result)
+    {
+        if (result.MailboxId is { } observed && !MatchesMailbox(observed))
+            result = result with { State = LinkState.Unknown, Code = "mailbox_mismatch" };
+        profile = result;
+        var reading = new LinkReading(result.State, result.Code, DateTimeOffset.UtcNow);
+        LogLink("Почта", mail, reading);
+        mail = reading;
+        RecordIncident(outlook: true, reading);
+        RefreshUi();
+    }
+
+    private void ApplyDpms(LinkReading reading)
+    {
+        LogLink("DPMS", dpms, reading);
+        dpms = reading;
+        if (reading.Code == "access_denied" && state.AutoSync)
+        {
+            // A healthy endpoint is not proof that a revoked device may resume importing.
+            state.AutoSync = false;
+            try { Persist(state); }
+            catch (ConnectorException error) { WriteError("DPMS", error); }
+            Write(JournalLevel.Warning, "DPMS", "access_paused", "Автоматический импорт остановлен: доступ отклонён.");
+        }
+        RecordIncident(outlook: false, reading);
+        RefreshUi();
+    }
+
+    private void LogLink(string stage, LinkReading previous, LinkReading next)
+    {
+        if (previous.CheckedAt is not null && previous.State == next.State && previous.Code == next.Code) return;
+        Write(next.State == LinkState.Offline ? JournalLevel.Error
+            : next.State == LinkState.Unknown ? JournalLevel.Warning : JournalLevel.Info, stage, next.Code,
+            next.State == LinkState.Online ? "Связь подтверждена." : ConnectorText.Describe(next.Code));
+    }
+
+    private void RecordIncident(bool outlook, LinkReading reading)
+    {
+        if (!Configured) return;
+        var previous = outlook ? state.OutlookIncident : state.DpmsIncident;
+        var next = LinkIncident.Observe(previous, reading.State, reading.Code, DateTimeOffset.UtcNow);
+        if (previous == next) return;
+        if (outlook) state.OutlookIncident = next; else state.DpmsIncident = next;
+        try { Persist(state); }
+        catch (ConnectorException error)
+        {
+            if (outlook) state.OutlookIncident = previous; else state.DpmsIncident = previous;
+            WriteError("Уведомления", error);
+        }
+    }
+
+    private async Task TryNotify(CancellationToken cancellation)
+    {
+        if (cancellation.IsCancellationRequested || !Configured || settings.Alerts is not { } smtp
+            || DateTimeOffset.UtcNow < nextAlert) return;
+        var outlook = state.OutlookIncident is { Notified: false } ? state.OutlookIncident : null;
+        var remote = state.DpmsIncident is { Notified: false } ? state.DpmsIncident : null;
+        if (outlook is null && remote is null) return;
+        nextAlert = DateTimeOffset.UtcNow.AddMinutes(5);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        timeout.CancelAfter(TimeSpan.FromSeconds(settings.CheckTimeoutSeconds));
+        try
+        {
+            await OutageMail.Send(smtp, outlook, remote, waiting, ConnectorText.Describe, timeout.Token);
+            if (outlook is not null) state.OutlookIncident = outlook.ConfirmNotification();
+            if (remote is not null) state.DpmsIncident = remote.ConfirmNotification();
+            nextAlert = default;
+            Write(JournalLevel.Info, "Уведомления", "alert_sent", "SMTP принял уведомление о сбое связи.");
+            try { Persist(state); }
+            catch (ConnectorException error) { WriteError("Уведомления", error); }
+        }
+        catch (Exception) when (!cancellation.IsCancellationRequested)
+        { Write(JournalLevel.Error, "Уведомления", "alert_failed", "Уведомление не подтверждено. Проверьте SMTP и параметры отправки."); }
+    }
+
+    private async Task SyncNow(CancellationToken cancellation)
+    {
+        if (state.Session is not { } session) return;
+        nextSync = DateTimeOffset.UtcNow.AddMinutes(settings.SyncMinutes);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        deadline.CancelAfter(TimeSpan.FromSeconds(settings.SyncTimeoutSeconds));
+        var token = deadline.Token;
+        try
+        {
+            var queue = await OpenOutbox();
+            if (dpms.State == LinkState.Unknown)
+                ApplyDpms(await ProbeDpms(settings, session, token));
+            ScanResult scan;
+            try { scan = await CaptureInbox(session, queue, token); }
+            catch (ConnectorException error) when (queue.WaitingCount > 0 && error.Code is
+                "snapshot_too_large" or "source_changed_during_scan" or "outlook_scan_failed")
+            {
+                WriteError("Outlook", error);
+                if (dpms.State != LinkState.Online) return;
+                var observed = await ProbeOutlook(settings, token);
+                ApplyOutlook(observed);
+                if (!BothOnline || observed.MailboxId is not { } mailbox || mailbox != queue.MailboxId
+                    || observed.MailboxLabel is not { } label) return;
+                // A failed scan leaves its checkpoint in place, but does not block a previously protected batch.
+                scan = new ScanResult(mailbox, label, "cached", [], 0, Truncated: true);
+            }
+            if (!BothOnline)
+            {
+                Write(JournalLevel.Warning, "Очередь", "buffering",
+                    $"Накопление. Ожидают: {waiting}. Передача приостановлена до подтверждения обеих связей.");
+                return;
+            }
+            await Deliver(queue, session, scan, token);
+        }
+        catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
+        { Write(JournalLevel.Warning, "Коннектор", "sync_timeout", ConnectorText.Describe("sync_timeout")); }
         finally
         {
-            if (ReferenceEquals(scanner, process)) await StopScanner();
-            else process.Dispose();
-            AttachmentStaging.Cleanup();
+            RefreshQueue();
+            if (!cancellation.IsCancellationRequested && !exiting) await TryNotify(cancellation);
         }
     }
 
-    private async Task StopScanner()
+    private async Task<DurableOutbox> OpenOutbox()
     {
-        if (scanner is not { } process) return;
+        if (outbox is not null) return outbox;
+        var deviceId = state.Session?.DeviceId ?? throw new ConnectorException("not_paired");
+        outbox = await Task.Run(() => new DurableOutbox(storage.OutboxRoot, deviceId, ProtectedState.Protect, ProtectedState.Unprotect));
+        RefreshQueue();
+        return outbox;
+    }
+
+    private async Task<ScanResult> CaptureInbox(DeviceSession session, DurableOutbox queue, CancellationToken cancellation)
+    {
+        var started = DateTimeOffset.UtcNow;
+        if (state.CaptureWatermark is null)
+        {
+            var legacy = state.LastSyncAt;
+            state.CaptureWatermark = legacy is not null && legacy <= started ? legacy : started;
+            try { Persist(state); } catch { state.CaptureWatermark = null; throw; }
+        }
+        var since = CaptureWindow.Since(started, settings.HistoryDays, state.CaptureWatermark);
+        // A pre-outbox snapshot has no durable capture start. Rebuild it, keeping the original mailbox and ACKs.
+        var pending = state.CaptureCycleStartedAt is not null ? state.PendingEntries : null;
+        ScanResult scan;
         try
         {
-            if (!process.HasExited)
+            Write(JournalLevel.Info, "Outlook", "scan_started", "Чтение входящих писем.");
+            scan = await outlookWorker.Scan(new ScanOptions(session.IncludeBody, session.IncludeAttachments,
+                settings.HistoryDays, Acknowledged: state.Acknowledged, PendingEntries: pending,
+                SnapshotMailboxId: state.SnapshotMailboxId, SinceUtc: since), cancellation);
+            if (scan.Error is not null) throw new ConnectorException(scan.Error);
+        }
+        catch (ConnectorException error) when (error.Code is "outlook_unavailable" or "mailbox_identity_unavailable")
+        {
+            ApplyOutlook(new OutlookProbeResult(false, LinkState.Offline, error.Code));
+            throw;
+        }
+        if (scan.Outlook is not { } source || source.MailboxId != scan.MailboxId)
+            throw new ConnectorException("invalid_scan");
+        ApplyOutlook(source);
+        if (!MatchesMailbox(scan.MailboxId)) throw new ConnectorException("mailbox_mismatch");
+        LogScanIssues(scan);
+
+        // Advance the local read checkpoint only after the full page is durable in the spool.
+        var captured = await Task.Run(() => queue.Stage(scan, cancellation), cancellation);
+        var skipped = Math.Min(5000, state.CycleSkipped + scan.Skipped);
+        if (!captured.Full) CommitCapture(scan, started, skipped);
+        else Write(JournalLevel.Error, "Очередь", "outbox_full", ConnectorText.Describe("outbox_full"));
+        RefreshQueue();
+        Write(JournalLevel.Info, "Очередь", "capture_complete",
+            $"Добавлено: {captured.Added}. Ожидают: {waiting}. Конфликты: {held}. Пропуски чтения: {skipped}.");
+        return scan with { Skipped = skipped, Truncated = scan.Truncated || captured.Full };
+    }
+
+    private void CommitCapture(ScanResult scan, DateTimeOffset started, int skipped)
+    {
+        var previous = (state.CaptureMailboxId, state.CaptureWatermark, state.CaptureCycleStartedAt, state.CaptureCycleHealthy,
+            state.PendingEntries, state.SnapshotMailboxId, state.CycleSkipped);
+        var healthy = state.CaptureCycleHealthy && mail.State == LinkState.Online && skipped == 0;
+        var cycleStart = state.CaptureCycleStartedAt ?? started;
+        state.CaptureMailboxId = scan.MailboxId;
+        state.PendingEntries = scan.RemainingEntries?.ToList() ?? [];
+        if (state.PendingEntries.Count > 0)
+        {
+            state.CaptureCycleStartedAt = cycleStart;
+            state.CaptureCycleHealthy = healthy;
+            state.SnapshotMailboxId = scan.MailboxId;
+            state.CycleSkipped = skipped;
+        }
+        else
+        {
+            if (healthy && !scan.Truncated && cycleStart >= state.CaptureWatermark) state.CaptureWatermark = cycleStart;
+            ResetPage();
+        }
+        try { Persist(state); }
+        catch
+        {
+            (state.CaptureMailboxId, state.CaptureWatermark, state.CaptureCycleStartedAt, state.CaptureCycleHealthy,
+                state.PendingEntries, state.SnapshotMailboxId, state.CycleSkipped) = previous;
+            throw;
+        }
+    }
+
+    private void ResetPage()
+    {
+        state.PendingEntries = [];
+        state.SnapshotMailboxId = null;
+        state.CycleSkipped = 0;
+        state.CaptureCycleStartedAt = null;
+        state.CaptureCycleHealthy = true;
+    }
+
+    private bool MatchesMailbox(string mailbox)
+    {
+        if (!ValidHash(mailbox)) return false;
+        var expected = state.CaptureMailboxId ?? outbox?.MailboxId ?? state.SnapshotMailboxId;
+        if (expected is not null) return expected == mailbox;
+        // For old installations, an acknowledged mailbox still identifies the original source.
+        return state.Acknowledged.Count == 0 || state.Acknowledged.Keys.Any(key => key.StartsWith(mailbox + ":", StringComparison.Ordinal));
+    }
+
+    private static bool ValidHash(string value) => value.Length == 64 && value.All(char.IsAsciiHexDigit);
+
+    private async Task Deliver(DurableOutbox queue, DeviceSession session, ScanResult scan, CancellationToken cancellation)
+    {
+        using var client = IngestionClient.Create(session, state, Persist);
+        var sent = 0;
+        var created = 0;
+        var updated = 0;
+        var conflicts = 0;
+        var failed = false;
+        // Finish a bounded number of batches per interval; the remaining spool survives exit or a timeout.
+        for (var pass = 0; pass < 12 && BothOnline; pass++)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var entries = await Task.Run(() => queue.ReadBatch(cancellation), cancellation);
+            if (entries.Count == 0 && pass != 0) break;
+            DeliveryReport? report;
+            try
             {
-                try { process.Kill(); }
-                catch (InvalidOperationException) when (process.HasExited) { }
-                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                await process.WaitForExitAsync(deadline.Token);
+                report = await QueuedDelivery.Send(queue, entries, scan, mail.State, dpms.State, state, client, Persist, cancellation,
+                    item => Write(JournalLevel.Warning, "DPMS", "item_version_conflict",
+                        ConnectorText.Describe("item_version_conflict"), item.Subject, item.ReceivedAt, item.SourceId));
             }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                var code = ConnectorText.Code(error);
+                if (IsDpmsDisconnect(error)) ApplyDpms(new LinkReading(LinkState.Offline, code, DateTimeOffset.UtcNow));
+                var single = entries.Count == 1 ? entries[0].Item : null;
+                Write(ErrorLevel(code), "DPMS", code, $"Ошибка обработки партии ({entries.Count}): {ConnectorText.Describe(code)}",
+                    single?.Subject, single?.ReceivedAt, single?.SourceId);
+                failed = true;
+                break;
+            }
+            if (report is null) break;
+            sent += report.Sent;
+            created += report.Created;
+            updated += report.Updated;
+            conflicts += report.VersionConflicts;
+            if (report.ConflictCheckDeferred || queue.WaitingCount == 0 || entries.Count == 0) break;
         }
-        catch
-        {
-            // Keep ownership of a still-running scanner and refuse to start a second one.
-            throw new ConnectorException("outlook_scanner_stop_failed");
-        }
-        scanner = null;
-        process.Dispose();
+        RefreshQueue();
+        Write(failed || conflicts > 0 || scan.Skipped > 0 || scan.Truncated || waiting > 0 || held > 0
+            ? JournalLevel.Warning : JournalLevel.Info, "DPMS",
+            "delivery_finished", $"Передано: {sent}. Новых: {created}. Обновлено: {updated}. Ожидают: {waiting}. Конфликты: {held}.");
     }
 
-    private static async Task<string> ReadBounded(StreamReader reader, int maximum, CancellationToken cancellation)
+    private static bool IsDpmsDisconnect(Exception error) => error is HttpRequestException
+        || ConnectorText.Code(error) is "db_unavailable" or "db_tls_failed" or "db_tls_pin_rejected"
+            or "db_login_failed" or "db_not_installed" or "db_login_not_provisioned" or "access_denied"
+            or "endpoint_unavailable" or "server_unavailable";
+
+    private void LogScanIssues(ScanResult scan)
     {
-        var result = new StringBuilder();
-        var buffer = new char[8192];
-        int count;
-        while ((count = await reader.ReadAsync(buffer, cancellation).ConfigureAwait(false)) != 0)
-        {
-            if (result.Length + count > maximum) throw new ConnectorException("scan_too_large");
-            result.Append(buffer, 0, count);
-        }
-        return result.ToString();
+        foreach (var issue in scan.ItemIssues ?? [])
+            Write(issue.Code is "outlook_com" or "outlook_read_failed" ? JournalLevel.Error : JournalLevel.Warning,
+                "Outlook", issue.Code, $"{ConnectorText.Stage(issue.Stage)}: {ConnectorText.Describe(issue.Code)}"
+                    + (issue.HResult is { } status ? $" (0x{status:X8})" : ""),
+                issue.Subject, issue.ReceivedAt, issue.Reference);
+        if (scan.Skipped > (scan.ItemIssues?.Count ?? 0))
+            Write(JournalLevel.Warning, "Outlook", "scan_skips", $"Всего пропущено при чтении: {scan.Skipped}.");
     }
 
-    private void Unlink()
+    private async Task Unlink()
     {
-        if (busy || exiting) return;
-        if (MessageBox.Show(this,
-            "Удалить подключение с этого компьютера? Доступ устройства на сервере отзывается отдельно в настройках DPMS. Импортированные данные сохранятся.",
-            "Отвязать Outlook", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes || busy || exiting) return;
-        try
+        if (Busy || exiting || Editing || invalidState || state.Session is null) return;
+        await RunCommand(async cancellation =>
         {
-            var next = new LocalState { HistoryDays = (int)days.Value };
-            storage.Save(next);
+            var queue = await OpenOutbox();
+            cancellation.ThrowIfCancellationRequested();
+            var ask = queue.WaitingCount + queue.HeldCount == 0
+                ? "Удалить локальную привязку? Уже принятые письма останутся в DPMS."
+                : $"В очереди ждут: {queue.WaitingCount}, конфликты: {queue.HeldCount}. Они останутся защищены на этом компьютере, но новая привязка их не отправит. Отвязать устройство?";
+            if (MessageBox.Show(this, ask,
+                "Отвязать Outlook", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes
+                || exiting || cancellation.IsCancellationRequested) return;
+            var cleared = settings with { Database = null, ServerUrl = "", Alerts = null };
+            var next = new LocalState { HistoryDays = cleared.HistoryDays, Settings = cleared };
+            Persist(next);
             state = next;
-            invalidState = false;
-            LoadConnectionFields();
-            code.Clear(); details.Text = "";
-            status.Text = "Не подключено";
-            Log("Локальное подключение удалено.");
-            RefreshState();
-        }
-        catch (Exception error) { ShowError(error); }
+            settings = cleared;
+            outbox = null;
+            mail = dpms = new LinkReading(LinkState.Unknown, "check_required");
+            profile = null;
+            RefreshQueue();
+            Write(JournalLevel.Info, "Коннектор", "unlinked", "Локальная привязка удалена.");
+        });
     }
 
-    private void ChangeAutorun()
+    private async Task RunCommand(Func<CancellationToken, Task> work)
     {
-        if (loading || exiting) return;
-        try
+        if (Busy || exiting || invalidState) return;
+        try { await RunExclusive(async cancellation => { await work(cancellation); return true; }); }
+        catch (OperationCanceledException) { }
+        catch (Exception error) { if (!exiting) WriteError("Коннектор", error); }
+    }
+
+    private Task<T> RunExclusive<T>(Func<CancellationToken, Task<T>> work, CancellationToken parent = default)
+    {
+        if (Busy || exiting || invalidState) throw new ConnectorException("operation_busy");
+        var running = CancellationTokenSource.CreateLinkedTokenSource(parent);
+        operation = running;
+        RefreshUi();
+        var job = Execute();
+        activeJob = job;
+        return job;
+
+        async Task<T> Execute()
         {
-            using var key = Registry.CurrentUser.CreateSubKey(RunPath);
-            if (autorun.Checked) key.SetValue("DPMS.OutlookConnector", $"\"{Environment.ProcessPath}\" --minimized");
-            else key.DeleteValue("DPMS.OutlookConnector", throwOnMissingValue: false);
-        }
-        catch
-        {
-            loading = true; autorun.Checked = !autorun.Checked; loading = false;
-            status.Text = "Не удалось изменить автозапуск Windows.";
+            try { return await work(running.Token); }
+            finally { operation = null; running.Dispose(); if (!exiting) RefreshUi(); }
         }
     }
 
-    private void SetBusy(bool value)
+    private void Persist(LocalState value)
     {
-        busy = value;
-        if (!exiting) RefreshState();
+        try { storage.Save(value); }
+        catch { throw new ConnectorException("local_protection_failed"); }
     }
 
-    private void RefreshState()
+    private void RefreshQueue()
     {
-        var session = state.Session;
-        account.Text = session is null ? "Нет активного подключения" : $"DPMS: {session.OwnerName}\n"
-            + (session.IncludeBody ? "Полный текст" : "Только метаданные")
-            + (session.IncludeAttachments ? ", вложения включены" : ", без вложений");
-        pair.Enabled = !busy && !invalidState && session is null;
-        checkConnection.Enabled = pair.Enabled;
-        transport.Enabled = httpsInputs.Enabled = databaseInputs.Enabled = deviceInputs.Enabled = pair.Enabled;
-        RefreshTransport();
-        days.Enabled = !busy && !invalidState;
-        start.Enabled = !invalidState && !changingSync && session is not null && (!busy || state.AutoSync);
-        start.Text = state.AutoSync ? "Пауза" : "Запустить";
-        sync.Enabled = !busy && !invalidState && session is not null;
-        unlink.Enabled = !busy && (session is not null || invalidState);
-        last.Text = state.LastSyncAt is { } date ? "Последняя доставка: " + date.ToLocalTime().ToString("g") : "Доставок ещё не было";
-        tray.Text = state.AutoSync ? "DPMS Outlook: синхронизация включена" : "DPMS Outlook: на паузе";
+        waiting = outbox?.WaitingCount ?? 0;
+        held = outbox?.HeldCount ?? 0;
+        queuePreview = outbox?.Preview() ?? [];
+        if (logWindow is { IsDisposed: false } window) window.UpdateQueue(queuePreview, waiting, held);
+        RefreshUi();
     }
 
-    private void ShowError(Exception error)
+    private void RefreshUi()
     {
-        if (exiting) return;
-        status.Text = error switch
+        var enabled = !exiting && !invalidState && !Editing;
+        connection.Enabled = !exiting && !invalidState && !Busy;
+        sync.Enabled = enabled && !Busy && state.Session is not null;
+        unlink.Enabled = enabled && !Busy && state.Session is not null;
+        start.Enabled = enabled && (!Busy || state.AutoSync);
+        logButton.Enabled = exitButton.Enabled = !exiting;
+        var text = state.AutoSync ? "Пауза" : "Запустить";
+        if (start.Text != text)
         {
-            ConnectorException { Code: "pair_uncertain" } when SelectedTransport == ConnectorTransport.PostgreSql
-                => ErrorText("connect_uncertain"),
-            ConnectorException known => ErrorText(known.Code),
-            OperationCanceledException => state.AutoSync ? "Нет ответа. Повтор при следующей синхронизации." : "На паузе",
-            HttpRequestException => "Нет соединения с приёмником. Доставка будет повторена.",
-            ArgumentException => SelectedTransport == ConnectorTransport.PostgreSql
-                ? ErrorText("db_settings_invalid") : "Нужен HTTPS-адрес без пути, параметров и пароля.",
-            _ => SelectedTransport == ConnectorTransport.PostgreSql
-                ? "Операция не завершена. Проверьте параметры БД и доступ устройства."
-                : "Операция не завершена. Повторите попытку; при сбое подключения создайте новый код в DPMS.",
-        };
-        Log(status.Text);
+            start.Text = start.AccessibleName = text;
+            var old = start.Image;
+            start.Image = IconImage(state.AutoSync ? "\uE769" : "\uE768");
+            old?.Dispose();
+            tooltips.SetToolTip(start, text);
+        }
+        tooltips.SetToolTip(sync, $"Синхронизировать. Ожидают: {waiting}. Конфликты: {held}.");
+        SetBadge(mailBadge, "Почта", mail);
+        SetBadge(dpmsBadge, "DPMS", dpms);
+        tray.Text = !state.AutoSync ? "DPMS Outlook: пауза" : BothOnline ? "DPMS Outlook: синхронизация" : "DPMS Outlook: накопление";
     }
 
-    private static string ErrorText(string code) => code switch
+    private void SetBadge(Label label, string title, LinkReading value)
     {
-        "invalid_pairing_code" => "Некорректный код подключения.",
-        "invalid_device_name" => "Укажите имя устройства от 1 до 100 символов без управляющих символов.",
-        "connect_uncertain" => "Результат подключения неизвестен. Перед повтором попросите администратора проверить привязку устройства.",
-        "db_settings_invalid" => "Некорректные параметры БД. Проверьте узел, порт, базу, схему, пользователя, пароль и сертификат CA.",
-        "db_unavailable" => "Нет соединения с БД. Проверьте доступность сервера и параметры подключения.",
-        "db_tls_failed" => "Не удалось установить защищённое соединение с БД. Проверьте соответствие имени и CA либо используйте подтверждённый SHA-256 сервера.",
-        "db_tls_pin_invalid" => "Некорректный SHA-256: нужны 64 шестнадцатеричных символа, можно с двоеточиями между парами.",
-        "db_tls_pin_conflict" => "Заполните либо «Сертификат CA», либо «SHA-256 сервера», но не оба поля.",
-        "db_tls_pin_rejected" => "Сертификат БД не совпал с SHA-256 или сейчас недействителен. Сверьте сертификат с администратором.",
-        "db_tls_configuration" => "Заблокированы неявные настройки TLS PostgreSQL (PGSSL* или локальные сертификаты). Запустите коннектор без этих настроек.",
-        "db_login_failed" => "БД отклонила вход. Проверьте пользователя, пароль и права доступа.",
-        "db_login_not_provisioned" => "Вход в БД выполнен, но учётная запись не связана с пользователем DPMS. Попросите администратора настроить это соответствие на сервере. Менять пароль не нужно.",
-        "db_not_installed" => "Приёмник DPMS не установлен в указанной базе и схеме. Обратитесь к администратору.",
-        "db_pending" => "Обработка в БД продолжается. Доставка будет повторена без создания дубликатов.",
-        "db_queue_full" => "Очередь приёмника БД заполнена. Доставка будет повторена.",
-        "pair_uncertain" => "Результат подключения неизвестен. Проверьте устройства в DPMS; перед повтором отзовите незавершённое подключение и создайте новый код.",
-        "access_denied" => "Доступ отклонён или отозван. Проверьте подключение в DPMS.",
-        "outlook_unavailable" => "Classic Outlook недоступен. Откройте Outlook с рабочим профилем.",
-        "outlook_timeout" => "Outlook не ответил за три минуты. Проверьте его окна и запросы разрешений.",
-        "outlook_scanner_stop_failed" => "Не удалось остановить процесс чтения Outlook. Закройте запросы Outlook и повторите «Выход».",
-        "mailbox_identity_unavailable" => "Не удалось определить почтовый ящик Outlook.",
-        "snapshot_too_large" => "В выбранном периоде слишком много писем. Уменьшите период; перенос не выполнен.",
-        "local_state_invalid" => "Локальное подключение не прочитано. Отвяжите его и подключите заново.",
-        "local_protection_failed" => "Не удалось защитить или сохранить подключение Windows.",
-        "staging_cleanup_failed" => "Не удалось удалить временные вложения. Передача приостановлена; закройте Outlook-коннектор и проверьте его staging-папку.",
-        "endpoint_unavailable" => "На этом адресе нет приёмника DPMS.",
-        "redirect_blocked" => "Сервер перенаправляет запрос. Укажите конечный HTTPS-адрес приёмника.",
-        "sync_conflict" => "Конфликт данных, почтового ящика или лимита. Проверьте подключение в DPMS.",
-        "item_version_conflict" => "DPMS отклонил разные данные для одной версии письма. Сохранённая копия не изменена.",
-        "rate_limited" => "Слишком много запросов. Доставка будет повторена.",
-        "batch_too_large" or "scan_too_large" or "item_too_large" => "Достигнут предел размера. Полный перенос не выполнен.",
-        "server_unavailable" => "Приёмник временно недоступен. Доставка будет повторена.",
-        "invalid_ack" or "invalid_response" => "Некорректное подтверждение сервера. Доставка будет повторена.",
-        _ => "Данные не перенесены. Проверьте Outlook, подключение и ограничения размера.",
-    };
+        label.Text = (value.State == LinkState.Online ? "\u2713 " : value.State == LinkState.Offline ? "\u00D7 " : "? ") + title;
+        label.ForeColor = value.State switch { LinkState.Online => Color.DarkGreen, LinkState.Offline => Color.Firebrick, _ => Color.DarkGoldenrod };
+        label.AccessibleName = title + ": " + (value.State == LinkState.Online ? "доступно" : ConnectorText.Describe(value.Code));
+        tooltips.SetToolTip(label, label.AccessibleName + (value.CheckedAt is { } at ? $" ({at.ToLocalTime():g})" : ""));
+    }
 
-    private void ShowWindow() { if (!exiting) { Show(); WindowState = FormWindowState.Normal; Activate(); } }
-
-    private void Log(string message)
+    private void WriteError(string stage, Exception error)
     {
-        // Callers supply fixed UI messages, version and counts, not exception text or mail data.
-        if (activity.Count == MaximumLogEvents) activity.Dequeue();
-        activity.Enqueue($"{DateTime.Now:HH:mm:ss}  {message}");
+        var code = ConnectorText.Code(error);
+        Write(ErrorLevel(code), stage, code, ConnectorText.Describe(code));
+    }
+
+    private static JournalLevel ErrorLevel(string code) => code is "db_pending" or "rate_limited" or "db_queue_full"
+        ? JournalLevel.Warning : JournalLevel.Error;
+
+    private void Write(JournalLevel level, string stage, string code, string message,
+        string? subject = null, DateTimeOffset? received = null, string? reference = null)
+    {
+        if (activity.Count == MaxLogEvents) activity.Dequeue();
+        if (code.Length > 64 || !code.All(c => char.IsAsciiLetterOrDigit(c) || c == '_')) code = "operation_failed";
+        var id = reference is null ? null : new string(reference.Where(char.IsAsciiHexDigit).Take(10).ToArray());
+        activity.Enqueue(new JournalEvent(DateTimeOffset.Now, level, stage, code, message, JournalEvent.LocalSubject(subject), received, id));
         if (logWindow is { IsDisposed: false } window) window.UpdateLog(activity);
     }
 
     private void ShowLog()
     {
         if (exiting) return;
-        if (logWindow is not { IsDisposed: false })
-        {
-            var window = new LogForm();
-            logWindow = window;
-            window.UpdateLog(activity);
-            window.Show(this);
-        }
-        else
-        {
-            logWindow.WindowState = FormWindowState.Normal;
-            logWindow.Activate();
-        }
+        if (logWindow is { IsDisposed: false } open) { open.Activate(); return; }
+        logWindow = new LogForm();
+        logWindow.UpdateLog(activity);
+        logWindow.UpdateQueue(queuePreview, waiting, held);
+        logWindow.Show(this);
     }
+
+    private void ShowWindow() { if (!exiting) { Show(); WindowState = FormWindowState.Normal; Activate(); } }
 
     internal void RequestReplacement()
     {
@@ -751,33 +850,33 @@ internal sealed class MainForm : Form
         catch (InvalidOperationException) when (IsDisposed || !IsHandleCreated) { }
     }
 
+    private void Cancel()
+    {
+        try { operation?.Cancel(); }
+        catch (AggregateException) { Write(JournalLevel.Warning, "Коннектор", "cancel_failed", "Ожидаю завершения операции."); }
+    }
+
     private async Task ExitApp(bool replacing = false)
     {
         if (exiting) return;
         exiting = true;
-        timer.Stop();
-        exitButton.Enabled = logButton.Enabled = false;
-        status.Text = replacing ? "Завершаю работу для новой копии..." : "Завершаю работу...";
-        Log(status.Text);
-        try { operation?.Cancel(); }
-        catch (AggregateException) { Log("Не удалось отменить текущую операцию, ожидаю её завершения."); }
-        try { await Task.WhenAll(connectionJob ?? Task.CompletedTask, syncJob ?? Task.CompletedTask, toggleJob ?? Task.CompletedTask); }
-        catch { Log("Операция завершилась с ошибкой при выходе."); }
-        try { await StopScanner(); }
+        scheduler.Stop();
+        RefreshUi();
+        Write(JournalLevel.Info, "Коннектор", "stopping", replacing ? "Выход для запуска новой копии." : "Завершение работы.");
+        Cancel();
+        try { if (activeJob is { } job) await job; } catch { }
+        try { await outlookWorker.Stop(); }
         catch (ConnectorException error)
         {
             exiting = false;
-            state.AutoSync = false;
-            try { storage.Save(state); } catch { Log(ErrorText("local_protection_failed")); }
-            ShowError(error);
-            exitButton.Enabled = logButton.Enabled = true;
-            RefreshState();
-            timer.Start();
+            WriteError("Outlook", error);
+            RefreshUi();
+            scheduler.Start();
             if (replacing) ShowWindow();
             return;
         }
         try { AttachmentStaging.Cleanup(); }
-        catch { Log(ErrorText("staging_cleanup_failed")); }
+        catch (ConnectorException error) { WriteError("Outlook", error); }
         readyToClose = true;
         tray.Visible = false;
         Close();
@@ -795,19 +894,14 @@ internal sealed class MainForm : Form
             if (!readyToClose)
             {
                 exiting = true;
-                timer.Stop();
-                try { operation?.Cancel(); } catch (AggregateException) { }
-                try
-                {
-                    if (scanner is { HasExited: false })
-                    {
-                        scanner.Kill();
-                        if (scanner.WaitForExit(5000)) AttachmentStaging.Cleanup();
-                    }
-                }
-                catch { }
+                scheduler.Stop();
+                Cancel();
+                outlookWorker.StopOnShutdown();
             }
-            tray.Dispose(); timer.Dispose(); tooltips.Dispose();
+            tray.Dispose();
+            scheduler.Dispose();
+            tooltips.Dispose();
+            foreach (var button in new[] { connection, start, sync, unlink, logButton, exitButton }) button.Image?.Dispose();
         }
         base.OnFormClosing(e);
     }

@@ -75,11 +75,12 @@ public sealed record ImportedItem(
 
 public sealed record ScanOptions(bool IncludeBody, bool IncludeAttachments = false, int HistoryDays = 30,
     int MaximumItems = 5000, IReadOnlyDictionary<string, string>? Acknowledged = null,
-    IReadOnlyList<string>? PendingEntries = null, string? SnapshotMailboxId = null);
+    IReadOnlyList<string>? PendingEntries = null, string? SnapshotMailboxId = null, DateTimeOffset? SinceUtc = null);
 public sealed record ScanResult(
     string MailboxId, string MailboxLabel, string SourceState,
     List<ImportedItem> Items, int Skipped, bool Truncated, string? Error = null,
-    IReadOnlyList<string>? RemainingEntries = null, IReadOnlyList<ScanSkipDetail>? SkipDetails = null);
+    IReadOnlyList<string>? RemainingEntries = null, IReadOnlyList<ScanSkipDetail>? SkipDetails = null,
+    OutlookProbeResult? Outlook = null, IReadOnlyList<OutlookItemIssue>? ItemIssues = null);
 
 public sealed record PairResult(
     Guid DeviceId, string DeviceSecret, string OwnerName, bool IncludeBody, int ProtocolVersion,
@@ -102,6 +103,13 @@ public sealed record DatabaseRequest(Guid RequestId, string PayloadHash);
 public sealed class LocalState
 {
     public DeviceSession? Session { get; set; }
+    public ConnectorSettings? Settings { get; set; }
+    public string? CaptureMailboxId { get; set; }
+    public DateTimeOffset? CaptureWatermark { get; set; }
+    public DateTimeOffset? CaptureCycleStartedAt { get; set; }
+    public bool CaptureCycleHealthy { get; set; } = true;
+    public LinkIncident? OutlookIncident { get; set; }
+    public LinkIncident? DpmsIncident { get; set; }
     public Dictionary<string, string> Acknowledged { get; set; } = new();
     public Dictionary<string, long> ConflictedVersions { get; set; } = new();
     public DateTimeOffset? LastSyncAt { get; set; }

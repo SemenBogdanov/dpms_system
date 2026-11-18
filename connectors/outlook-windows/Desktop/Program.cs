@@ -13,6 +13,20 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Contains("--probe-outlook"))
+        {
+            try
+            {
+                Console.Out.Write(JsonSerializer.Serialize(OutlookReader.Probe(), Protocol.Json));
+                return 0;
+            }
+            catch
+            {
+                Console.Out.Write(JsonSerializer.Serialize(
+                    new OutlookProbeResult(false, LinkState.Offline, "outlook_unavailable"), Protocol.Json));
+                return 1;
+            }
+        }
         if (args.Contains("--scan"))
         {
             try

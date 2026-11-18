@@ -5,17 +5,38 @@ using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text.Json;
 using Dpms.OutlookConnector;
+using Microsoft.CSharp.RuntimeBinder;
 
 namespace Dpms.OutlookConnector.Desktop;
 
 internal static class OutlookReader
 {
-    [DllImport("ole32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
-    private static extern void CLSIDFromProgID(string progId, out Guid clsid);
+    private static readonly Guid OutlookApplicationClsid = new("0006F03A-0000-0000-C000-000000000046");
+    private const int InboxFolder = 6; // olFolderInbox
+    private const int MaximumItemIssues = 50;
 
     [DllImport("oleaut32.dll", PreserveSig = false)]
     private static extern void GetActiveObject(ref Guid clsid, IntPtr reserved,
         [MarshalAs(UnmanagedType.IUnknown)] out object result);
+
+    internal static OutlookProbeResult Probe()
+    {
+        object? application = null, session = null, folder = null;
+        try
+        {
+            application = RunningOutlook();
+            session = ((dynamic)application).GetNamespace("MAPI");
+            folder = ((dynamic)session).GetDefaultFolder(InboxFolder);
+            return ReadInboxAccount(session, (string)((dynamic)folder).StoreID);
+        }
+        catch
+        {
+            return application is null
+                ? new OutlookProbeResult(false, LinkState.Offline, "outlook_unavailable")
+                : new OutlookProbeResult(true, LinkState.Unknown, "outlook_unverified");
+        }
+        finally { Release(folder); Release(session); Release(application); }
+    }
 
     public static ScanResult Scan(ScanOptions options)
     {
@@ -24,16 +45,16 @@ internal static class OutlookReader
         object? application = null, session = null, folder = null, items = null, filtered = null;
         try
         {
-            CLSIDFromProgID("Outlook.Application", out var clsid);
-            GetActiveObject(ref clsid, IntPtr.Zero, out application);
+            application = RunningOutlook();
             session = ((dynamic)application).GetNamespace("MAPI");
-            folder = ((dynamic)session).GetDefaultFolder(6); // olFolderInbox; no Calendar mutations.
+            folder = ((dynamic)session).GetDefaultFolder(InboxFolder);
             var storeId = (string)((dynamic)folder).StoreID;
             var folderId = (string)((dynamic)folder).EntryID;
-            var smtp = MailboxAddress(session, storeId);
-            if (string.IsNullOrWhiteSpace(smtp)) throw new ConnectorException("mailbox_identity_unavailable");
-            var mailboxId = Protocol.Hash("outlook-mailbox:" + smtp.Trim().ToLowerInvariant());
-            var sourceState = Read(() => (bool)((dynamic)session).Offline, true) ? "offline" : "cached";
+            var outlook = ReadInboxAccount(session, storeId);
+            if (outlook.MailboxId is not { } mailboxId || outlook.MailboxLabel is not { } mailboxLabel)
+                throw new ConnectorException("mailbox_identity_unavailable");
+            // A connected account does not prove that every item in its local snapshot is current.
+            var sourceState = outlook.State == LinkState.Offline ? "offline" : "cached";
             IReadOnlyList<string> snapshot;
             if (options.PendingEntries is { Count: > 0 } pending)
             {
@@ -44,7 +65,9 @@ internal static class OutlookReader
             else
             {
                 items = ((dynamic)folder).Items;
-                var date = DateTime.Now.AddDays(-options.HistoryDays).ToString("g", CultureInfo.CurrentCulture);
+                // Jet uses local dates at minute precision. Include the cutoff minute rather than rounding up.
+                var lowerBound = options.SinceUtc?.LocalDateTime ?? DateTime.Now.AddDays(-options.HistoryDays);
+                var date = lowerBound.ToString("g", CultureInfo.CurrentCulture);
                 filtered = ((dynamic)items).Restrict("[ReceivedTime] >= '" + date + "'");
                 ((dynamic)filtered).Sort("[ReceivedTime]", true);
                 snapshot = CaptureEntries(filtered);
@@ -52,15 +75,18 @@ internal static class OutlookReader
             var remaining = new Queue<string>(snapshot);
             var result = new List<ImportedItem>();
             var diagnostics = new ScanDiagnostics();
+            var issues = new List<OutlookItemIssue>();
             var visited = 0;
             var scannedBytes = 0L;
             while (remaining.Count > 0 && visited < options.MaximumItems)
             {
+                var entryId = remaining.Peek();
                 object? item = null, parent = null;
                 var stage = ScanStage.OpenItem;
+                (string? Subject, DateTimeOffset? ReceivedAt) metadata = default;
                 try
                 {
-                    item = ((dynamic)session).GetItemFromID(remaining.Peek(), storeId);
+                    item = ((dynamic)session).GetItemFromID(entryId, storeId);
                     stage = ScanStage.VerifyInbox;
                     parent = ((dynamic)item).Parent;
                     var parentId = (string)((dynamic)parent).EntryID;
@@ -72,7 +98,8 @@ internal static class OutlookReader
                     if (messageClass.StartsWith("IPM.Note", StringComparison.OrdinalIgnoreCase)
                         || messageClass.StartsWith("IPM.Schedule.Meeting", StringComparison.OrdinalIgnoreCase))
                     {
-                        var parsed = ReadItem(item, messageClass, options.IncludeBody, options.IncludeAttachments, ref stage);
+                        var parsed = ReadItem(item, messageClass, options.IncludeBody, options.IncludeAttachments,
+                            ref stage, ref metadata);
                         stage = ScanStage.Encode;
                         var alreadyDelivered = options.Acknowledged?.TryGetValue(mailboxId + ":" + parsed.SourceId, out var known) == true
                             && known == SyncEngine.Fingerprint(parsed);
@@ -86,14 +113,28 @@ internal static class OutlookReader
                         }
                     }
                 }
-                catch (Exception error) { diagnostics.Add(stage, error); }
+                catch (Exception error)
+                {
+                    diagnostics.Add(stage, error);
+                    if (issues.Count < MaximumItemIssues)
+                    {
+                        // Header-only items often have a readable subject and date even when identity or body is missing.
+                        if (item is not null && stage >= ScanStage.DownloadState)
+                        {
+                            metadata.Subject ??= Read<string?>(() => (string?)((dynamic)item).Subject, null);
+                            metadata.ReceivedAt ??= Read<DateTimeOffset?>(() => LocalDate((DateTime)((dynamic)item).ReceivedTime), null);
+                        }
+                        issues.Add(OutlookHealth.ItemIssue(mailboxId, entryId, metadata.Subject, metadata.ReceivedAt,
+                            stage, error));
+                    }
+                }
                 finally { Release(parent); Release(item); }
                 remaining.Dequeue();
                 visited++;
             }
-            return new ScanResult(mailboxId, smtp.Length > 200 ? smtp[..200] : smtp, sourceState,
+            return new ScanResult(mailboxId, mailboxLabel, sourceState,
                 result, diagnostics.Skipped, remaining.Count > 0, RemainingEntries: remaining.ToArray(),
-                SkipDetails: diagnostics.Summary());
+                SkipDetails: diagnostics.Summary(), Outlook: outlook, ItemIssues: issues);
         }
         catch (ConnectorException) { throw; }
         catch (COMException) { throw new ConnectorException("outlook_unavailable"); }
@@ -128,7 +169,15 @@ internal static class OutlookReader
         return result;
     }
 
-    private static string MailboxAddress(object session, string storeId)
+    private static object RunningOutlook()
+    {
+        // A fixed CLSID avoids a ProgID lookup that can write a registry entry when Outlook is absent.
+        var clsid = OutlookApplicationClsid;
+        GetActiveObject(ref clsid, IntPtr.Zero, out var application);
+        return application;
+    }
+
+    private static OutlookProbeResult ReadInboxAccount(object session, string storeId)
     {
         object? accounts = null;
         try
@@ -141,18 +190,33 @@ internal static class OutlookReader
                 {
                     account = ((dynamic)accounts)[i];
                     deliveryStore = ((dynamic)account).DeliveryStore;
-                    if (deliveryStore is not null && (string)((dynamic)deliveryStore).StoreID == storeId)
-                        return (string)((dynamic)account).SmtpAddress;
+                    if (deliveryStore is null || (string)((dynamic)deliveryStore).StoreID != storeId) continue;
+                    var smtp = (string?)((dynamic)account).SmtpAddress;
+                    if (string.IsNullOrWhiteSpace(smtp)) break;
+                    var mailboxId = Protocol.Hash("outlook-mailbox:" + smtp.Trim().ToLowerInvariant());
+                    var label = smtp.Length > 200 ? smtp[..200] : smtp;
+                    var type = ReadAccountStatus(() => (int)((dynamic)account).AccountType);
+                    var mode = type == OutlookHealth.ExchangeAccountType
+                        ? ReadAccountStatus(() => (int)((dynamic)account).ExchangeConnectionMode)
+                        : null;
+                    return OutlookHealth.ForAccount(type, mode, mailboxId, label);
                 }
                 finally { Release(deliveryStore); Release(account); }
             }
-            return "";
+            return new OutlookProbeResult(true, LinkState.Unknown, "mailbox_identity_unavailable");
         }
         finally { Release(accounts); }
     }
 
+    private static int? ReadAccountStatus(Func<int> read)
+    {
+        try { return read(); }
+        catch (Exception error) when (error is COMException or RuntimeBinderException or InvalidCastException
+            or InvalidComObjectException) { return null; }
+    }
+
     private static ImportedItem ReadItem(object value, string messageClass, bool includeBody, bool includeAttachments,
-        ref ScanStage stage)
+        ref ScanStage stage, ref (string? Subject, DateTimeOffset? ReceivedAt) metadata)
     {
         dynamic item = value;
         var meeting = messageClass.StartsWith("IPM.Schedule.Meeting", StringComparison.OrdinalIgnoreCase);
@@ -163,6 +227,7 @@ internal static class OutlookReader
         var id = ReadIdentity(value, kind);
         stage = ScanStage.Properties;
         var received = LocalDate((DateTime)item.ReceivedTime);
+        metadata.ReceivedAt = received;
         var modified = LocalDate((DateTime)item.LastModificationTime);
         DateTimeOffset? start = null, end = null;
         var location = "";
@@ -184,6 +249,7 @@ internal static class OutlookReader
         if (senderAddress.Length == 0) senderAddress = Read(() => (string)item.SenderEmailAddress, "");
         senderAddress = Protocol.Limited(senderAddress, 320);
         var subject = Protocol.Limited((string)item.Subject, 1000);
+        metadata.Subject = subject;
         var sender = Protocol.Limited(Read(() => (string)item.SenderName, ""), 300);
         var isRead = !(bool)item.UnRead;
         stage = ScanStage.Body;
