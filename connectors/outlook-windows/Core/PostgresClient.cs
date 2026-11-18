@@ -340,7 +340,7 @@ public sealed class PostgresClient : IConnectorClient
             if (root.GetProperty("state").GetString() == "error")
             {
                 journal.Complete(id);
-                throw new ConnectorException(ErrorCode(root));
+                throw new ConnectorException(ErrorCode(root, terminalReceipt: true));
             }
             if (!root.TryGetProperty("result", out var ack)) throw new ConnectorException("invalid_ack");
             var result = Deserialize<SyncResult>(ack);
@@ -420,12 +420,16 @@ public sealed class PostgresClient : IConnectorClient
         return response;
     }
 
-    private static string ErrorCode(JsonElement root)
+    private static string ErrorCode(JsonElement root, bool terminalReceipt = false)
     {
         var status = root.TryGetProperty("error_status", out var number) && number.ValueKind == JsonValueKind.Number
             && number.TryGetInt32(out var value) ? value : 0;
-        return root.TryGetProperty("error_code", out var code) && code.ValueKind == JsonValueKind.String
-            && code.GetString() == "db_login_not_provisioned" ? "db_login_not_provisioned" : status switch
+        var code = root.TryGetProperty("error_code", out var field) && field.ValueKind == JsonValueKind.String
+            ? field.GetString() : null;
+        if (code == "db_login_not_provisioned") return code;
+        // Only a checked terminal worker receipt proves the batch was rejected, not an enqueue conflict.
+        if (terminalReceipt && status == 409 && code == "item_version_conflict") return code;
+        return status switch
         {
             401 or 403 => "access_denied", 409 => "sync_conflict", 413 => "batch_too_large",
             429 => "db_queue_full", 408 or 404 => "db_pending", _ => "request_rejected",

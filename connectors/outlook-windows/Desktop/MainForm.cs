@@ -107,7 +107,9 @@ internal sealed class MainForm : Form
         {
             state = storage.Load();
             if (state.Acknowledged is null || state.Acknowledged.Count > 10_000 || state.HistoryDays is < 1 or > 90
-                || state.PendingEntries is null || state.CycleSkipped is < 0 or > 5000)
+                || state.PendingEntries is null || state.CycleSkipped is < 0 or > 5000
+                || state.ConflictedVersions is null || state.ConflictedVersions.Count > SyncEngine.MaximumRememberedConflicts
+                || state.ConflictedVersions.Values.Any(ticks => ticks <= 0 || ticks > DateTime.MaxValue.Ticks))
                 throw new ConnectorException("local_state_invalid");
             ScanSnapshot.Validate(state.PendingEntries);
             days.Value = state.HistoryDays;
@@ -463,6 +465,10 @@ internal sealed class MainForm : Form
                 details.Text += $"\n{heading}:\n" + string.Join("\n", shown)
                     + (other > 0 ? $"\nПрочие: {other}." : "");
             }
+            if (report.VersionConflicts > 0)
+                details.Text += $"\nКонфликт версии: {report.VersionConflicts}. Копии в DPMS не изменены.";
+            if (report.ConflictCheckDeferred)
+                details.Text += "\nПроверка остальных писем продолжится в следующем проходе.";
             Log(status.Text + ". " + details.Text);
         }
         catch (Exception error)
@@ -704,6 +710,7 @@ internal sealed class MainForm : Form
         "endpoint_unavailable" => "На этом адресе нет приёмника DPMS.",
         "redirect_blocked" => "Сервер перенаправляет запрос. Укажите конечный HTTPS-адрес приёмника.",
         "sync_conflict" => "Конфликт данных, почтового ящика или лимита. Проверьте подключение в DPMS.",
+        "item_version_conflict" => "DPMS отклонил разные данные для одной версии письма. Сохранённая копия не изменена.",
         "rate_limited" => "Слишком много запросов. Доставка будет повторена.",
         "batch_too_large" or "scan_too_large" or "item_too_large" => "Достигнут предел размера. Полный перенос не выполнен.",
         "server_unavailable" => "Приёмник временно недоступен. Доставка будет повторена.",

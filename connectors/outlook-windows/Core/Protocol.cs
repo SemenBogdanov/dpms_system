@@ -103,6 +103,7 @@ public sealed class LocalState
 {
     public DeviceSession? Session { get; set; }
     public Dictionary<string, string> Acknowledged { get; set; } = new();
+    public Dictionary<string, long> ConflictedVersions { get; set; } = new();
     public DateTimeOffset? LastSyncAt { get; set; }
     public int HistoryDays { get; set; } = 30;
     public bool AutoSync { get; set; }

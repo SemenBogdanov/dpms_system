@@ -275,6 +275,25 @@ public sealed class PostgresTests
         Assert.NotNull(state.PendingDatabaseRequest);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task OnlyTerminalReceiptCanTriggerVersionConflictRecovery(bool terminal)
+    {
+        var state = new LocalState();
+        var fake = new Fake((function, args) => terminal && function == "mail_import_db_enqueue" ? Receipt(args[1])
+            : terminal ? Json(new
+            {
+                request_id = args[1], state = "error", error_code = "item_version_conflict", error_status = 409,
+            })
+            : Json(new { error_code = "item_version_conflict", error_status = 409 }));
+        using var client = new PostgresClient(fake, Secret, journal: new PostgresRequestJournal(state, _ => { }));
+        var error = await Assert.ThrowsAsync<ConnectorException>(() => client.Sync(Batch, CancellationToken.None));
+        Assert.Equal(terminal ? "item_version_conflict" : "sync_conflict", error.Code);
+        if (terminal) Assert.Null(state.PendingDatabaseRequest);
+        else Assert.NotNull(state.PendingDatabaseRequest);
+    }
+
     [Fact]
     public async Task JournalMustPersistBeforeEnqueueAndRetainsRequestOnSaveFailure()
     {
