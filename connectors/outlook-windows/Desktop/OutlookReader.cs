@@ -21,20 +21,19 @@ internal static class OutlookReader
     {
         if (options.HistoryDays is < 1 or > 90 || options.MaximumItems is < 1 or > 5000)
             throw new ConnectorException("invalid_scan_options");
-        object? application = null, session = null, folder = null, items = null, filtered = null, store = null;
+        object? application = null, session = null, folder = null, items = null, filtered = null;
         try
         {
             CLSIDFromProgID("Outlook.Application", out var clsid);
             GetActiveObject(ref clsid, IntPtr.Zero, out application);
             session = ((dynamic)application).GetNamespace("MAPI");
-            store = ((dynamic)session).DefaultStore;
-            var storeId = (string)((dynamic)store).StoreID;
+            folder = ((dynamic)session).GetDefaultFolder(6); // olFolderInbox; no Calendar mutations.
+            var storeId = (string)((dynamic)folder).StoreID;
+            var folderId = (string)((dynamic)folder).EntryID;
             var smtp = MailboxAddress(session, storeId);
             if (string.IsNullOrWhiteSpace(smtp)) throw new ConnectorException("mailbox_identity_unavailable");
             var mailboxId = Protocol.Hash("outlook-mailbox:" + smtp.Trim().ToLowerInvariant());
             var sourceState = Read(() => (bool)((dynamic)session).Offline, true) ? "offline" : "cached";
-            folder = ((dynamic)session).GetDefaultFolder(6); // olFolderInbox; no Calendar mutations.
-            var folderId = (string)((dynamic)folder).EntryID;
             IReadOnlyList<string> snapshot;
             if (options.PendingEntries is { Count: > 0 } pending)
             {
@@ -52,23 +51,29 @@ internal static class OutlookReader
             }
             var remaining = new Queue<string>(snapshot);
             var result = new List<ImportedItem>();
-            var skipped = 0;
+            var diagnostics = new ScanDiagnostics();
             var visited = 0;
             var scannedBytes = 0L;
             while (remaining.Count > 0 && visited < options.MaximumItems)
             {
                 object? item = null, parent = null;
+                var stage = ScanStage.OpenItem;
                 try
                 {
                     item = ((dynamic)session).GetItemFromID(remaining.Peek(), storeId);
+                    stage = ScanStage.VerifyInbox;
                     parent = ((dynamic)item).Parent;
-                    if ((string)((dynamic)parent).EntryID != folderId)
+                    var parentId = (string)((dynamic)parent).EntryID;
+                    // One MAPI object can have different binary entry IDs. Let Outlook resolve identity.
+                    if (!(bool)((dynamic)session).CompareEntryIDs(parentId, folderId))
                         throw new ConnectorException("source_left_inbox");
+                    stage = ScanStage.MessageClass;
                     var messageClass = (string)((dynamic)item).MessageClass;
                     if (messageClass.StartsWith("IPM.Note", StringComparison.OrdinalIgnoreCase)
                         || messageClass.StartsWith("IPM.Schedule.Meeting", StringComparison.OrdinalIgnoreCase))
                     {
-                        var parsed = ReadItem(item, messageClass, options.IncludeBody, options.IncludeAttachments);
+                        var parsed = ReadItem(item, messageClass, options.IncludeBody, options.IncludeAttachments, ref stage);
+                        stage = ScanStage.Encode;
                         var alreadyDelivered = options.Acknowledged?.TryGetValue(mailboxId + ":" + parsed.SourceId, out var known) == true
                             && known == SyncEngine.Fingerprint(parsed);
                         if (!alreadyDelivered)
@@ -81,20 +86,21 @@ internal static class OutlookReader
                         }
                     }
                 }
-                catch { skipped++; }
+                catch (Exception error) { diagnostics.Add(stage, error); }
                 finally { Release(parent); Release(item); }
                 remaining.Dequeue();
                 visited++;
             }
             return new ScanResult(mailboxId, smtp.Length > 200 ? smtp[..200] : smtp, sourceState,
-                result, skipped, remaining.Count > 0, RemainingEntries: remaining.ToArray());
+                result, diagnostics.Skipped, remaining.Count > 0, RemainingEntries: remaining.ToArray(),
+                SkipDetails: diagnostics.Summary());
         }
         catch (ConnectorException) { throw; }
         catch (COMException) { throw new ConnectorException("outlook_unavailable"); }
         catch { throw new ConnectorException("outlook_scan_failed"); }
         finally
         {
-            Release(filtered); Release(items); Release(folder); Release(store); Release(session); Release(application);
+            Release(filtered); Release(items); Release(folder); Release(session); Release(application);
         }
     }
 
@@ -145,13 +151,17 @@ internal static class OutlookReader
         finally { Release(accounts); }
     }
 
-    private static ImportedItem ReadItem(object value, string messageClass, bool includeBody, bool includeAttachments)
+    private static ImportedItem ReadItem(object value, string messageClass, bool includeBody, bool includeAttachments,
+        ref ScanStage stage)
     {
         dynamic item = value;
         var meeting = messageClass.StartsWith("IPM.Schedule.Meeting", StringComparison.OrdinalIgnoreCase);
         var kind = meeting ? "meeting" : "mail";
-        if ((int)item.DownloadState != 1) throw new ConnectorException("source_not_downloaded");
+        stage = ScanStage.DownloadState;
+        if ((int)item.DownloadState != 1) throw new ConnectorException("source_not_downloaded"); // olFullItem
+        stage = ScanStage.Identity;
         var id = OutlookMapping.ItemIdentity(kind, PropertyValue(value, OutlookMapping.SourceIdentity));
+        stage = ScanStage.Properties;
         var received = LocalDate((DateTime)item.ReceivedTime);
         var modified = LocalDate((DateTime)item.LastModificationTime);
         DateTimeOffset? start = null, end = null;
@@ -162,27 +172,33 @@ internal static class OutlookReader
         string? meetingStatus = null;
         if (meeting)
         {
+            stage = ScanStage.Meeting;
             // Use this incoming message's properties, not a mutable associated Calendar item.
             var schedule = OutlookMapping.ReadMeeting(messageClass, name => PropertyValue(value, name));
             meetingStatus = schedule.Status;
             start = schedule.Start; end = schedule.End; allDay = schedule.AllDay;
             recurring = schedule.Recurring; location = schedule.Location; meetingKey = schedule.Identity;
         }
+        stage = ScanStage.Properties;
         var senderAddress = Property(value, "http://schemas.microsoft.com/mapi/proptag/0x5D01001F");
         if (senderAddress.Length == 0) senderAddress = Read(() => (string)item.SenderEmailAddress, "");
-        var parsed = new ImportedItem(
-            id, kind, modified, received,
-            Protocol.Limited((string)item.Subject, 1000),
-            Protocol.Limited(Read(() => (string)item.SenderName, ""), 300),
-            Protocol.Limited(senderAddress, 320),
-            includeBody ? Protocol.PlainBody((string)item.Body, true) : null,
-            !(bool)item.UnRead, meetingStatus, start, end, allDay, location, meetingKey, recurring,
-            includeBody && !meeting ? Protocol.PlainBody((string)item.HTMLBody, true) : null,
-            RecipientField(value, "To"), RecipientField(value, "CC"),
-            includeAttachments ? ReadAttachments(value) : []);
+        senderAddress = Protocol.Limited(senderAddress, 320);
+        var subject = Protocol.Limited((string)item.Subject, 1000);
+        var sender = Protocol.Limited(Read(() => (string)item.SenderName, ""), 300);
+        var isRead = !(bool)item.UnRead;
+        stage = ScanStage.Body;
+        var body = includeBody ? Protocol.PlainBody((string)item.Body, true) : null;
+        var html = includeBody && !meeting ? Protocol.PlainBody((string)item.HTMLBody, true) : null;
+        stage = ScanStage.Recipients;
+        var to = RecipientField(value, "To");
+        var cc = RecipientField(value, "CC");
+        stage = ScanStage.Attachments;
+        var attachments = includeAttachments ? ReadAttachments(value) : [];
+        stage = ScanStage.Properties;
         if (LocalDate((DateTime)item.LastModificationTime) != modified)
             throw new ConnectorException("source_changed_during_scan");
-        return parsed;
+        return new ImportedItem(id, kind, modified, received, subject, sender, senderAddress, body, isRead,
+            meetingStatus, start, end, allDay, location, meetingKey, recurring, html, to, cc, attachments);
     }
 
     private static string RecipientField(object value, string field)

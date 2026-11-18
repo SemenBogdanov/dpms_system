@@ -79,7 +79,7 @@ public sealed record ScanOptions(bool IncludeBody, bool IncludeAttachments = fal
 public sealed record ScanResult(
     string MailboxId, string MailboxLabel, string SourceState,
     List<ImportedItem> Items, int Skipped, bool Truncated, string? Error = null,
-    IReadOnlyList<string>? RemainingEntries = null);
+    IReadOnlyList<string>? RemainingEntries = null, IReadOnlyList<ScanSkipDetail>? SkipDetails = null);
 
 public sealed record PairResult(
     Guid DeviceId, string DeviceSecret, string OwnerName, bool IncludeBody, int ProtocolVersion,

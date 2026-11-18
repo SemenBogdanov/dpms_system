@@ -424,8 +424,16 @@ internal sealed class MainForm : Form
             status.Text = report.Incomplete ? "Перенос неполный" : "Синхронизация завершена";
             details.Text = $"Передано: {report.Sent}. Новых: {report.Created}. Обновлено: {report.Updated}. "
                 + $"Пропущено: {report.Skipped}. "
-                + (scan.SourceState == "offline" ? "Outlook не в сети." : "Источник: локальный кэш Outlook.")
+                + (scan.SourceState == "offline" ? "Outlook не в сети." : "Источник: локальный профиль Outlook.")
                 + (scan.Truncated ? " Достигнут предел одной проверки; потребуется следующий проход." : "");
+            if (scan.SkipDetails is { Count: > 0 } skips)
+            {
+                var shown = skips.Select(DescribeSkip);
+                var other = scan.Skipped - skips.Sum(skip => skip.Count);
+                var heading = scan.Skipped == report.Skipped ? "Причины пропусков" : "Причины в этом проходе";
+                details.Text += $"\n{heading}:\n" + string.Join("\n", shown)
+                    + (other > 0 ? $"\nПрочие: {other}." : "");
+            }
         }
         catch (Exception error)
         {
@@ -442,6 +450,41 @@ internal sealed class MainForm : Form
             syncJob = null;
             SetBusy(false);
         }
+    }
+
+    private static string DescribeSkip(ScanSkipDetail skip)
+    {
+        var stage = skip.Stage switch
+        {
+            ScanStage.OpenItem => "открытие письма",
+            ScanStage.VerifyInbox => "проверка папки «Входящие»",
+            ScanStage.MessageClass => "тип письма",
+            ScanStage.DownloadState => "состояние загрузки",
+            ScanStage.Identity => "идентификатор письма",
+            ScanStage.Properties => "свойства письма",
+            ScanStage.Meeting => "свойства встречи",
+            ScanStage.Body => "текст письма",
+            ScanStage.Recipients => "получатели",
+            ScanStage.Attachments => "вложения",
+            ScanStage.Encode => "подготовка к передаче",
+            _ => "чтение Outlook",
+        };
+        var reason = skip.Code switch
+        {
+            "source_left_inbox" => "письмо уже не во «Входящих»",
+            "source_not_downloaded" => "письмо ещё не полностью загружено",
+            "missing_item_identity" => "нет идентификатора источника (PR_SOURCE_KEY)",
+            "item_too_large" => "превышен предел размера",
+            "unsupported_attachment" => "формат вложения не поддерживается",
+            "unsupported_text" => "неподдерживаемые символы",
+            "invalid_source_date" => "некорректная дата",
+            "incomplete_meeting" => "неполные данные встречи",
+            "source_changed_during_scan" => "письмо изменилось во время чтения",
+            "outlook_com" => "ошибка Outlook",
+            _ => "не удалось прочитать данные",
+        };
+        var statusCode = skip.HResult is int hresult ? $" (0x{hresult:X8})" : "";
+        return $"{stage}: {reason}{statusCode}, пропущено {skip.Count}.";
     }
 
     private async Task<ScanResult> Scan(ScanOptions options, CancellationToken cancellation)
