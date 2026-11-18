@@ -20,6 +20,7 @@ internal sealed class MainForm : Form
     private readonly TextBox databaseUsername = new() { Dock = DockStyle.Fill };
     private readonly TextBox databasePassword = new() { Dock = DockStyle.Fill, UseSystemPasswordChar = true };
     private readonly TextBox databaseCertificate = new() { Dock = DockStyle.Fill };
+    private readonly TextBox databaseCertificatePin = new() { Dock = DockStyle.Fill, PlaceholderText = "Необязательно" };
     private readonly TextBox deviceName = new() { Dock = DockStyle.Fill, Text = Environment.MachineName, MaxLength = 100 };
     private readonly Button selectCertificate = new() { Text = "...", AutoSize = true, AccessibleName = "Выбрать сертификат CA" };
     private readonly ToolTip tooltips = new();
@@ -66,6 +67,7 @@ internal sealed class MainForm : Form
         transport.SelectedIndexChanged += (_, _) => RefreshTransport();
         selectCertificate.Click += (_, _) => SelectCertificate();
         tooltips.SetToolTip(selectCertificate, "Выбрать сертификат CA");
+        tooltips.SetToolTip(databaseCertificatePin, "Только SHA-256 сертификата сервера, подтверждённый администратором. Вводится вместо CA.");
         var menu = new ContextMenuStrip();
         menu.Items.Add("Открыть", null, (_, _) => ShowWindow());
         menu.Items.Add("Синхронизировать", null, async (_, _) => await SyncNow());
@@ -177,6 +179,7 @@ internal sealed class MainForm : Form
         certificate.Controls.Add(selectCertificate, 1, 0);
         databaseCertificate.PlaceholderText = "Необязательно";
         AddInput(databaseInputs, "Сертификат CA", certificate);
+        AddInput(databaseInputs, "SHA-256 сервера", databaseCertificatePin);
         Row(databaseInputs);
         AddInput(deviceInputs, "Имя устройства", deviceName);
         Row(deviceInputs);
@@ -265,6 +268,7 @@ internal sealed class MainForm : Form
         databaseUsername.Text = settings?.Username ?? "";
         databasePassword.Text = settings?.Password ?? "";
         databaseCertificate.Text = settings?.RootCertificate ?? "";
+        databaseCertificatePin.Text = settings?.ServerCertificateSha256 ?? "";
         deviceName.Text = Environment.MachineName;
     }
 
@@ -272,7 +276,9 @@ internal sealed class MainForm : Form
     {
         var settings = new PostgresSettings(databaseHost.Text.Trim(), (int)databasePort.Value,
             databaseName.Text.Trim(), databaseSchema.Text.Trim(), databaseUsername.Text.Trim(),
-            databasePassword.Text, string.IsNullOrWhiteSpace(databaseCertificate.Text) ? null : databaseCertificate.Text.Trim());
+            databasePassword.Text,
+            RootCertificate: string.IsNullOrWhiteSpace(databaseCertificate.Text) ? null : databaseCertificate.Text.Trim(),
+            ServerCertificateSha256: string.IsNullOrWhiteSpace(databaseCertificatePin.Text) ? null : databaseCertificatePin.Text.Trim());
         settings.Validate();
         return settings;
     }
@@ -584,8 +590,11 @@ internal sealed class MainForm : Form
         "connect_uncertain" => "Результат подключения неизвестен. Перед повтором попросите администратора проверить привязку устройства.",
         "db_settings_invalid" => "Некорректные параметры БД. Проверьте узел, порт, базу, схему, пользователя, пароль и сертификат CA.",
         "db_unavailable" => "Нет соединения с БД. Проверьте доступность сервера и параметры подключения.",
-        "db_tls_failed" => "Не удалось установить защищённое соединение с БД. Проверьте имя сервера и сертификат CA.",
-        "db_tls_configuration" => "Заблокированы неявные настройки TLS PostgreSQL (PGSSL* или локальные клиентские сертификаты). Выберите сертификат CA явно и запустите коннектор в чистом окружении без этих настроек.",
+        "db_tls_failed" => "Не удалось установить защищённое соединение с БД. Проверьте соответствие имени и CA либо используйте подтверждённый SHA-256 сервера.",
+        "db_tls_pin_invalid" => "Некорректный SHA-256: нужны 64 шестнадцатеричных символа, можно с двоеточиями между парами.",
+        "db_tls_pin_conflict" => "Заполните либо «Сертификат CA», либо «SHA-256 сервера», но не оба поля.",
+        "db_tls_pin_rejected" => "Сертификат БД не совпал с SHA-256 или сейчас недействителен. Сверьте сертификат с администратором.",
+        "db_tls_configuration" => "Заблокированы неявные настройки TLS PostgreSQL (PGSSL* или локальные сертификаты). Запустите коннектор без этих настроек.",
         "db_login_failed" => "БД отклонила вход. Проверьте пользователя, пароль и права доступа.",
         "db_login_not_provisioned" => "Вход в БД выполнен, но учётная запись не связана с пользователем DPMS. Попросите администратора настроить это соответствие на сервере. Менять пароль не нужно.",
         "db_not_installed" => "Приёмник DPMS не установлен в указанной базе и схеме. Обратитесь к администратору.",

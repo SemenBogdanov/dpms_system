@@ -1,5 +1,7 @@
+using System.Net.Security;
 using System.Security.Authentication;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 using Npgsql;
@@ -8,7 +10,7 @@ using NpgsqlTypes;
 namespace Dpms.OutlookConnector;
 
 public sealed record PostgresSettings(string Host, int Port, string Database, string Schema,
-    string Username, string Password, string? RootCertificate = null)
+    string Username, string Password, string? RootCertificate = null, string? ServerCertificateSha256 = null)
 {
     public void Validate()
     {
@@ -21,11 +23,25 @@ public sealed record PostgresSettings(string Host, int Port, string Database, st
             || string.IsNullOrEmpty(Password) || Password.Contains('\0')
             || RootCertificate?.Contains('\0') == true)
             throw new ConnectorException("db_settings_invalid");
+        _ = GetServerCertificatePin();
     }
 
     private static bool Identifier(string value) => !string.IsNullOrEmpty(value) && value.Length <= 63
         && (char.IsAsciiLetter(value[0]) || value[0] == '_')
         && value.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
+
+    internal byte[]? GetServerCertificatePin()
+    {
+        var value = ServerCertificateSha256?.Trim();
+        if (string.IsNullOrEmpty(value)) return null;
+        if (!string.IsNullOrWhiteSpace(RootCertificate)) throw new ConnectorException("db_tls_pin_conflict");
+        // Accept the 32 SHA-256 bytes as plain hex or as OpenSSL's colon-separated pairs.
+        if (value.Length == 95 && value.Where((_, i) => i % 3 == 2).All(c => c == ':'))
+            value = value.Replace(":", "", StringComparison.Ordinal);
+        if (value.Length != 64 || !value.All(char.IsAsciiHexDigit))
+            throw new ConnectorException("db_tls_pin_invalid");
+        return Convert.FromHexString(value);
+    }
 
     internal NpgsqlConnectionStringBuilder ConnectionSettings()
     {
@@ -71,11 +87,32 @@ internal sealed class NpgsqlExecutor(PostgresSettings settings) : IPostgresExecu
         if (function is not ("mail_import_db_protocol" or "mail_import_db_pair" or "mail_import_db_connect"
             or "mail_import_db_enqueue" or "mail_import_db_status"))
             throw new ConnectorException("invalid_request");
+        var pinRejected = false;
         try
         {
             settings.RejectImplicitTlsFiles(Environment.GetEnvironmentVariable, File.Exists, OperatingSystem.IsWindows());
-            await using var connection = new NpgsqlConnection(settings.ConnectionSettings().ConnectionString);
-            await connection.OpenAsync(cancellation);
+            var builder = new NpgsqlDataSourceBuilder(settings.ConnectionSettings().ConnectionString);
+            if (settings.GetServerCertificatePin() is { } expectedPin)
+            {
+                // Require TLS and replace normal CA/name verification with the explicitly trusted leaf.
+                // Never put Require in the base connection string, where it would not verify the peer.
+                builder.UseSslClientAuthenticationOptionsCallback(options =>
+                {
+                    options.AllowTlsResume = false;
+                    options.CertificateChainPolicy = new X509ChainPolicy
+                    {
+                        DisableCertificateDownloads = true, RevocationMode = X509RevocationMode.NoCheck,
+                    };
+                    options.RemoteCertificateValidationCallback = (_, certificate, _, errors) =>
+                    {
+                        pinRejected = !MatchesServerCertificate(certificate, errors, expectedPin, DateTimeOffset.UtcNow);
+                        return !pinRejected;
+                    };
+                });
+                builder.ConnectionStringBuilder.SslMode = SslMode.Require;
+            }
+            await using var source = builder.Build();
+            await using var connection = await source.OpenConnectionAsync(cancellation);
             await using var readOnly = function == "mail_import_db_protocol"
                 ? await connection.BeginTransactionAsync(cancellation) : null;
             if (readOnly is not null)
@@ -106,10 +143,27 @@ internal sealed class NpgsqlExecutor(PostgresSettings settings) : IPostgresExecu
         }
         catch (NpgsqlException error)
         {
-            throw new ConnectorException(HasTlsFailure(error) ? "db_tls_failed" : "db_unavailable");
+            throw new ConnectorException(pinRejected ? "db_tls_pin_rejected"
+                : HasTlsFailure(error) ? "db_tls_failed" : "db_unavailable");
         }
-        catch (AuthenticationException) { throw new ConnectorException("db_tls_failed"); }
+        catch (AuthenticationException) { throw new ConnectorException(pinRejected ? "db_tls_pin_rejected" : "db_tls_failed"); }
         catch (IOException) { throw new ConnectorException("db_tls_failed"); }
+    }
+
+    internal static bool MatchesServerCertificate(X509Certificate? certificate, SslPolicyErrors errors,
+        ReadOnlySpan<byte> expectedPin, DateTimeOffset now)
+    {
+        // A match overrides only chain/name errors. TLS still proves possession of the private key.
+        const SslPolicyErrors pinOverrides = SslPolicyErrors.RemoteCertificateNameMismatch | SslPolicyErrors.RemoteCertificateChainErrors;
+        if (certificate is null || (errors & ~pinOverrides) != SslPolicyErrors.None) return false;
+        try
+        {
+            var der = certificate.GetRawCertData();
+            if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(der), expectedPin)) return false;
+            using var leaf = X509CertificateLoader.LoadCertificate(der);
+            return now.UtcDateTime >= leaf.NotBefore.ToUniversalTime() && now.UtcDateTime <= leaf.NotAfter.ToUniversalTime();
+        }
+        catch (CryptographicException) { return false; }
     }
 
     private static bool HasTlsFailure(Exception error) => error is AuthenticationException
