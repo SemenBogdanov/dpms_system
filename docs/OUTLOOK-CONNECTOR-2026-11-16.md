@@ -119,8 +119,13 @@ Grants монотонны на owner+mailbox: после первого успе
 может дополнить только uncaptured-группу, сохраняя остальные metadata, DPMS read
 state и ID ранее captured attachments. Другое расхождение остаётся conflict;
 stale версия не заполняет пропущенную группу. Quota и rollback покрывают enrichment.
-Идентификатор source item берётся из Exchange PR_SOURCE_KEY и хешируется;
-отсутствие/сбой чтения не переключает идентичность на EntryID/Message-ID.
+Идентификатор source item берётся из Exchange PR_SOURCE_KEY и хешируется
+прежним способом. Только если Outlook сообщает об отсутствии этого свойства,
+с 0.2.4 допустим хеш пары PR_STORE_RECORD_KEY + PR_RECORD_KEY того же письма.
+Ошибки доступа, некорректный ключ или неполная пара не переключают
+идентичность на EntryID/Message-ID. Дедупликация сохраняется при неизменных
+ключах; перенос между хранилищами или смена доступного типа ключа может
+выглядеть для DPMS как новый объект.
 Не вызывать helpers, которые создают email outbox/push/Contact/MessageThread.
 
 ## Клиент

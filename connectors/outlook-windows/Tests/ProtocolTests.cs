@@ -213,12 +213,62 @@ public sealed class ProtocolTests
     }
 
     [Fact]
-    public void StableExchangeIdentityNeverFallsBackToAnotherIdentifier()
+    public void ExchangeIdentityKeepsTheExistingHashAndNeverReadsFallbacks()
     {
         var bytes = new byte[] { 1, 2, 3, 4 };
-        Assert.Equal(OutlookMapping.ItemIdentity("mail", bytes), OutlookMapping.ItemIdentity("mail", bytes.ToArray()));
-        Assert.Throws<ConnectorException>(() => OutlookMapping.ItemIdentity("mail", null));
-        Assert.Throws<ConnectorException>(() => OutlookMapping.ItemIdentity("mail", "entry-id"));
+        var expected = Protocol.Hash("mail:exchange-source:01020304");
+        Assert.Equal(expected, OutlookMapping.ItemIdentity("mail", property =>
+        {
+            Assert.Equal(OutlookMapping.SourceIdentity, property);
+            return (true, bytes);
+        }));
+        var nonzeroBound = Array.CreateInstance(typeof(byte), [1], [3]);
+        nonzeroBound.SetValue((byte)0x72, 3);
+        Assert.Equal(Protocol.Hash("mail:exchange-source:72"), OutlookMapping.ItemIdentity("mail", _ => (true, nonzeroBound)));
+    }
+
+    private static string RecordIdentity(byte store = 1, byte record = 2, string kind = "mail") =>
+        OutlookMapping.ItemIdentity(kind, property => property switch
+        {
+            OutlookMapping.SourceIdentity => (false, null),
+            OutlookMapping.StoreRecordIdentity => (true, new byte[] { store }),
+            OutlookMapping.ItemRecordIdentity => (true, new byte[] { record }),
+            _ => throw new InvalidOperationException(),
+        });
+
+    [Fact]
+    public async Task StoreScopedRecordIdentityIsDistinctAndReplaysWithoutDuplicateDelivery()
+    {
+        var id = RecordIdentity();
+        Assert.Equal(Protocol.Hash("mail:mapi-record-v1:01:02"), id);
+        Assert.NotEqual(id, RecordIdentity(store: 3));
+        Assert.NotEqual(id, RecordIdentity(record: 3));
+        Assert.NotEqual(id, RecordIdentity(kind: "meeting"));
+        var state = new LocalState();
+        var client = new FakeClient(Ack);
+        var item = Item() with { SourceId = id };
+        var first = await new SyncEngine().Deliver(Scan(item), state, client, _ => { }, CancellationToken.None);
+        Assert.Equal(1, first.Sent);
+        var second = await new SyncEngine().Deliver(Scan(item with { SourceId = RecordIdentity() }), state, client, _ => { }, CancellationToken.None);
+        Assert.Equal(0, second.Sent);
+        Assert.Empty(client.Batches[1].Items);
+    }
+
+    [Fact]
+    public void IdentityDoesNotSwitchOnMalformedValuesOrReadFailures()
+    {
+        foreach (var malformed in new object?[] { null, Array.Empty<byte>(), new byte[4097], "entry-id" })
+        {
+            var error = Assert.Throws<ConnectorException>(() => OutlookMapping.ItemIdentity("mail", property =>
+            {
+                Assert.Equal(OutlookMapping.SourceIdentity, property);
+                return (true, malformed);
+            }));
+            Assert.Equal("invalid_item_identity", error.Code);
+        }
+        Assert.Equal("missing_item_identity", Assert.Throws<ConnectorException>(() => OutlookMapping.ItemIdentity("mail",
+            property => property == OutlookMapping.ItemRecordIdentity ? (true, new byte[] { 1 }) : (false, null))).Code);
+        Assert.Throws<InvalidOperationException>(() => OutlookMapping.ItemIdentity("mail", _ => throw new InvalidOperationException()));
     }
 
     [Fact]

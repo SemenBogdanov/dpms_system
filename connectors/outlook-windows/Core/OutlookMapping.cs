@@ -6,14 +6,36 @@ public sealed record MeetingDetails(string Status, DateTimeOffset? Start, DateTi
 public static class OutlookMapping
 {
     public const string SourceIdentity = "http://schemas.microsoft.com/mapi/proptag/0x65E00102";
+    public const string StoreRecordIdentity = "http://schemas.microsoft.com/mapi/proptag/0x0FFA0102";
+    public const string ItemRecordIdentity = "http://schemas.microsoft.com/mapi/proptag/0x0FF90102";
     public const string Appointment = "http://schemas.microsoft.com/mapi/id/{00062002-0000-0000-C000-000000000046}/";
     public const string Meeting = "http://schemas.microsoft.com/mapi/id/{6ED8DA90-450B-101B-98DA-00AA003F1305}/";
 
-    public static string ItemIdentity(string kind, object? value)
+    public static string ItemIdentity(string kind, Func<string, (bool Present, object? Value)> read)
     {
-        if (value is not byte[] { Length: > 0 and <= 4096 } bytes)
+        var source = read(SourceIdentity);
+        if (source.Present)
+            return Protocol.Hash(kind + ":exchange-source:" + BinaryKey(source.Value));
+
+        // A record key is unique only in its store; namespace it with the store record key.
+        var record = read(ItemRecordIdentity);
+        if (!record.Present)
             throw new ConnectorException("missing_item_identity");
-        return Protocol.Hash(kind + ":exchange-source:" + Convert.ToHexStringLower(bytes));
+        var store = read(StoreRecordIdentity);
+        if (!store.Present)
+            throw new ConnectorException("missing_item_identity");
+        return Protocol.Hash(kind + ":mapi-record-v1:" + BinaryKey(store.Value) + ":" + BinaryKey(record.Value));
+    }
+
+    private static string BinaryKey(object? value)
+    {
+        if (value is byte[] { Length: > 0 and <= 4096 } bytes)
+            return Convert.ToHexStringLower(bytes);
+        // COM can return a one-dimensional byte SAFEARRAY with a nonzero lower bound.
+        if (value is Array { Rank: 1, Length: > 0 and <= 4096 } array
+            && array.GetType().GetElementType() == typeof(byte))
+            return Convert.ToHexStringLower(array.Cast<byte>().ToArray());
+        throw new ConnectorException("invalid_item_identity");
     }
 
     public static MeetingDetails ReadMeeting(string messageClass, Func<string, object?> read)

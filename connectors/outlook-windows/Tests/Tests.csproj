@@ -11,5 +11,6 @@
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.0.2" PrivateAssets="all" />
     <ProjectReference Include="../Core/Core.csproj" />
+    <Compile Include="../Desktop/InstanceHandoff.cs" Link="InstanceHandoff.cs" />
   </ItemGroup>
 </Project>

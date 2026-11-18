@@ -33,6 +33,8 @@ internal sealed class MainForm : Form
     private readonly Button start = new() { Text = "Запустить", AutoSize = true };
     private readonly Button sync = new() { Text = "Синхронизировать", AutoSize = true };
     private readonly Button unlink = new() { Text = "Отвязать", AutoSize = true };
+    private readonly Button logButton = new() { Text = "Лог", AutoSize = true, MinimumSize = new Size(80, 0) };
+    private readonly Button exitButton = new() { Text = "Выход", AutoSize = true, MinimumSize = new Size(80, 0) };
     private readonly NumericUpDown days = new() { Minimum = 1, Maximum = 90, Value = 30, Width = 90 };
     private readonly CheckBox autorun = new() { Text = "Запускать при входе в Windows", AutoSize = true };
     private readonly Label account = new() { AutoSize = true };
@@ -44,13 +46,19 @@ internal sealed class MainForm : Form
     private CancellationTokenSource? operation;
     private Process? scanner;
     private Task? syncJob;
+    private Task? connectionJob;
+    private Task? toggleJob;
+    private const int MaximumLogEvents = 200;
+    private readonly Queue<string> activity = new(MaximumLogEvents);
+    private LogForm? logWindow;
     private bool exiting;
+    private bool readyToClose;
     private bool busy;
     private bool loading = true;
     private bool invalidState;
     private bool changingSync;
 
-    public MainForm(bool minimized)
+    public MainForm(bool minimized, bool replaced = false)
     {
         SuspendLayout();
         Text = "DPMS Outlook";
@@ -61,6 +69,8 @@ internal sealed class MainForm : Form
         ClientSize = new Size(720, 720);
         MinimumSize = new Size(480, 320);
         StartPosition = FormStartPosition.CenterScreen;
+        var version = typeof(MainForm).Assembly.GetName().Version?.ToString(3) ?? "";
+        Log(replaced ? $"Предыдущий процесс завершён. Запущен коннектор {version}." : $"Запущен коннектор {version}.");
         transport.Items.AddRange(["PostgreSQL", "HTTPS"]);
         transport.SelectedIndex = 0;
         BuildLayout();
@@ -75,16 +85,18 @@ internal sealed class MainForm : Form
         menu.Items.Add("Выход", null, async (_, _) => await ExitApp());
         tray.ContextMenuStrip = menu;
         tray.DoubleClick += (_, _) => ShowWindow();
-        checkConnection.Click += async (_, _) => await CheckDatabaseConnection();
-        pair.Click += async (_, _) => await Pair();
+        checkConnection.Click += async (_, _) => await TrackConnection(CheckDatabaseConnection);
+        pair.Click += async (_, _) => await TrackConnection(Pair);
         sync.Click += async (_, _) => await SyncNow();
-        start.Click += async (_, _) => await Toggle();
+        start.Click += async (_, _) => { if (!changingSync && !exiting) await (toggleJob = Toggle()); };
         unlink.Click += (_, _) => Unlink();
+        logButton.Click += (_, _) => ShowLog();
+        exitButton.Click += async (_, _) => await ExitApp();
         timer.Tick += async (_, _) => { if (state.AutoSync) await SyncNow(); };
         autorun.CheckedChanged += (_, _) => ChangeAutorun();
         days.ValueChanged += (_, _) =>
         {
-            if (loading || busy) return;
+            if (loading || busy || exiting) return;
             state.HistoryDays = (int)days.Value;
             state.PendingEntries = [];
             state.SnapshotMailboxId = null;
@@ -106,12 +118,14 @@ internal sealed class MainForm : Form
             invalidState = true;
             state = new LocalState();
             status.Text = ErrorText("local_state_invalid");
+            Log(status.Text);
         }
         try { AttachmentStaging.Cleanup(); }
         catch
         {
             state.AutoSync = false;
             status.Text = ErrorText("staging_cleanup_failed");
+            Log(status.Text);
         }
         try
         {
@@ -121,6 +135,8 @@ internal sealed class MainForm : Form
         catch { autorun.Enabled = false; }
         loading = false;
         RefreshState();
+        if (state.Session is not null)
+            Log(state.AutoSync ? "Подключение загружено. Синхронизация активна." : "Подключение загружено. Синхронизация на паузе.");
         Shown += async (_, _) =>
         {
             var area = Screen.FromControl(this).WorkingArea;
@@ -191,7 +207,7 @@ internal sealed class MainForm : Form
             AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Dock = DockStyle.Top, WrapContents = true,
         };
-        foreach (var button in new[] { checkConnection, pair, start, sync, unlink })
+        foreach (var button in new[] { checkConnection, pair, start, sync, unlink, logButton, exitButton })
         {
             button.Margin = new Padding(0, 0, 8, 8);
             button.Padding = new Padding(8, 4, 8, 4);
@@ -294,7 +310,7 @@ internal sealed class MainForm : Form
                 Filter = "Сертификаты CA (*.pem;*.crt;*.cer)|*.pem;*.crt;*.cer|Все файлы (*.*)|*.*",
                 CheckFileExists = true, Multiselect = false, RestoreDirectory = true, AddToRecent = false,
             };
-            if (picker.ShowDialog(this) == DialogResult.OK) databaseCertificate.Text = picker.FileName;
+            if (picker.ShowDialog(this) == DialogResult.OK && !exiting) databaseCertificate.Text = picker.FileName;
         }
         catch { status.Text = "Не удалось выбрать сертификат CA."; }
     }
@@ -308,9 +324,14 @@ internal sealed class MainForm : Form
             SetBusy(true);
             operation = new CancellationTokenSource();
             status.Text = "Проверка соединения...";
+            Log(status.Text);
             using var client = new PostgresClient(settings);
             await client.CheckConnection(operation.Token);
-            if (!exiting) status.Text = "Соединение с БД установлено. Приёмник DPMS отвечает. Импорт не запущен.";
+            if (!exiting)
+            {
+                status.Text = "Соединение с БД установлено. Приёмник DPMS отвечает. Импорт не запущен.";
+                Log(status.Text);
+            }
         }
         catch (Exception error) { ShowError(error); }
         finally
@@ -319,6 +340,9 @@ internal sealed class MainForm : Form
             SetBusy(false);
         }
     }
+
+    private Task TrackConnection(Func<Task> command) =>
+        exiting || connectionJob is { IsCompleted: false } ? Task.CompletedTask : connectionJob = command();
 
     private async Task Pair()
     {
@@ -340,6 +364,7 @@ internal sealed class MainForm : Form
             SetBusy(true);
             operation = new CancellationTokenSource();
             status.Text = "Подключение...";
+            Log(status.Text);
             PairResult result;
             if (database is not null)
             {
@@ -364,6 +389,7 @@ internal sealed class MainForm : Form
             state = next;
             startDatabaseSync = next.AutoSync;
             status.Text = next.AutoSync ? "Подключено. Синхронизация включена." : "Подключено. Синхронизация на паузе.";
+            Log(status.Text);
         }
         catch (Exception error) { ShowError(error); }
         finally
@@ -392,6 +418,7 @@ internal sealed class MainForm : Form
                 status.Text = "На паузе";
             }
             try { storage.Save(state); } catch { state.AutoSync = previous; throw; }
+            Log(enabled ? "Автоматическая синхронизация включена." : "Синхронизация поставлена на паузу.");
             RefreshState();
         }
         catch (Exception error) { ShowError(error); }
@@ -414,11 +441,13 @@ internal sealed class MainForm : Form
             var session = state.Session ?? throw new ConnectorException("not_paired");
             using var client = IngestionClient.Create(session, state, storage.Save);
             status.Text = "Чтение Outlook...";
+            Log(status.Text);
             var scan = await Scan(new ScanOptions(session.IncludeBody, session.IncludeAttachments,
                 state.HistoryDays, Acknowledged: state.Acknowledged, PendingEntries: state.PendingEntries,
                 SnapshotMailboxId: state.SnapshotMailboxId), operation.Token);
             if (scan.Error is not null) throw new ConnectorException(scan.Error);
             status.Text = "Передача в DPMS...";
+            Log(status.Text);
             var cancellation = operation.Token;
             var report = await Task.Run(() => new SyncEngine().Deliver(scan, state, client, storage.Save, cancellation), cancellation);
             status.Text = report.Incomplete ? "Перенос неполный" : "Синхронизация завершена";
@@ -434,6 +463,7 @@ internal sealed class MainForm : Form
                 details.Text += $"\n{heading}:\n" + string.Join("\n", shown)
                     + (other > 0 ? $"\nПрочие: {other}." : "");
             }
+            Log(status.Text + ". " + details.Text);
         }
         catch (Exception error)
         {
@@ -473,7 +503,8 @@ internal sealed class MainForm : Form
         {
             "source_left_inbox" => "письмо уже не во «Входящих»",
             "source_not_downloaded" => "письмо ещё не полностью загружено",
-            "missing_item_identity" => "нет идентификатора источника (PR_SOURCE_KEY)",
+            "missing_item_identity" => "нет PR_SOURCE_KEY или полной пары ключей MAPI",
+            "invalid_item_identity" => "неверный формат идентификатора MAPI",
             "item_too_large" => "превышен предел размера",
             "unsupported_attachment" => "формат вложения не поддерживается",
             "unsupported_text" => "неподдерживаемые символы",
@@ -489,10 +520,11 @@ internal sealed class MainForm : Form
 
     private async Task<ScanResult> Scan(ScanOptions options, CancellationToken cancellation)
     {
+        await StopScanner();
         AttachmentStaging.Cleanup();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         timeout.CancelAfter(TimeSpan.FromMinutes(3));
-        using var process = new Process
+        var process = new Process
         {
             StartInfo = new ProcessStartInfo(Environment.ProcessPath!, "--scan")
             {
@@ -501,10 +533,10 @@ internal sealed class MainForm : Form
                 StandardInputEncoding = new UTF8Encoding(false), StandardOutputEncoding = Encoding.UTF8,
             },
         };
-        scanner = process;
         try
         {
-            process.Start();
+            if (!process.Start()) throw new ConnectorException("outlook_scan_failed");
+            scanner = process;
             var output = ReadBounded(process.StandardOutput, 80_000_000, timeout.Token);
             var errors = ReadBounded(process.StandardError, 65536, timeout.Token);
             await process.StandardInput.WriteAsync(JsonSerializer.Serialize(options, Protocol.Json).AsMemory(), timeout.Token);
@@ -519,19 +551,32 @@ internal sealed class MainForm : Form
         { throw new ConnectorException("outlook_timeout"); }
         finally
         {
-            try
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill();
-                    using var killTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                    await process.WaitForExitAsync(killTimeout.Token);
-                }
-            }
-            catch { }
-            scanner = null;
+            if (ReferenceEquals(scanner, process)) await StopScanner();
+            else process.Dispose();
             AttachmentStaging.Cleanup();
         }
+    }
+
+    private async Task StopScanner()
+    {
+        if (scanner is not { } process) return;
+        try
+        {
+            if (!process.HasExited)
+            {
+                try { process.Kill(); }
+                catch (InvalidOperationException) when (process.HasExited) { }
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await process.WaitForExitAsync(deadline.Token);
+            }
+        }
+        catch
+        {
+            // Keep ownership of a still-running scanner and refuse to start a second one.
+            throw new ConnectorException("outlook_scanner_stop_failed");
+        }
+        scanner = null;
+        process.Dispose();
     }
 
     private static async Task<string> ReadBounded(StreamReader reader, int maximum, CancellationToken cancellation)
@@ -549,10 +594,10 @@ internal sealed class MainForm : Form
 
     private void Unlink()
     {
-        if (busy) return;
+        if (busy || exiting) return;
         if (MessageBox.Show(this,
             "Удалить подключение с этого компьютера? Доступ устройства на сервере отзывается отдельно в настройках DPMS. Импортированные данные сохранятся.",
-            "Отвязать Outlook", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            "Отвязать Outlook", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes || exiting) return;
         try
         {
             var next = new LocalState { HistoryDays = (int)days.Value };
@@ -562,6 +607,7 @@ internal sealed class MainForm : Form
             LoadConnectionFields();
             code.Clear(); details.Text = "";
             status.Text = "Не подключено";
+            Log("Локальное подключение удалено.");
             RefreshState();
         }
         catch (Exception error) { ShowError(error); }
@@ -569,7 +615,7 @@ internal sealed class MainForm : Form
 
     private void ChangeAutorun()
     {
-        if (loading) return;
+        if (loading || exiting) return;
         try
         {
             using var key = Registry.CurrentUser.CreateSubKey(RunPath);
@@ -624,6 +670,7 @@ internal sealed class MainForm : Form
                 ? "Операция не завершена. Проверьте параметры БД и доступ устройства."
                 : "Операция не завершена. Повторите попытку; при сбое подключения создайте новый код в DPMS.",
         };
+        Log(status.Text);
     }
 
     private static string ErrorText(string code) => code switch
@@ -647,6 +694,7 @@ internal sealed class MainForm : Form
         "access_denied" => "Доступ отклонён или отозван. Проверьте подключение в DPMS.",
         "outlook_unavailable" => "Classic Outlook недоступен. Откройте Outlook с рабочим профилем.",
         "outlook_timeout" => "Outlook не ответил за три минуты. Проверьте его окна и запросы разрешений.",
+        "outlook_scanner_stop_failed" => "Не удалось остановить процесс чтения Outlook. Закройте запросы Outlook и повторите «Выход».",
         "mailbox_identity_unavailable" => "Не удалось определить почтовый ящик Outlook.",
         "snapshot_too_large" => "В выбранном периоде слишком много писем. Уменьшите период; перенос не выполнен.",
         "local_state_invalid" => "Локальное подключение не прочитано. Отвяжите его и подключите заново.",
@@ -662,36 +710,95 @@ internal sealed class MainForm : Form
         _ => "Данные не перенесены. Проверьте Outlook, подключение и ограничения размера.",
     };
 
-    private void ShowWindow() { Show(); WindowState = FormWindowState.Normal; Activate(); }
+    private void ShowWindow() { if (!exiting) { Show(); WindowState = FormWindowState.Normal; Activate(); } }
 
-    private async Task ExitApp()
+    private void Log(string message)
+    {
+        // Callers supply fixed UI messages, version and counts, not exception text or mail data.
+        if (activity.Count == MaximumLogEvents) activity.Dequeue();
+        activity.Enqueue($"{DateTime.Now:HH:mm:ss}  {message}");
+        if (logWindow is { IsDisposed: false } window) window.UpdateLog(activity);
+    }
+
+    private void ShowLog()
+    {
+        if (exiting) return;
+        if (logWindow is not { IsDisposed: false })
+        {
+            var window = new LogForm();
+            logWindow = window;
+            window.UpdateLog(activity);
+            window.Show(this);
+        }
+        else
+        {
+            logWindow.WindowState = FormWindowState.Normal;
+            logWindow.Activate();
+        }
+    }
+
+    internal void RequestReplacement()
+    {
+        try { BeginInvoke((Action)(async () => await ExitApp(replacing: true))); }
+        catch (InvalidOperationException) when (IsDisposed || !IsHandleCreated) { }
+    }
+
+    private async Task ExitApp(bool replacing = false)
     {
         if (exiting) return;
         exiting = true;
         timer.Stop();
-        operation?.Cancel();
-        if (syncJob is { } running) await running;
-        try { AttachmentStaging.Cleanup(); } catch { /* Startup retries restricted cleanup after an OS/file failure. */ }
+        exitButton.Enabled = logButton.Enabled = false;
+        status.Text = replacing ? "Завершаю работу для новой копии..." : "Завершаю работу...";
+        Log(status.Text);
+        try { operation?.Cancel(); }
+        catch (AggregateException) { Log("Не удалось отменить текущую операцию, ожидаю её завершения."); }
+        try { await Task.WhenAll(connectionJob ?? Task.CompletedTask, syncJob ?? Task.CompletedTask, toggleJob ?? Task.CompletedTask); }
+        catch { Log("Операция завершилась с ошибкой при выходе."); }
+        try { await StopScanner(); }
+        catch (ConnectorException error)
+        {
+            exiting = false;
+            state.AutoSync = false;
+            try { storage.Save(state); } catch { Log(ErrorText("local_protection_failed")); }
+            ShowError(error);
+            exitButton.Enabled = logButton.Enabled = true;
+            RefreshState();
+            timer.Start();
+            if (replacing) ShowWindow();
+            return;
+        }
+        try { AttachmentStaging.Cleanup(); }
+        catch { Log(ErrorText("staging_cleanup_failed")); }
+        readyToClose = true;
         tray.Visible = false;
         Close();
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        if (!exiting && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); }
+        if (!readyToClose && e.CloseReason == CloseReason.UserClosing)
+        {
+            e.Cancel = true;
+            if (!exiting) Hide();
+        }
         else
         {
-            exiting = true;
-            operation?.Cancel();
-            try
+            if (!readyToClose)
             {
-                if (scanner is { HasExited: false })
+                exiting = true;
+                timer.Stop();
+                try { operation?.Cancel(); } catch (AggregateException) { }
+                try
                 {
-                    scanner.Kill();
-                    if (scanner.WaitForExit(5000)) AttachmentStaging.Cleanup();
+                    if (scanner is { HasExited: false })
+                    {
+                        scanner.Kill();
+                        if (scanner.WaitForExit(5000)) AttachmentStaging.Cleanup();
+                    }
                 }
+                catch { }
             }
-            catch { }
             tray.Dispose(); timer.Dispose(); tooltips.Dispose();
         }
         base.OnFormClosing(e);

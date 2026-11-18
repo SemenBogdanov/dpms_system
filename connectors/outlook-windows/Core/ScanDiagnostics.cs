@@ -22,7 +22,7 @@ public sealed class ScanDiagnostics
         var code = error switch
         {
             ConnectorException { Code: "source_left_inbox" or "source_not_downloaded"
-                or "missing_item_identity" or "item_too_large" or "unsupported_attachment"
+                or "missing_item_identity" or "invalid_item_identity" or "item_too_large" or "unsupported_attachment"
                 or "unsupported_text" or "invalid_source_date" or "incomplete_meeting"
                 or "source_changed_during_scan" } known => known.Code,
             COMException => "outlook_com",

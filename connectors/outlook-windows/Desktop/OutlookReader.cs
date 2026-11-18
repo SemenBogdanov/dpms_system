@@ -160,7 +160,7 @@ internal static class OutlookReader
         stage = ScanStage.DownloadState;
         if ((int)item.DownloadState != 1) throw new ConnectorException("source_not_downloaded"); // olFullItem
         stage = ScanStage.Identity;
-        var id = OutlookMapping.ItemIdentity(kind, PropertyValue(value, OutlookMapping.SourceIdentity));
+        var id = ReadIdentity(value, kind);
         stage = ScanStage.Properties;
         var received = LocalDate((DateTime)item.ReceivedTime);
         var modified = LocalDate((DateTime)item.LastModificationTime);
@@ -199,6 +199,23 @@ internal static class OutlookReader
             throw new ConnectorException("source_changed_during_scan");
         return new ImportedItem(id, kind, modified, received, subject, sender, senderAddress, body, isRead,
             meetingStatus, start, end, allDay, location, meetingKey, recurring, html, to, cc, attachments);
+    }
+
+    private static string ReadIdentity(object item, string kind)
+    {
+        const int mapiNotFound = unchecked((int)0x8004010F);
+        object? accessor = null;
+        try
+        {
+            accessor = ((dynamic)item).PropertyAccessor;
+            return OutlookMapping.ItemIdentity(kind, property =>
+            {
+                // Only an absent property permits switching keys, not a COM access or read failure.
+                try { return (true, (object?)((dynamic)accessor).GetProperty(property)); }
+                catch (COMException error) when (error.HResult == mapiNotFound) { return (false, null); }
+            });
+        }
+        finally { Release(accessor); }
     }
 
     private static string RecipientField(object value, string field)
